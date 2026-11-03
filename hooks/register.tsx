@@ -38,7 +38,8 @@ async function watchRow($: EngineInterface, h: string, dir: string, name: string
 const LIVE = new Set(['pending', 'running', 'waiting'])
 const SCRIPT_REL = '.claude/progress-bar/statusline.sh'
 const DEMO = 'progress-bar-demo'
-const USAGE = 'Usage: /progress-bar [setup | demo | clear]'
+const USAGE = 'Usage: /progress-bar [setup | demo | clear | fold <section> | unfold <section>]  (sections: todo, running, waiting, done, problems, all)'
+const SECTIONS = ['todo', 'running', 'waiting', 'done', 'problems']
 
 type Seen = { startedAt: number; tools: number; lastTool: string }
 
@@ -110,6 +111,24 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number }
     rows.push({ id: `file:${name}`, description: name, status: 'running', startedAt: p.startedAt ?? f.mtimeMs, tools: 0, lastTool: '', done: p.done, total: p.total, step: p.step })
   }
   return { rows, now }
+}
+
+/** Folds or unfolds status line sections; the grouped status line shows a folded one as "▸ NAME (count)". */
+async function fold($: EngineInterface, arg: string): Promise<string> {
+  const [verb, what = ''] = arg.split(/\s+/)
+  const h = await resolveHome($)
+  if (!h) return 'No home folder found.'
+  const file = `${dirOf(h)}/.state/folded.txt`
+  let cur = new Set<string>()
+  try { cur = new Set(String(await $.fs.read(file)).split(/\s+/).filter(Boolean)) } catch { /* none folded */ }
+  const targets = what === 'all' ? SECTIONS : SECTIONS.filter(x => x === what || (what === 'to-do' && x === 'todo'))
+  if (!targets.length) return USAGE
+  for (const t of targets) {
+    if (verb === 'fold' || (verb === 'toggle' && !cur.has(t))) cur.add(t)
+    else cur.delete(t)
+  }
+  await $.fs.write(file, [...cur].join('\n'))
+  return cur.size ? `Folded: ${[...cur].join(', ')}.` : 'All sections open.'
 }
 
 let sessionKey = ''
@@ -239,6 +258,7 @@ export const register: Register = on => {
       : arg === 'setup' ? await setup($)
       : arg === 'demo' ? await demo($)
       : arg === 'clear' ? await clear($)
+      : /^(fold|unfold|toggle)\b/.test(arg) ? await fold($, arg)
       : USAGE
     return { text }
   })

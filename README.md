@@ -119,3 +119,8 @@ Everything stays on your machine. The plugin reads and writes only files under `
 ## License
 
 MIT
+
+## Fold sections
+
+- `/progress-bar fold done` hides a section as `▸ DONE (3)`. `unfold` opens it, `toggle` flips it. Sections: `todo`, `running`, `waiting`, `done`, `problems`, `all`.
+- The choice is saved in `~/.claude-progress/.state/folded.txt`, which a grouped status line reads.
