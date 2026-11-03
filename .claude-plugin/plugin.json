@@ -4,7 +4,7 @@
   "description": "Live progress bars in the status line for subagents and long jobs that write ~/.claude-progress/<slug>.json",
   "license": "MIT",
   "author": {
-    "name": "OWNER"
+    "name": "hunterZh37"
   },
   "icon": "./.claude-plugin/icon.png"
 }

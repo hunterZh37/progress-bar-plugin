@@ -20,17 +20,17 @@ Live progress bars in the Claude Code status line. One line per running subagent
 At the prompt of a terminal session:
 
 ```
-/plugin marketplace add OWNER/progress-bar
+/plugin marketplace add hunterZh37/progress-bar-plugin
 /plugin install progress-bar@progress-bar
 ```
 
 Or in one line:
 
 ```
-/plugin install progress-bar --marketplace OWNER/progress-bar
+/plugin install progress-bar --marketplace hunterZh37/progress-bar-plugin
 ```
 
-Answer `y` to add the marketplace, then pick a scope. From a shell: `claude plugin install progress-bar --marketplace OWNER/progress-bar`.
+Answer `y` to add the marketplace, then pick a scope. From a shell: `claude plugin install progress-bar --marketplace hunterZh37/progress-bar-plugin`.
 
 ## Set up the status line
 

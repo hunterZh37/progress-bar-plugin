@@ -1,7 +1,7 @@
 {
   "name": "progress-bar",
   "owner": {
-    "name": "OWNER"
+    "name": "hunterZh37"
   },
   "description": "Live progress bars in the Claude Code status line",
   "plugins": [
