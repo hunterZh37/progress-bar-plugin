@@ -61,6 +61,14 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number }
   const h = await resolveHome($)
   const dir = dirOf(h)
   const now = await $.clock.now()
+  const key = await sessionKeyOf($)
+  if (h && !seenLoaded) {
+    seenLoaded = true
+    try {
+      const saved = JSON.parse(String(await $.fs.read(`${dir}/.state/seen-${key}.json`))) as Record<string, { startedAt: number; tools: number; lastTool: string }>
+      for (const [id, v] of Object.entries(saved)) if (!seen.has(id)) seen.set(id, v)
+    } catch { /* first run */ }
+  }
   let agents: Awaited<ReturnType<typeof $.agent.list>> = []
   try { agents = await $.agent.list() } catch { agents = [] }
   const rows: Row[] = []
@@ -73,6 +81,19 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number }
   }
   if (!h) return { rows, now }
   const used = new Set(rows.map(r => slug(r.description)))
+  // Remember this session's agents (start time, tools) so a plugin reload keeps them, and claim their progress files.
+  try {
+    const live = Object.fromEntries(rows.map(r => [r.id, seen.get(r.id)!]))
+    await $.fs.write(`${dir}/.state/seen-${key}.json`, JSON.stringify(live))
+    await $.fs.write(`${dir}/.state/claims-${key}.txt`, [...used].join('\n'))
+  } catch { /* next poll */ }
+  // Progress files another open session's agent already shows are skipped here, so no bar appears twice.
+  let stateFiles: Awaited<ReturnType<typeof $.fs.list>> = []
+  try { stateFiles = await $.fs.list(`${dir}/.state`) } catch { stateFiles = [] }
+  for (const f of stateFiles) {
+    if (!f.name.startsWith('claims-') || f.name === `claims-${key}.txt` || now - f.mtimeMs > 30_000) continue
+    try { for (const n of String(await $.fs.read(`${dir}/.state/${f.name}`)).split('\n')) if (n) used.add(n) } catch { /* gone */ }
+  }
   let files: Awaited<ReturnType<typeof $.fs.list>> = []
   try { files = await $.fs.list(dir) } catch { files = [] }
   for (const f of files) {
@@ -92,13 +113,18 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number }
 }
 
 let sessionKey = ''
+let seenLoaded = false
+async function sessionKeyOf($: EngineInterface): Promise<string> {
+  if (!sessionKey) { try { sessionKey = (await $.session.id()).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 12) } catch { sessionKey = 'main' } }
+  return sessionKey
+}
 
 // Each session writes its own subagents to agents-<session>.txt, so two open sessions never overwrite each other.
 // Job files (~/.claude-progress/*.json) are the same for every session, so they go to one shared jobs.txt.
 async function poll($: EngineInterface) {
   const { rows, now } = await collect($)
   if (!home) return
-  if (!sessionKey) { try { sessionKey = (await $.session.id()).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 12) } catch { sessionKey = 'main' } }
+  await sessionKeyOf($)
   const agents = rows.filter(r => !r.id.startsWith('file:'))
   const jobs = rows.filter(r => r.id.startsWith('file:'))
   const base = `${dirOf(home)}/.lines`
