@@ -2,7 +2,8 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { eta, expandHome, line, lines, parseProgress, parseWatch, readLog, slug, statusScript } from '../hooks/render'
+import { GROUP_PY } from '../hooks/group'
+import { eta, expandHome, line, lines, parseProgress, parseWatch, readLog, slug, statusScript, todoAdd, todoClear, todoDone, todoItems, todoList } from '../hooks/render'
 
 const NOW = 1_800_000_000_000
 const HOME = '/home/u'
@@ -44,6 +45,53 @@ test('the script chains an earlier status line', async () => {
   expect(statusScript()).toContain("prev=''")
 })
 
+test('the script pipes through the grouper and falls back without python3', async () => {
+  const s = statusScript()
+  expect(s).toContain('group="$HOME/.claude/progress-bar/group.py"')
+  expect(s).toContain('command -v python3')
+  expect(s).toContain('| python3 "$group"')
+  expect(s).toContain('else\n  lines\nfi')
+})
+
+const TODO = '# header\n[you]\nreview PR\nx old thing\n[mac]\nrun import | http://localhost:3000\n'
+
+test('to-do items: numbered, done ones marked, links kept', async () => {
+  const items = todoItems(TODO)
+  expect(items.map(i => [i.index, i.heading, i.text, i.done])).toEqual([
+    [1, 'you', 'review PR', false],
+    [2, 'you', 'old thing', true],
+    [3, 'mac', 'run import | http://localhost:3000', false],
+  ])
+  expect(todoList(TODO)).toBe('[you]\n  1. review PR\n  2. [x] old thing\n[mac]\n  3. run import | http://localhost:3000')
+  expect(todoItems('loose\n')[0]!.heading).toBe('todo')
+})
+
+test('todo add: [name], an existing heading word, or the last heading', async () => {
+  expect(todoAdd(TODO, '[you] call Sam').text).toBe('# header\n[you]\nreview PR\nx old thing\ncall Sam\n[mac]\nrun import | http://localhost:3000\n')
+  expect(todoAdd(TODO, 'you call Sam').heading).toBe('you')
+  expect(todoAdd(TODO, 'buy milk').text.endsWith('[mac]\nrun import | http://localhost:3000\nbuy milk\n')).toBe(true)
+  expect(todoAdd(TODO, '[New Box] set up').text.endsWith('[New Box]\nset up\n')).toBe(true)
+  const fresh = todoAdd('', 'first')
+  expect(fresh.heading).toBe('todo')
+  expect(fresh.text.endsWith('[todo]\nfirst\n')).toBe(true)
+})
+
+test('todo done by number or text, and clear', async () => {
+  expect(todoDone(TODO, '3')!.text).toContain('\nx run import | http://localhost:3000\n')
+  expect(todoDone(TODO, 'REVIEW')!.text).toContain('\nx review PR\n')
+  expect(todoDone(TODO, 'nothing like it')).toBe(null)
+  const cleared = todoClear('[a]\nx gone\n[b]\nkeep\nx gone too\n')
+  expect(cleared).toEqual({ text: '[b]\nkeep\n', removed: 2 })
+})
+
+test('the grouper source is stdlib python and safe to embed', async () => {
+  expect(GROUP_PY.startsWith('#!/usr/bin/env python3')).toBe(true)
+  expect(GROUP_PY).toContain('links.txt')
+  expect(GROUP_PY).toContain('folded.txt')
+  expect(GROUP_PY).toContain('todo.txt')
+  expect(GROUP_PY).not.toContain('hunty')
+})
+
 test('a watch file counts done/total from the last match, with an ETA', async () => {
   const w = parseWatch('{"log":"~/l.log","match":"(\\\\d+)/(\\\\d+) batches","startedAt":1}')!
   expect(w.log).toBe('~/l.log')
@@ -75,8 +123,10 @@ test('watched rows: done, stopped and error marks', async () => {
 })
 
 /** Runs `/progress-bar <args>` as the person would type it. */
-const run = ($: Engine, args: string) =>
-  $.command.run({ command: 'progress-bar', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+const run = async ($: Engine, args: string) => {
+  const r = await $.command.run({ command: 'progress-bar', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+  return { ...r, text: r.text ?? '' }
+}
 
 /** The world beneath the plugin: a home folder with one subagent and one job file. */
 function world(on: On, opts: { statusLine?: { type: string; command: string }; scriptExists?: boolean } = {}) {
@@ -101,7 +151,7 @@ function world(on: On, opts: { statusLine?: { type: string; command: string }; s
       [`${DIR}/build-docs.json`]: '{"done":1,"total":4,"step":"render"}',
       [`${DIR}/nightly-import.json`]: `{"done":4,"total":5,"step":"batch 4","startedAt":${NOW - 12 * 60_000}}`,
     }
-    const text = files[e.path]
+    const text = files[e.path] ?? (e.path.endsWith('/todo.txt') ? written[e.path] : undefined)
     if (text === undefined) throw new Error('ENOENT')
     return { value: text }
   })
@@ -131,9 +181,10 @@ test('/progress-bar setup writes the script and chains the old status line', asy
   const { text } = await run($, 'setup')
   const path = `${HOME}/.claude/progress-bar/statusline.sh`
   expect(written[path]).toContain("prev='~/bin/mine.sh'")
+  expect(written[`${HOME}/.claude/progress-bar/group.py`]).toBe(GROUP_PY)
   expect(ran).toContainEqual(['chmod', '+x', path])
   expect(text).toContain('~/bin/mine.sh')
-  expect(text).toContain('"statusLine": { "type": "command", "command": "~/.claude/progress-bar/statusline.sh" }')
+  expect(text).toContain('"statusLine": { "type": "command", "command": "~/.claude/progress-bar/statusline.sh", "refreshInterval": 1 }')
 })
 
 test('/progress-bar when the status line is wired', async ($, on) => {
@@ -181,5 +232,20 @@ test('/progress-bar shows a watched log, and stopped when its process is gone', 
 test('/progress-bar with an unknown argument prints usage', async ($, on) => {
   world(on)
   const { text } = await run($, 'nope')
-  expect(text).toBe('Usage: /progress-bar [setup | demo | clear]')
+  expect(text.split('\n')[0]).toBe('Usage: /progress-bar [setup | demo | clear | todo | fold <section> | unfold <section> | toggle <section>]')
+})
+
+test('/progress-bar todo add, list, done and clear write todo.txt', async ($, on) => {
+  const { written } = world(on)
+  const file = `${DIR}/todo.txt`
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  expect((await run($, 'todo')).text).toContain('No to-dos.')
+  expect((await run($, 'todo add [Mac] Run Import')).text).toContain('Added to [Mac].')
+  await run($, 'todo add Call Sam')
+  expect(written[file]).toContain('[Mac]\nRun Import\nCall Sam\n')
+  expect((await run($, 'todo')).text).toBe('[Mac]\n  1. Run Import\n  2. Call Sam')
+  expect((await run($, 'todo done 1')).text).toBe('Done: Run Import')
+  expect((await run($, 'todo done sam')).text).toBe('Done: Call Sam')
+  expect((await run($, 'todo clear')).text).toBe('Removed 2 done items.')
+  expect(written[file]).not.toContain('Run Import')
 })

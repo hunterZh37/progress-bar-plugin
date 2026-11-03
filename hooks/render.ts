@@ -158,16 +158,125 @@ export function statusScript(prev?: string): string {
   return [
     '#!/bin/sh',
     '# progress-bar status line. Written by `/progress-bar setup`. Safe to edit or delete.',
-    '# Prints each fresh (<2 min) ~/.claude-progress/.lines/*.txt, then the previous status line if any.',
+    '# Prints each fresh (<2 min) ~/.claude-progress/.lines/*.txt, then the previous status line if any,',
+    '# grouped into TO-DO / PROBLEMS / RUNNING / WAITING / DONE by group.py beside this script.',
+    '# Without python3 the lines print ungrouped.',
     'input=$(cat)',
-    'dir="$HOME/.claude-progress/.lines"',
-    'for f in "$dir"/*.txt; do',
-    '  [ -s "$f" ] || continue',
-    '  [ -n "$(find "$f" -mmin -2 2>/dev/null)" ] || continue',
-    '  cat "$f"; echo',
-    'done',
     `prev=${shQuote(prev ?? '')}`,
-    'if [ -n "$prev" ]; then printf \'%s\' "$input" | sh -c "$prev"; fi',
+    'lines() {',
+    '  dir="$HOME/.claude-progress/.lines"',
+    '  for f in "$dir"/*.txt; do',
+    '    [ -s "$f" ] || continue',
+    '    [ -n "$(find "$f" -mmin -2 2>/dev/null)" ] || continue',
+    '    cat "$f"; echo',
+    '  done',
+    '  if [ -n "$prev" ]; then printf \'%s\' "$input" | sh -c "$prev"; fi',
+    '}',
+    'group="$HOME/.claude/progress-bar/group.py"',
+    'if [ -f "$group" ] && command -v python3 >/dev/null 2>&1; then',
+    '  out=$(lines)',
+    '  printf \'%s\\n\' "$out" | python3 "$group" 2>/dev/null || printf \'%s\\n\' "$out"',
+    'else',
+    '  lines',
+    'fi',
     '',
   ].join('\n')
+}
+
+export type TodoItem = { index: number; heading: string; text: string; done: boolean; line: number }
+
+const HEADING = /^\[(.+)\]$/
+const TODO_HEADER = '# To-dos shown in the status line. One per line under a [name] heading. "x " marks done. "text | url" links.\n'
+
+/** Every to-do item in file order, numbered from 1. Items before any heading go under `todo`. */
+export function todoItems(text: string): TodoItem[] {
+  const out: TodoItem[] = []
+  let heading = 'todo'
+  text.split('\n').forEach((raw, i) => {
+    const t = raw.trim()
+    if (!t || t.startsWith('#')) return
+    const m = HEADING.exec(t)
+    if (m) { heading = m[1]!.trim(); return }
+    const done = /^x\s/i.test(t)
+    out.push({ index: out.length + 1, heading, text: done ? t.slice(2).trim() : t, done, line: i })
+  })
+  return out
+}
+
+/** Numbered list for `/progress-bar todo`. */
+export function todoList(text: string): string {
+  const items = todoItems(text)
+  if (!items.length) return 'No to-dos. Add one: /progress-bar todo add [name] <text>'
+  const out: string[] = []
+  let cur = ''
+  for (const it of items) {
+    if (it.heading !== cur) { cur = it.heading; out.push(`[${cur}]`) }
+    out.push(`  ${it.index}. ${it.done ? '[x] ' : ''}${it.text}`)
+  }
+  return out.join('\n')
+}
+
+const headings = (lines: string[]) => lines.map(l => HEADING.exec(l.trim())?.[1]?.trim()).filter((h): h is string => !!h)
+
+/**
+ * Adds an item. `rest` is `[name] text`, `name text` when name is an existing heading, or `text`
+ * (under the last heading in the file, or [todo]).
+ */
+export function todoAdd(text: string, rest: string): { text: string; heading: string } {
+  const lines = text ? text.replace(/\n+$/, '').split('\n') : TODO_HEADER.trimEnd().split('\n')
+  const known = headings(lines)
+  let heading: string | undefined
+  let item = rest.trim()
+  const br = /^\[([^\]]+)\]\s*(.*)$/.exec(item)
+  if (br) { heading = br[1]!.trim(); item = br[2]!.trim() }
+  else {
+    const [first = '', ...more] = item.split(/\s+/)
+    const hit = known.find(h => h.toLowerCase() === first.toLowerCase())
+    if (hit && more.length) { heading = hit; item = item.slice(first.length).trim() }
+  }
+  heading ??= known[known.length - 1] ?? 'todo'
+  const at = lines.findIndex(l => l.trim().toLowerCase() === `[${heading!.toLowerCase()}]`)
+  if (at < 0) {
+    lines.push(`[${heading}]`, item)
+  } else {
+    let end = at + 1
+    while (end < lines.length && !HEADING.test(lines[end]!.trim())) end++
+    while (end > at + 1 && !lines[end - 1]!.trim()) end--
+    lines.splice(end, 0, item)
+  }
+  return { text: lines.join('\n') + '\n', heading }
+}
+
+/** Marks an item done by its number or by text it contains (first open match). Null when nothing matches. */
+export function todoDone(text: string, which: string): { text: string; item: TodoItem } | null {
+  const items = todoItems(text)
+  const w = which.trim()
+  const item = /^\d+$/.test(w)
+    ? items.find(i => i.index === Number(w))
+    : items.find(i => !i.done && i.text.toLowerCase().includes(w.toLowerCase()))
+  if (!item || !w) return null
+  const lines = text.split('\n')
+  if (!item.done) lines[item.line] = `x ${lines[item.line]!.trim()}`
+  return { text: lines.join('\n'), item }
+}
+
+/** Removes done items, and headings left with no items. */
+export function todoClear(text: string): { text: string; removed: number } {
+  const lines = text.split('\n')
+  const keep: string[] = []
+  let removed = 0
+  for (const l of lines) {
+    if (/^x\s/i.test(l.trim())) { removed++; continue }
+    keep.push(l)
+  }
+  const out = keep.filter((l, i) => {
+    if (!HEADING.test(l.trim())) return true
+    for (let j = i + 1; j < keep.length; j++) {
+      const t = keep[j]!.trim()
+      if (HEADING.test(t)) return false
+      if (t && !t.startsWith('#')) return true
+    }
+    return false
+  })
+  return { text: out.join('\n'), removed }
 }

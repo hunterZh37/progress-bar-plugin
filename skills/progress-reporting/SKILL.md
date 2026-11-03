@@ -61,6 +61,24 @@ EOF
 
 Delete the file. A file untouched for 10 minutes stops showing anyway.
 
+## To-dos: keep `~/.claude-progress/todo.txt` current
+
+The status line shows open to-dos first, in a `☐ TO-DO` section. Keep the list true to what is left to do.
+
+```
+[you]
+Review the deploy PR | https://github.com/org/repo/pull/12
+[mac]
+Load the 2026 batch (after import)
+x Rebuild the index
+```
+
+- **Add an item** when work is queued for later, or handed to the person (a review, a sign-in, a decision).
+- **Mark it done** when finished: prefix `x ` (hidden from the status line). Don't delete other people's items.
+- **Short items:** a few words, the action first. Add ` | <url>` to make it clickable.
+- **Group by owner or machine** under `[name]` headings (`[you]`, `[mac]`, `[server]`). Any name works.
+- Edit the file directly, or use `/progress-bar todo add [name] <text>`, `todo done <n|text>`, `todo clear`.
+
 ## Shell helper
 
 ```sh

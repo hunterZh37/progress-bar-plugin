@@ -1,6 +1,7 @@
 import type { EngineInterface, Register } from 'claude-code'
 
-import { FRESH_MS, eta, expandHome, lines, parseProgress, parseWatch, readLog, slug, statusScript } from './render'
+import { GROUP_PY } from './group'
+import { FRESH_MS, eta, expandHome, lines, parseProgress, parseWatch, readLog, slug, statusScript, todoAdd, todoClear, todoDone, todoList } from './render'
 import type { Progress, Row } from './render'
 
 const WATCH = '.watch.json'
@@ -37,8 +38,13 @@ async function watchRow($: EngineInterface, h: string, dir: string, name: string
 
 const LIVE = new Set(['pending', 'running', 'waiting'])
 const SCRIPT_REL = '.claude/progress-bar/statusline.sh'
+const GROUP_REL = '.claude/progress-bar/group.py'
 const DEMO = 'progress-bar-demo'
-const USAGE = 'Usage: /progress-bar [setup | demo | clear | fold <section> | unfold <section>]  (sections: todo, running, waiting, done, problems, all)'
+const USAGE = [
+  'Usage: /progress-bar [setup | demo | clear | todo | fold <section> | unfold <section> | toggle <section>]',
+  '  sections: todo, running, waiting, done, problems, all',
+  '  todo: todo | todo add [name] <text> | todo done <n|text> | todo clear',
+].join('\n')
 const SECTIONS = ['todo', 'running', 'waiting', 'done', 'problems']
 
 type Seen = { startedAt: number; tools: number; lastTool: string }
@@ -158,7 +164,7 @@ async function statusLineCommand($: EngineInterface): Promise<string | undefined
   } catch { return undefined }
 }
 
-const snippet = `"statusLine": { "type": "command", "command": "~/${SCRIPT_REL}" }`
+const snippet = `"statusLine": { "type": "command", "command": "~/${SCRIPT_REL}", "refreshInterval": 1 }`
 
 async function show($: EngineInterface) {
   const { rows, now } = await collect($)
@@ -182,12 +188,49 @@ async function setup($: EngineInterface) {
   const prev = current && !current.includes(SCRIPT_REL) ? current : undefined
   const path = `${h}/${SCRIPT_REL}`
   await $.fs.write(path, statusScript(prev))
+  await $.fs.write(`${h}/${GROUP_REL}`, GROUP_PY)
   await $.process.run(['chmod', '+x', path]).catch(() => undefined)
   const chain = prev ? `\nIt runs your current status line after the bars: ${prev}` : ''
   const done = current?.includes(SCRIPT_REL)
     ? 'Your settings already point at it.'
     : `Add this to ~/.claude/settings.json (replacing any "statusLine" there):\n  ${snippet}`
-  return `Wrote ${path}.${chain}\n${done}`
+  return `Wrote ${path} and group.py beside it.${chain}\n${done}\n"refreshInterval": 1 redraws the status line every second.`
+}
+
+/** `/progress-bar todo ...`: list, add, done, clear in ~/.claude-progress/todo.txt. */
+async function todo($: EngineInterface, rest: string): Promise<string> {
+  const h = await resolveHome($)
+  if (!h) return 'Could not find your home folder ($HOME is unset).'
+  const file = `${dirOf(h)}/todo.txt`
+  let text = ''
+  try { text = String(await $.fs.read(file)) } catch { /* none yet */ }
+  const [verb = '', ...more] = rest.split(/\s+/)
+  const arg = rest.slice(verb.length).trim()
+  switch (verb.toLowerCase()) {
+    case '':
+    case 'list':
+      return todoList(text)
+    case 'add': {
+      if (!arg || /^\[[^\]]+\]$/.test(arg)) return 'Usage: /progress-bar todo add [name] <text>'
+      const r = todoAdd(text, arg)
+      await $.fs.write(file, r.text)
+      return `Added to [${r.heading}].\n${todoList(r.text)}`
+    }
+    case 'done': {
+      if (!more.length) return 'Usage: /progress-bar todo done <n|text>'
+      const r = todoDone(text, arg)
+      if (!r) return `No open to-do matches "${arg}".\n${todoList(text)}`
+      await $.fs.write(file, r.text)
+      return `Done: ${r.item.text}`
+    }
+    case 'clear': {
+      const r = todoClear(text)
+      if (r.removed) await $.fs.write(file, r.text)
+      return r.removed ? `Removed ${r.removed} done item${r.removed === 1 ? '' : 's'}.` : 'Nothing done to clear.'
+    }
+    default:
+      return USAGE
+  }
 }
 
 async function demo($: EngineInterface) {
@@ -245,19 +288,21 @@ export const register: Register = on => {
   })
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup | demo | clear]' })
+    await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup | demo | clear | todo | fold <section>]' })
     void poll($)
     $.clock.every(5000, () => { void poll($) })
     return next(e)
   })
 
   on('command.run', { command: 'progress-bar' }, async ($, e) => {
-    const arg = (e.args ?? '').trim().toLowerCase()
+    const raw = (e.args ?? '').trim()
+    const arg = raw.toLowerCase()
     const text =
       arg === '' ? await show($)
       : arg === 'setup' ? await setup($)
       : arg === 'demo' ? await demo($)
       : arg === 'clear' ? await clear($)
+      : /^todo\b/.test(arg) ? await todo($, raw.slice(4).trim())
       : /^(fold|unfold|toggle)\b/.test(arg) ? await fold($, arg)
       : USAGE
     return { text }

@@ -1,11 +1,15 @@
 # progress-bar
 
-Live progress bars in the Claude Code status line. One line per running subagent and per long job. Updates every 5 seconds.
+Live progress bars and a to-do list in the Claude Code status line. One line per running subagent and per long job, grouped by state. Updates every 5 seconds.
 
 ```
-▶ build-docs ████████░░░░░░░░░░░░ 40.0% · 2/5 · render pages · 3m · 14 tools
-▶ fix-login-bug working · 1m · 6 tools · Edit
-▶ nightly-import ████████████████░░░░ 80.0% · 4/5 · batch 4 · 12m
+▾ ☐ TO-DO
+  YOU: Review the deploy PR · Sign in to the dashboard
+  MAC: Load the 2026 batch
+▾ ▶ RUNNING
+  build-docs ████████░░░░░░░░░░░░ 40.0% · 2/5 · render pages · 3m · 14 tools
+  nightly-import ████████████████░░░░ 80.0% · 4/5 · batch 4 · 12m
+▸ ✔ DONE (2)
 ```
 
 ## What it does
@@ -14,7 +18,10 @@ Live progress bars in the Claude Code status line. One line per running subagent
 - **Real bars:** a subagent or shell job that writes `~/.claude-progress/<slug>.json` gets a bar with percent, count and step.
 - **Bars from logs:** a job that only writes a log (psql, a vendor tool, a remote job) gets a bar from a watch file: done/total read from the log by regex, an ETA, and `■ stopped` or `✖ error` when it dies or fails.
 - **Skill:** `progress-reporting` tells Claude to write those files for multi-step work and to ask subagents to do the same.
-- **Status line:** a small script prints the bars above your existing status line.
+- **Groups:** lines sort into **TO-DO**, **PROBLEMS**, **RUNNING**, **WAITING** and **DONE**. A job that ends shows as `finished 14:05` for 30 minutes. Duplicate rows of one job merge.
+- **To-dos:** `~/.claude-progress/todo.txt` shows first. Claude keeps it current.
+- **Links:** job names open their progress file, or a URL you set in `links.txt`.
+- **Status line:** a small script prints all this above your existing status line.
 
 ## Install
 
@@ -42,10 +49,14 @@ Answer `y` to add the marketplace, then pick a scope. From a shell: `claude plug
 This writes `~/.claude/progress-bar/statusline.sh`. It never edits your settings. Add the line it prints to `~/.claude/settings.json`:
 
 ```json
-"statusLine": { "type": "command", "command": "~/.claude/progress-bar/statusline.sh" }
+"statusLine": { "type": "command", "command": "~/.claude/progress-bar/statusline.sh", "refreshInterval": 1 }
 ```
 
-Already have a status line? Setup reads it and builds it into the script. The bars print first, then your old status line, which still gets the session JSON on stdin. Run setup before you change the setting.
+- **`refreshInterval: 1`** redraws the status line every second, so bars move while Claude is idle.
+- **Grouping** runs through `~/.claude/progress-bar/group.py`, which setup writes beside the script. It needs only the system `python3`. Without it the lines print ungrouped.
+- **Updating the plugin?** Run setup again to get the new scripts.
+
+Already have a status line? Setup reads it and builds it into the script. The bars print first, then your old status line, which still gets the session JSON on stdin. Its lines print as is, below the groups. Run setup before you change the setting.
 
 ## Commands
 
@@ -55,6 +66,11 @@ Already have a status line? Setup reads it and builds it into the script. The ba
 | `/progress-bar setup` | Writes the status line script |
 | `/progress-bar demo` | Runs a 20 second demo job so you can see a bar |
 | `/progress-bar clear` | Deletes stale progress files |
+| `/progress-bar todo` | Lists to-dos with numbers |
+| `/progress-bar todo add [name] <text>` | Adds a to-do under `[name]` (default: the last heading, or `[todo]`) |
+| `/progress-bar todo done <n\|text>` | Marks a to-do done by number or by text it contains |
+| `/progress-bar todo clear` | Removes done to-dos |
+| `/progress-bar fold <section>` | Folds a section to one line. `unfold` opens it, `toggle` flips it |
 
 ## File format
 
@@ -87,13 +103,13 @@ progress nightly-import 2 5 "batch 3"
 | Field | Does |
 | --- | --- |
 | `log` | The log to read (`~/` allowed). Logs over 4 MB are read from their end |
-| `match` | Regex with two groups, done and total; the last match wins |
+| `match` | Regex with two groups, done and total. The last match wins |
 | `count` + `total` | Or: done = lines matching `count` (one per finished step) |
-| `step` | Optional regex; its last match (group 1) is shown as the step |
-| `error` | Optional regex; a match shows `✖ error` |
-| `process` | Optional `pgrep -f` pattern; gone before done shows `■ stopped` |
-| `startedAt` | Optional, ms; adds an ETA |
-| `label` | Optional name; the slug otherwise |
+| `step` | Optional regex. Its last match (group 1) is shown as the step |
+| `error` | Optional regex. A match shows `✖ error` |
+| `process` | Optional `pgrep -f` pattern. Gone before done shows `■ stopped` |
+| `startedAt` | Optional, ms. Adds an ETA |
+| `label` | Optional name, the slug otherwise |
 
 A psql script, one step per statement (`REFRESH MATERIALIZED VIEW` reports no progress of its own):
 
@@ -106,11 +122,46 @@ A psql script, one step per statement (`REFRESH MATERIALIZED VIEW` reports no pr
 ✔ db-refresh ████████████████████ 100.0% · 5/5 · 9m
 ```
 
+## To-dos
+
+`~/.claude-progress/todo.txt`, shown first in the status line:
+
+```
+# comments start with #
+[you]
+Review the deploy PR | https://github.com/org/repo/pull/12
+x Rotate the token
+[mac]
+Load the 2026 batch
+```
+
+- **Headings:** any `[name]`, for a person or a machine. Each shows as one row: `YOU: item · item`.
+- **Done:** prefix `x `. Done items are hidden. `/progress-bar todo clear` removes them.
+- **Links:** `text | url` makes the text clickable in terminals that support links.
+- **Claude keeps it current:** the skill tells Claude to add items when work is queued or handed to you and to mark them done when finished.
+
+## Links
+
+Job names link to their progress file when one exists. To send a job somewhere else, add `~/.claude-progress/links.txt`, one `<regex> | <url>` per line, matched against the job name:
+
+```
+^deploy | http://localhost:3000
+import | file:///Users/me/logs/import.log
+```
+
+The first match wins. Clicking needs a terminal with link support (iTerm2, WezTerm, Kitty, Ghostty, VS Code).
+
 ## How it works
 
 - The plugin lists subagents, counts their tool calls and reads the progress files.
 - It writes subagent lines to `~/.claude-progress/.lines/agents-<session>.txt` (one file per open session, so sessions never overwrite each other) and job lines to `jobs.txt`. At most 6 lines each.
 - The status line script prints every `.lines/*.txt` file changed in the last 2 minutes. Other tools can drop their own lines there too.
+- `group.py` sorts those lines into sections, adds the to-dos and links, and remembers ended jobs in `~/.claude-progress/.state/group-seen.json`.
+
+## Fold sections
+
+- `/progress-bar fold done` hides a section as `▸ ✔ DONE (3)`. An open one shows `▾`. `unfold` opens it, `toggle` flips it. Sections: `todo`, `running`, `waiting`, `done`, `problems`, `all`.
+- The choice is saved in `~/.claude-progress/.state/folded.txt`, which `group.py` reads.
 
 ## Privacy
 
@@ -119,8 +170,3 @@ Everything stays on your machine. The plugin reads and writes only files under `
 ## License
 
 MIT
-
-## Fold sections
-
-- `/progress-bar fold done` hides a section as `▸ DONE (3)`. `unfold` opens it, `toggle` flips it. Sections: `todo`, `running`, `waiting`, `done`, `problems`, `all`.
-- The choice is saved in `~/.claude-progress/.state/folded.txt`, which a grouped status line reads.
