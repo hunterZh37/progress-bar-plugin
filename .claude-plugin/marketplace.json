@@ -1,0 +1,14 @@
+{
+  "name": "progress-bar",
+  "owner": {
+    "name": "OWNER"
+  },
+  "description": "Live progress bars in the Claude Code status line",
+  "plugins": [
+    {
+      "name": "progress-bar",
+      "source": "./",
+      "description": "Live progress bars in the status line for subagents and long jobs"
+    }
+  ]
+}
