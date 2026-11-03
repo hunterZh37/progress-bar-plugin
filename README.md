@@ -109,7 +109,7 @@ A psql script, one step per statement (`REFRESH MATERIALIZED VIEW` reports no pr
 ## How it works
 
 - The plugin lists subagents, counts their tool calls and reads the progress files.
-- It writes the lines to `~/.claude-progress/.lines/agents.txt`. At most 6 lines.
+- It writes subagent lines to `~/.claude-progress/.lines/agents-<session>.txt` (one file per open session, so sessions never overwrite each other) and job lines to `jobs.txt`. At most 6 lines each.
 - The status line script prints every `.lines/*.txt` file changed in the last 2 minutes. Other tools can drop their own lines there too.
 
 ## Privacy

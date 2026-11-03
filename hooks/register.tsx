@@ -32,7 +32,7 @@ async function watchRow($: EngineInterface, h: string, dir: string, name: string
 }
 
 // Subagents and shell jobs write { "done": 3, "total": 8, "step": "..." } to ~/.claude-progress/<slug>.json.
-// This module turns them, plus every running subagent, into lines at ~/.claude-progress/.lines/agents.txt,
+// This module turns them, plus every running subagent, into lines at ~/.claude-progress/.lines/agents-<session>.txt and jobs.txt,
 // which the status line script from `/progress-bar setup` prints.
 
 const LIVE = new Set(['pending', 'running', 'waiting'])
@@ -91,10 +91,19 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number }
   return { rows, now }
 }
 
+let sessionKey = ''
+
+// Each session writes its own subagents to agents-<session>.txt, so two open sessions never overwrite each other.
+// Job files (~/.claude-progress/*.json) are the same for every session, so they go to one shared jobs.txt.
 async function poll($: EngineInterface) {
   const { rows, now } = await collect($)
   if (!home) return
-  try { await $.fs.write(`${dirOf(home)}/.lines/agents.txt`, lines(rows, now).join('\n')) } catch { /* next poll */ }
+  if (!sessionKey) { try { sessionKey = (await $.session.id()).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 12) } catch { sessionKey = 'main' } }
+  const agents = rows.filter(r => !r.id.startsWith('file:'))
+  const jobs = rows.filter(r => r.id.startsWith('file:'))
+  const base = `${dirOf(home)}/.lines`
+  try { await $.fs.write(`${base}/agents-${sessionKey}.txt`, lines(agents, now).join('\n')) } catch { /* next poll */ }
+  try { await $.fs.write(`${base}/jobs.txt`, lines(jobs, now).join('\n')) } catch { /* next poll */ }
 }
 
 async function statusLineCommand($: EngineInterface): Promise<string | undefined> {

@@ -122,7 +122,7 @@ test('/progress-bar shows the bars and the setup state', async ($, on) => {
     '',
     'Status line: off. Run `/progress-bar setup`.',
   ].join('\n'))
-  expect(written[`${DIR}/.lines/agents.txt`]).toContain('▶ nightly-import')
+  expect(written[`${DIR}/.lines/jobs.txt`]).toContain("▶ nightly-import")
 })
 
 test('/progress-bar setup writes the script and chains the old status line', async ($, on) => {
