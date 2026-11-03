@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { line, lines, parseProgress, slug, statusScript } from '../hooks/render'
+import { eta, expandHome, line, lines, parseProgress, parseWatch, readLog, slug, statusScript } from '../hooks/render'
 
 const NOW = 1_800_000_000_000
 const HOME = '/home/u'
@@ -42,6 +42,36 @@ test('the script chains an earlier status line', async () => {
   expect(s).toContain(`prev='jq -r '\\''.model'\\'''`)
   expect(s).toContain('"$HOME/.claude-progress/.lines"')
   expect(statusScript()).toContain("prev=''")
+})
+
+test('a watch file counts done/total from the last match, with an ETA', async () => {
+  const w = parseWatch('{"log":"~/l.log","match":"(\\\\d+)/(\\\\d+) batches","startedAt":1}')!
+  expect(w.log).toBe('~/l.log')
+  const p = readLog(w, '  10/40 batches, 1 min\n  20/40 batches, 2 min\n')
+  expect(p).toEqual({ done: 20, total: 40, step: '', error: false })
+  expect(eta(20 * 60_000, p.done, p.total)).toBe('20m')
+  expect(expandHome('~/l.log', HOME)).toBe(`${HOME}/l.log`)
+})
+
+test('a watch file counts finished steps, a step and an error', async () => {
+  const w = parseWatch('{"log":"/x","count":"^(REFRESH MATERIALIZED VIEW|\\\\(1 row\\\\))$","total":5,"step":"^(REFRESH[A-Z ]+)$","error":"ERROR"}')!
+  const log = 'SET\n(1 row)\nREFRESH MATERIALIZED VIEW\nREFRESH MATERIALIZED VIEW\n'
+  expect(readLog(w, log)).toEqual({ done: 3, total: 5, step: 'REFRESH MATERIALIZED VIEW', error: false })
+  expect(readLog(w, log + 'ERROR:  out of memory\n').error).toBe(true)
+})
+
+test('unusable watch files are null', async () => {
+  expect(parseWatch('{"match":"(\\\\d+)/(\\\\d+)"}')).toBe(null)
+  expect(parseWatch('{"log":"/x"}')).toBe(null)
+  expect(parseWatch('{"log":"/x","count":"x"}')).toBe(null)
+  expect(parseWatch('{"log":"/x","match":"(unclosed"}')).toBe(null)
+})
+
+test('watched rows: done, stopped and error marks', async () => {
+  const base = { id: 'watch:j', description: 'j', status: 'running', startedAt: NOW - 9 * 60_000, tools: 0, lastTool: '', step: '' }
+  expect(line({ ...base, done: 5, total: 5, state: 'done', eta: '' }, NOW)).toBe('✔ j ████████████████████ 100.0% · 5/5 · 9m')
+  expect(line({ ...base, done: 2, total: 5, state: 'stopped', eta: '13m' }, NOW)).toBe('■ stopped j ████████░░░░░░░░░░░░ 40.0% · 2/5 · 9m · ETA 13m')
+  expect(line({ ...base, done: null, total: null, state: 'error' }, NOW)).toBe('✖ error j · 9m')
 })
 
 /** Runs `/progress-bar <args>` as the person would type it. */
@@ -110,6 +140,42 @@ test('/progress-bar when the status line is wired', async ($, on) => {
   world(on, { statusLine: { type: 'command', command: '~/.claude/progress-bar/statusline.sh' }, scriptExists: true })
   const { text } = await run($, '')
   expect(text).toContain('Status line: on.')
+})
+
+test('/progress-bar shows a watched log, and stopped when its process is gone', async ($, on) => {
+  const LOG = `${HOME}/logs/import.log`
+  let alive = true
+  mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  on('command.register', () => ({ value: { command: 'progress-bar' } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('agent.list', () => ({ value: [] as never }))
+  on('fs.list', (_, e) => ({
+    value: e.path === DIR ? [{ name: 'import.watch.json', kind: 'file', size: 10, mtimeMs: NOW - 3 * 60 * 60_000, isLink: false }] : [],
+  }))
+  on('fs.read', (_, e) => {
+    const files: Record<string, string> = {
+      [`${DIR}/import.watch.json`]: `{"log":"~/logs/import.log","match":"(\\\\d+)/(\\\\d+) batches","process":"^python .*import","startedAt":${NOW - 60 * 60_000}}`,
+      [LOG]: '  10/40 batches\n  20/40 batches\n',
+    }
+    const text = files[e.path]
+    if (text === undefined) throw new Error('ENOENT')
+    return { value: text }
+  })
+  on('fs.stat', (_, e) => {
+    if (e.path !== LOG) throw new Error('ENOENT')
+    return { value: { name: 'import.log', kind: 'file', size: 30, mtimeMs: NOW - 30 * 60_000, isLink: false } as never }
+  })
+  on('fs.write', () => ({ value: undefined }))
+  on('fs.exists', () => ({ value: false }))
+  on('settings.read', () => ({ value: {} as never }))
+  on('process.run', (_, e) => ({ value: { exitCode: e.argv[0] === 'pgrep' && !alive ? 1 : 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  // Log quiet for 30 min but the process lives: still shown, with an ETA from the hour so far.
+  expect((await run($, '')).text.split('\n')[0]).toBe('▶ import ██████████░░░░░░░░░░ 50.0% · 20/40 · 1h00m · ETA 1h00m')
+  // Process gone and log quiet past 10 min: hidden.
+  alive = false
+  expect((await run($, '')).text.split('\n')[0]).toBe('No running jobs. Try `/progress-bar demo`.')
 })
 
 test('/progress-bar with an unknown argument prints usage', async ($, on) => {

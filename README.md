@@ -12,6 +12,7 @@ Live progress bars in the Claude Code status line. One line per running subagent
 
 - **Subagents:** every running subagent gets a line with its age, tool calls and last tool.
 - **Real bars:** a subagent or shell job that writes `~/.claude-progress/<slug>.json` gets a bar with percent, count and step.
+- **Bars from logs:** a job that only writes a log (psql, a vendor tool, a remote job) gets a bar from a watch file: done/total read from the log by regex, an ETA, and `■ stopped` or `✖ error` when it dies or fails.
 - **Skill:** `progress-reporting` tells Claude to write those files for multi-step work and to ask subagents to do the same.
 - **Status line:** a small script prints the bars above your existing status line.
 
@@ -73,6 +74,36 @@ Shell helper:
 ```sh
 progress() { mkdir -p ~/.claude-progress; printf '{"done":%s,"total":%s,"step":"%s"}\n' "$2" "$3" "$4" > ~/.claude-progress/"$1".json; }
 progress nightly-import 2 5 "batch 3"
+```
+
+## Watch files: bars from a log
+
+`~/.claude-progress/<slug>.watch.json`, written once when the job starts:
+
+```json
+{"log": "~/logs/import.log", "match": "(\\d+)/(\\d+) batches", "process": "^python .*import\\.py", "startedAt": 1767225600000}
+```
+
+| Field | Does |
+| --- | --- |
+| `log` | The log to read (`~/` allowed). Logs over 4 MB are read from their end |
+| `match` | Regex with two groups, done and total; the last match wins |
+| `count` + `total` | Or: done = lines matching `count` (one per finished step) |
+| `step` | Optional regex; its last match (group 1) is shown as the step |
+| `error` | Optional regex; a match shows `✖ error` |
+| `process` | Optional `pgrep -f` pattern; gone before done shows `■ stopped` |
+| `startedAt` | Optional, ms; adds an ETA |
+| `label` | Optional name; the slug otherwise |
+
+A psql script, one step per statement (`REFRESH MATERIALIZED VIEW` reports no progress of its own):
+
+```json
+{"log": "~/logs/refresh.log", "count": "^(REFRESH MATERIALIZED VIEW|\\(1 row\\))$", "total": 5, "error": "ERROR"}
+```
+
+```
+▶ import ████████████░░░░░░░░ 61.0% · 5713/9366 · 2h10m · ETA 1h23m
+✔ db-refresh ████████████████████ 100.0% · 5/5 · 9m
 ```
 
 ## How it works

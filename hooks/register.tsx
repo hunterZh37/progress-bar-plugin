@@ -1,7 +1,35 @@
 import type { EngineInterface, Register } from 'claude-code'
 
-import { FRESH_MS, lines, parseProgress, slug, statusScript } from './render'
+import { FRESH_MS, eta, expandHome, lines, parseProgress, parseWatch, readLog, slug, statusScript } from './render'
 import type { Progress, Row } from './render'
+
+const WATCH = '.watch.json'
+const MAX_LOG = 4 * 1024 * 1024 // bigger logs are read from their last 4 MB
+
+/** A row for one watch file, or null when its log is missing or the job is long over. */
+async function watchRow($: EngineInterface, h: string, dir: string, name: string, now: number): Promise<Row | null> {
+  let w
+  try { w = parseWatch(String(await $.fs.read(`${dir}/${name}`))) } catch { return null }
+  if (!w) return null
+  const log = expandHome(w.log, h)
+  let st
+  try { st = await $.fs.stat(log) } catch { return null }
+  let text = ''
+  try {
+    text = st.size > MAX_LOG
+      ? (await $.process.run(['tail', '-c', String(MAX_LOG), log])).stdout
+      : String(await $.fs.read(log))
+  } catch { return null }
+  const p = readLog(w, text)
+  const alive = w.process ? (await $.process.run(['pgrep', '-f', w.process]).catch(() => ({ exitCode: 1 }))).exitCode === 0 : null
+  const finished = p.done !== null && p.total !== null && p.done >= p.total
+  const state = p.error ? 'error' : finished ? 'done' : alive === false ? 'stopped' : 'running'
+  // A running job shows while its process lives or its log keeps changing; an ended one for FRESH_MS after its last write.
+  if (!(alive === true && !finished) && now - st.mtimeMs > FRESH_MS) return null
+  const startedAt = w.startedAt ?? st.mtimeMs
+  const label = w.label ?? name.slice(0, -WATCH.length)
+  return { id: `watch:${label}`, description: label, status: 'running', startedAt, tools: 0, lastTool: '', done: p.done, total: p.total, step: p.step, state, eta: w.startedAt ? eta(now - w.startedAt, p.done, p.total) : '' }
+}
 
 // Subagents and shell jobs write { "done": 3, "total": 8, "step": "..." } to ~/.claude-progress/<slug>.json.
 // This module turns them, plus every running subagent, into lines at ~/.claude-progress/.lines/agents.txt,
@@ -48,6 +76,11 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number }
   let files: Awaited<ReturnType<typeof $.fs.list>> = []
   try { files = await $.fs.list(dir) } catch { files = [] }
   for (const f of files) {
+    if (f.kind === 'file' && f.name.endsWith(WATCH)) {
+      const r = await watchRow($, h, dir, f.name, now)
+      if (r) rows.push(r)
+      continue
+    }
     if (f.kind !== 'file' || !f.name.endsWith('.json')) continue
     const name = f.name.slice(0, -5)
     if (used.has(name) || now - f.mtimeMs > FRESH_MS) continue
@@ -136,7 +169,10 @@ async function clear($: EngineInterface) {
     let files: Awaited<ReturnType<typeof $.fs.list>> = []
     try { files = await $.fs.list(dir + sub) } catch { files = [] }
     for (const f of files) {
-      if (f.kind === 'file' && /\.(json|txt)$/.test(f.name) && now - f.mtimeMs > maxAge) stale.push(`${dir}${sub}/${f.name}`)
+      if (f.kind !== 'file' || !/\.(json|txt)$/.test(f.name) || now - f.mtimeMs <= maxAge) continue
+      // A watch file is written once; it is stale only when its job no longer shows.
+      if (sub === '' && f.name.endsWith(WATCH) && (await watchRow($, h, dir, f.name, now))) continue
+      stale.push(`${dir}${sub}/${f.name}`)
     }
   }
   if (stale.length) await $.process.run(['rm', '-f', ...stale]).catch(() => undefined)

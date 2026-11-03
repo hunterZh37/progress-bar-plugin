@@ -1,7 +1,9 @@
 ---
 name: progress-reporting
-description: Report progress of multi-step work to the progress-bar status line. Use when running a job with several steps, a long shell or background job, or when briefing a subagent whose work has clear steps.
+description: Report progress of multi-step work to the progress-bar status line. Use whenever you start a job likely to run over a minute (a background shell job, a database refresh or migration, a data load, a remote or GPU job), when running a job with several steps, or when briefing a subagent whose work has clear steps.
 ---
+
+**Rule: every long job gets a bar when you start it, not when the person asks.** If the job can write a progress file, use that. If it can't (psql, a vendor tool, a job on another machine), write a watch file for its log (below). Postgres `REFRESH MATERIALIZED VIEW`, `CREATE INDEX` and big `UPDATE`s report nothing on their own: count finished statements from the psql log.
 
 # Progress reporting
 
@@ -26,6 +28,34 @@ Path: `~/.claude-progress/<slug>.json`
 - **Your own multi-step job:** write the file after each step, overwriting it. Count the steps up front.
 - **Briefing a subagent:** name the slug from the subagent's `description` and add to its prompt: "After each step overwrite `~/.claude-progress/<slug>.json` with `{"done": N, "total": T, "step": "<short>"}`. Delete it when finished. Steps: ...". The plugin then puts the bar on that subagent's line.
 - **Background shell jobs:** have the script write the file itself (below).
+
+## Jobs that only write a log: watch files
+
+Path: `~/.claude-progress/<slug>.watch.json`, written once when the job starts. The plugin reads the log every 5 seconds.
+
+```json
+{"log": "~/logs/import.log", "match": "(\\d+)/(\\d+) batches", "process": "import.py", "startedAt": 1767225600000}
+```
+
+- **Count by `match`:** a regex with two groups, done and total. The last match in the log wins.
+- **Or by `count` + `total`:** done is how many lines match `count`, one per finished step.
+- **`step`:** optional regex; group 1 of its last match (or the whole match) is shown as the step.
+- **`error`:** optional regex; a match shows `✖ error`.
+- **`process`:** optional `pgrep -f` pattern. Gone before done shows `■ stopped`. Pick a pattern that matches only the job, not your own shell (`^python .*import\.py`).
+- **`startedAt`:** set it (`date +%s000`) to get an ETA.
+- **`label`:** the name shown; the slug otherwise.
+- Done shows `✔` and the row hides 10 minutes after the log's last write. Delete the watch file when you've reported the result.
+
+**psql script, one step per statement:** run it with `-X -v ON_ERROR_STOP=1 -f job.sql > job.log 2>&1` and count result tags:
+
+```sh
+cat > ~/.claude-progress/db-refresh.watch.json <<EOF
+{"log": "$PWD/job.log", "count": "^(REFRESH MATERIALIZED VIEW|CREATE INDEX|UPDATE \\\\d+|\\\\(1 row\\\\))$", "total": 5,
+ "error": "^(psql:.*)?ERROR", "process": "psql .*job\\\\.sql", "startedAt": $(date +%s000)}
+EOF
+```
+
+**Job on another machine:** sync its log here in the background (`while sleep 20; do scp -q host:job.log ~/logs/job.log; done`) and watch the copy.
 
 ## When done
 
