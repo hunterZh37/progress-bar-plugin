@@ -1,5 +1,6 @@
 import type { EngineInterface, Register } from 'claude-code'
 
+import { EVENTS_PY } from './events'
 import { GROUP_PY } from './group'
 import { resolveHome } from './home'
 import { macClicks, parseMacClicks } from './mac'
@@ -42,6 +43,7 @@ async function watchRow($: EngineInterface, h: string, dir: string, name: string
 const LIVE = new Set(['pending', 'running', 'waiting'])
 const SCRIPT_REL = '.claude/progress-bar/statusline.sh'
 const GROUP_REL = '.claude/progress-bar/group.py'
+const EVENTS_PY_REL = '.claude/progress-bar/events.py'
 const DEMO = 'progress-bar-demo'
 const USAGE = [
   'Usage: /progress-bar [setup | demo | clear | todo | panel [on|off] | fold <section> | unfold <section> | toggle <section>]',
@@ -187,13 +189,19 @@ async function setup($: EngineInterface) {
   const path = `${h}/${SCRIPT_REL}`
   const prev = current && !current.includes(SCRIPT_REL) ? current : await installedPrev($, path)
   await $.fs.write(path, statusScript(prev))
-  await $.fs.write(`${h}/${GROUP_REL}`, GROUP_PY)
+  await writeLib($, h)
   await $.process.run(['chmod', '+x', path]).catch(() => undefined)
   const chain = prev ? `\nIt runs your current status line after the bars: ${prev}` : ''
   const done = current?.includes(SCRIPT_REL)
     ? 'Your settings already point at it.'
     : `Add this to ~/.claude/settings.json (replacing any "statusLine" there):\n  ${snippet}`
-  return `Wrote ${path} and group.py beside it.${chain}\n${done}\n"refreshInterval": 1 redraws the status line every second.`
+  return `Wrote ${path}, with group.py and events.py beside it.${chain}\n${done}\n"refreshInterval": 1 redraws the status line every second.`
+}
+
+/** Writes group.py and events.py (the Log tab's events log) beside the status line script. */
+async function writeLib($: EngineInterface, h: string) {
+  await $.fs.write(`${h}/${GROUP_REL}`, GROUP_PY)
+  await $.fs.write(`${h}/${EVENTS_PY_REL}`, EVENTS_PY)
 }
 
 /** The command an installed script chains, so running setup again keeps it. */
@@ -207,7 +215,7 @@ async function refreshInstalled($: EngineInterface) {
   const path = `${h}/${SCRIPT_REL}`
   if (!h || !(await $.fs.exists(path).catch(() => false))) return
   await $.fs.write(path, statusScript(await installedPrev($, path)))
-  await $.fs.write(`${h}/${GROUP_REL}`, GROUP_PY)
+  await writeLib($, h)
 }
 
 /** `/progress-bar panel [on|off]`: the panel runs the installed script, so it needs setup first. */
@@ -223,7 +231,7 @@ async function setupMacClicks($: EngineInterface, mode: 'on' | 'off') {
   const h = await resolveHome($)
   if (!h) return 'Could not find your home folder ($HOME is unset).'
   const text = await macClicks($, h, mode)
-  if (mode === 'on' && text.startsWith('Click to fold is on')) await $.fs.write(`${h}/${GROUP_REL}`, GROUP_PY)
+  if (mode === 'on' && text.startsWith('Click to fold is on')) await writeLib($, h)
   return text
 }
 

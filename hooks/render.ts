@@ -1,5 +1,7 @@
 // Pure helpers: no `$`, so tests import them directly.
 
+import type { Meta } from '../types'
+
 export type Progress = { done: number | null; total: number | null; step: string; startedAt?: number }
 
 export type Row = {
@@ -125,6 +127,29 @@ export function parseProgress(text: string): Progress | null {
   } catch {
     return null
   }
+}
+
+/** The `title`, `why` and `parent` strings of a parsed progress file, the ones present and not empty. */
+export function pickMeta(p: unknown): Meta {
+  const m: Meta = {}
+  if (!p || typeof p !== 'object') return m
+  for (const k of ['title', 'why', 'parent'] as const) {
+    const v = (p as Record<string, unknown>)[k]
+    if (typeof v === 'string' && v.trim()) m[k] = v.trim()
+  }
+  return m
+}
+
+/** ~/.claude-progress/titles.txt: `<job id><TAB><title><TAB><why><TAB><parent>` per line, keyed by the job id's slug. */
+export function parseTitles(text: string): Record<string, Meta> {
+  const out: Record<string, Meta> = {}
+  for (const l of text.split('\n')) {
+    if (!l.trim() || l.startsWith('#')) continue
+    const [id = '', title = '', why = '', parent = ''] = l.split('\t').map(x => x.trim())
+    const m = pickMeta({ title, why, parent })
+    if (slug(id) && Object.keys(m).length) out[slug(id)] = m
+  }
+  return out
 }
 
 /** One status-line row: `▶ name ████████░░░░░░░░░░░░ 40.0% · 2/5 · step · 3m`. */

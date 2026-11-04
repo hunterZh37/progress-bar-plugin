@@ -5,9 +5,10 @@ import type { On } from 'claude-code'
 import { CONN_CACHE_REL, connName, connSummary, formatCache, parseAccounts, parseCache, parseLogin, parseMcpList } from '../hooks/connectors'
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
-import { PANE, maxMeter, parseSections, runCard, shortAge, slide, stripAnsi } from '../hooks/panel'
+import { PANE, badge, evId, maxMeter, nestRows, parseSections, runCard, shortAge, slide, stripAnsi } from '../hooks/panel'
+import { EVENTS_PY, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from '../hooks/events'
 import { REPOS_REL, parseBranches, parseCommits, webUrl } from '../hooks/github'
-import { eta, expandHome, line, lines, parseProgress, parseWatch, prevOf, readLog, slug, statusScript, todoAdd, todoClear, todoDone, todoItems, todoList } from '../hooks/render'
+import { eta, expandHome, line, lines, parseProgress, parseTitles, pickMeta, parseWatch, prevOf, readLog, slug, statusScript, todoAdd, todoClear, todoDone, todoItems, todoList } from '../hooks/render'
 
 const NOW = 1_800_000_000_000
 const HOME = '/home/u'
@@ -337,7 +338,7 @@ test('the panel parser: sections, counts, folded headers and trailing lines', as
   expect(other).toEqual(['opus 4 · main'])
   expect(runCard(sections[1]!.rows[0]!)).toEqual({
     mark: '⚠', stuck: '12m', name: 'nightly-import', pct: 80, count: '4 of 5 steps', kind: { icon: '⚙', text: 'job' },
-    step: 'batch 4', facts: '⏱ 12m so far', maxUsed: null,
+    step: 'batch 4', facts: '⏱ 12m so far', maxUsed: null, waitOn: '',
   })
   expect(runCard(sections[1]!.rows[1]!).mark).toBe('◐')
 })
@@ -391,7 +392,8 @@ function panelWorld(on: On, files: Record<string, string>, full = FULL, answer: 
   on('command.register', () => ({ value: { command: 'progress-bar' } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('agent.list', () => ({ value: [] as never }))
-  on('fs.list', () => ({ value: [] }))
+  // The files directly in a folder, all changed just now.
+  on('fs.list', (_, e) => ({ value: Object.keys(files).filter(f => f.startsWith(`${e.path}/`) && !f.slice(e.path.length + 1).includes('/')).map(f => ({ name: f.slice(e.path.length + 1), kind: 'file' as const, size: 1, mtimeMs: NOW, isLink: false })) }))
   on('fs.read', (_, e) => {
     const text = files[e.path]
     if (text === undefined) throw new Error('ENOENT')
@@ -434,7 +436,7 @@ test('the panel draws sections and rows, and a header press writes folded.txt', 
   expect((await ui.find({ type: 'Text', text: /no progress/ }))?.text).toBe('    no progress for 12m')
   expect((await ui.find({ type: 'Text', text: /▸ batch 4/ }))?.text).toBe('    ▸ batch 4')
   expect((await ui.find({ type: 'Text', text: /so far/ }))?.text).toBe('    ⏱ 12m so far')
-  expect((await ui.find({ type: 'Text', text: /🤖/ }))?.text).toBe('  🤖 Claude agent')
+  expect((await ui.find({ type: 'Text', text: /🤖/ }))?.text).toBe('   🤖  Claude agent')
   await ui.press({ key: 'h-running' })
   expect(files[FOLDED]).toBe('running')
   await ui.press({ key: 'h-running' })
@@ -708,5 +710,159 @@ test('the GitHub tab draws the repo, other branches and commits, and a press ope
   await ui.press({ key: 'gh-repo' })
   await ui.press({ key: 'cb-abc1234' })
   expect(ran.filter(r => r.argv[0] === 'open' || r.argv[0] === 'xdg-open').length).toBe(opens)
+  await ui.unmount()
+})
+
+test('titles: progress-file fields and titles.txt columns', async () => {
+  expect(pickMeta({ done: 1, title: ' Nightly import ', why: '', parent: 'big-batch', x: 2 })).toEqual({ title: 'Nightly import', parent: 'big-batch' })
+  expect(pickMeta('nope')).toEqual({})
+  expect(parseTitles('# id\ttitle\twhy\tparent\nbox: Rebuild\tRebuild lists\tsearch pages\tbig-batch\nnightly-import\tNightly import\n\nlonely\n')).toEqual({
+    'box-rebuild': { title: 'Rebuild lists', why: 'search pages', parent: 'big-batch' },
+    'nightly-import': { title: 'Nightly import' },
+  })
+})
+
+test('running cards: N% CPU is a busy process, not progress; waiting on; spaced badges', async () => {
+  const c = runCard('◐ box: train.py · 540% CPU · 12:50')
+  expect(c.pct).toBe(null)
+  expect(c.kind).toEqual({ icon: '🖥', text: 'on box' })
+  expect(c.facts).toBe('⚙ 5.4 cores busy   ⏱ 12:50 running')
+  expect(c.step).toBe('')
+  expect(runCard('◐ big ██░░ 50.0% · 1/2 · a step · waiting on: Child job').waitOn).toBe('Child job')
+  expect(badge({ icon: '🏷', text: 'labeling' })).toBe('🏷  labeling')
+})
+
+test('nesting: one level under a running parent, loops keep their own cards', async () => {
+  const meta = { kid: { parent: 'big' }, grandkid: { parent: 'kid' }, a: { parent: 'b' }, b: { parent: 'a' }, orphan: { parent: 'gone' } }
+  expect(nestRows(['big', 'kid', 'grandkid', 'orphan'], meta)).toEqual([{ i: 0, kids: [1] }, { i: 2, kids: [] }, { i: 3, kids: [] }])
+  expect(nestRows(['a', 'b'], meta)).toEqual([{ i: 0, kids: [] }, { i: 1, kids: [] }])
+})
+
+test('events: parsing, unseen errors, log folders and the open-log check', async () => {
+  const raw = [
+    JSON.stringify({ ts: 100, level: 'error', source: 'x', title: 'X crashed', detail: 'boom', path: '/logs/x.log' }),
+    'not json',
+    JSON.stringify({ ts: 300, level: 'weird', source: 'y', title: 'Y note' }),
+    JSON.stringify({ ts: 200, level: 'error', title: 'Z crashed' }),
+  ].join('\n')
+  const evs = parseEvents(raw)
+  expect(evs.map(e => [e.ts, e.level, e.title])).toEqual([[300, 'info', 'Y note'], [200, 'error', 'Z crashed'], [100, 'error', 'X crashed']])
+  expect(evs[2]).toEqual({ ts: 100, level: 'error', source: 'x', title: 'X crashed', detail: 'boom', path: '/logs/x.log' })
+  expect(unseenErrors(evs, 150, 1000)).toBe(1)
+  expect(unseenErrors(evs, 0, 100 + 86_400 + 1)).toBe(1)
+  expect(parseLogDirs('# c\n~/logs/\nrelative\n/srv/jobs\n/\n', HOME)).toEqual([`${HOME}/logs`, '/srv/jobs'])
+  expect(insideDirs(`${HOME}/logs/a.log`, [`${HOME}/logs`])).toBe(true)
+  expect(insideDirs(`${HOME}/logs/../.ssh/id`, [`${HOME}/logs`])).toBe(false)
+  expect(insideDirs(`${HOME}/logsx/a.log`, [`${HOME}/logs`])).toBe(false)
+  expect(insideDirs('/etc/passwd', [`${HOME}/logs`])).toBe(false)
+  expect(insideDirs(`${HOME}/logs/a.log`, [])).toBe(false)
+  expect(evId(evs[0]!)).toBe('300-y-y-note')
+  expect(hhmm(0).length).toBe(5)
+})
+
+test('events.py is stdlib python, safe to embed, and setup installs it beside group.py', async () => {
+  expect(EVENTS_PY.startsWith('#!/usr/bin/env python3')).toBe(true)
+  expect(EVENTS_PY).toContain('log-dirs.txt')
+  expect(EVENTS_PY).not.toContain('${')
+  expect(EVENTS_PY).not.toContain('hunty')
+  expect(EVENTS_PY).not.toContain('label-logs')
+  expect(GROUP_PY).toContain("'events.py'")
+})
+
+test('/progress-bar setup writes events.py beside group.py', async ($, on) => {
+  const { written } = world(on)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const { text } = await run($, 'setup')
+  expect(written[`${HOME}/.claude/progress-bar/events.py`]).toBe(EVENTS_PY)
+  expect(text).toContain('group.py and events.py')
+})
+
+const TITLED_FULL = [
+  '▾ ▶ RUNNING',
+  '  ⚠ stuck 12m big-batch ███░ 75.0% · 6/8 · rebuild · 22m · 52 tools',
+  '  ◐ child-step ██░░ 50.0% · 1/2 · y',
+  '  ◐ box: train.py · 540% CPU · 12:50',
+  '  ◐ other ██░░ 50.0% · 1/2 · a step · waiting on: Child job',
+  '▾ ✔ DONE',
+  '  finisher ████████████████████ 100.0% · 7/7 · tests pass · 6m · 38 tools',
+  '  nightly · finished 10:12',
+].join('\n')
+
+test('the panel: titles, ids with badges, unlocks, a nested child, waiting on and one-line DONE rows', async ($, on) => {
+  const files: Record<string, string> = {
+    [SCRIPT]: statusScript(), [FLAG]: 'on\n',
+    [`${DIR}/titles.txt`]: '# id\ttitle\twhy\tparent\nnightly\tNightly import · all files\nbox: train.py\tTrain the model\tbetter search\n',
+    [`${DIR}/big-batch.json`]: '{"done":6,"total":8,"title":"Big batch · six parts","why":"unlocks: the weekly report"}',
+    [`${DIR}/child-step.json`]: '{"done":1,"total":2,"parent":"big-batch","title":"Child step"}',
+    [`${DIR}/finisher.json`]: '{"done":7,"total":7,"title":"Finisher · last part"}',
+  }
+  panelWorld(on, files, TITLED_FULL)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 60 } })
+  const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(texts).toContain('Big batch · six parts')
+  expect(texts).toContain('    big-batch   🤖  Claude agent')
+  expect(texts).toContain('    unlocks: the weekly report')
+  // The stuck parent with a running child: no stuck note, waiting on the child's title. The child nests under it.
+  expect(texts.some(t => /no progress for/.test(t))).toBe(false)
+  expect(texts).toContain('    ▸ waiting on: Child step')
+  expect(texts).toContain('      ↳ ')
+  expect(texts.indexOf('Child step')).toBeGreaterThan(texts.indexOf('Big batch · six parts'))
+  expect(texts).toContain('        child-step   ⚙  job')
+  // A busy process: no bar at 540%, cores and run time instead.
+  expect(texts).toContain('Train the model')
+  expect(texts).toContain('    box: train.py   🖥  on box')
+  expect(texts.some(t => /540/.test(t))).toBe(false)
+  expect(texts).toContain('    ⚙ 5.4 cores busy   ⏱ 12:50 running')
+  expect(texts).toContain('    unlocks: better search')
+  // The grouper already said what it waits on.
+  expect(texts).toContain('    ▸ waiting on: Child job')
+  // DONE: one dim line for a row at 100%, titles for finished jobs.
+  expect(texts).toContain('  ✓ Finisher  finishing · 7/7')
+  expect(texts).toContain('  ✓ Nightly import  10:12')
+  expect(texts.some(t => /█/.test(t) && /finish/.test(t))).toBe(false)
+  await ui.unmount()
+})
+
+test('the Log tab: !N unseen errors, counts, filters, detail, open log only inside log folders', async ($, on) => {
+  const S = NOW / 1000
+  const ev = (ts: number, level: string, title: string, extra = {}) => JSON.stringify({ ts, level, source: 'nightly', title, ...extra })
+  const files: Record<string, string> = {
+    [SCRIPT]: statusScript(), [FLAG]: 'on\n',
+    [`${DIR}/log-dirs.txt`]: '~/logs\n',
+    [`${DIR}/events.jsonl`]: [
+      ev(S - 600, 'success', 'Arts done'),
+      ev(S - 300, 'warning', 'Nightly stuck', { detail: 'no progress for 12m' }),
+      ev(S - 60, 'error', 'Nightly crashed', { detail: 'Traceback\nValueError: bad', path: `${HOME}/logs/nightly.log` }),
+      ev(S - 30, 'error', 'Outside path', { path: '/etc/passwd' }),
+      'not json',
+    ].join('\n'),
+    [`${DIR}/.state/log-seen.txt`]: String(S - 100),
+  }
+  const { ran } = panelWorld(on, files, '▾ ▶ RUNNING\n  ◐ job ██░░ 50.0% · 1/2\n')
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  expect((await ui.find({ type: 'Button', key: 'tab-log' }))?.text).toBe(' Log !2')
+  await ui.press({ key: 'tab-log' })
+  expect(files[`${DIR}/.state/log-seen.txt`]).toBe(String(S))
+  expect((await ui.find({ type: 'Button', key: 'tab-log' }))?.text).toBe('▌Log')
+  expect((await ui.find({ type: 'Text', text: /✖ 2 errors/ }))?.text).toBe('✖ 2 errors  ')
+  expect((await ui.find({ type: 'Text', text: /⚠ 1 warning / }))?.text).toBe('⚠ 1 warning  ')
+  expect((await ui.find({ type: 'Text', text: /✓ 1 done/ }))?.text).toBe('✓ 1 done')
+  const rows = async () => (await ui.findAll({ type: 'Button' })).filter(b => /^ev-/.test(b.key ?? ''))
+  expect((await rows()).map(b => b.text ?? '')[0]).toContain('Outside path')
+  const crashed = (await rows()).find(b => /Nightly crashed/.test(b.text ?? ''))!
+  await ui.press({ key: crashed.key! })
+  expect(await ui.find({ type: 'Text', text: /ValueError: bad/ })).toBeDefined()
+  await ui.press({ key: (await ui.find({ type: 'Button', text: /open log/ }))!.key! })
+  expect(ran.some(r => /open$/.test(r.argv[0]!) && r.argv[1] === `${HOME}/logs/nightly.log`)).toBe(true)
+  const outside = (await rows()).find(b => /Outside path/.test(b.text ?? ''))!
+  await ui.press({ key: outside.key! })
+  expect(await ui.find({ type: 'Button', text: /open log/ })).toBe(undefined)
+  expect(ran.some(r => r.argv[1] === '/etc/passwd')).toBe(false)
+  await ui.press({ key: 'lf-warning' })
+  const shown = await rows()
+  expect(shown.length).toBe(1)
+  expect(shown[0]!.text).toContain('Nightly stuck')
   await ui.unmount()
 })

@@ -14,12 +14,17 @@ The progress-bar plugin draws a bar for every progress file in `~/.claude-progre
 Path: `~/.claude-progress/<slug>.json`
 
 ```json
-{"done": 2, "total": 5, "step": "run tests", "startedAt": 1767225600000}
+{"done": 2, "total": 5, "step": "run tests", "startedAt": 1767225600000,
+ "title": "Login fix · tests and deploy", "why": "people can sign in again", "parent": "release-prep"}
 ```
 
 - **done**, **total**: numbers, `total` above 0. Without them the line shows `working`.
 - **step**: a few words on the current step.
 - **startedAt**: optional, milliseconds since the epoch. Without it the file's time is used.
+- **title**: plain words for what the job is, so a person knows it at a glance. The Status panel shows it in bold above the slug.
+- **why**: what the job unlocks for the person (`the weekly report`). Shown as `unlocks: …`.
+- **parent**: the slug of the bigger job this is part of. Set it when a subagent or script works for another job that has a progress file. While both run, the child draws inside the parent's card, and the parent reads `waiting on: <child>` instead of stuck.
+- A job that can't write these (a log-only job) can get a line in `~/.claude-progress/titles.txt`: `<job id><TAB><title><TAB><why><TAB><parent>`.
 
 **Slug rule:** lowercase the job's name and turn every run of characters other than `a-z` and `0-9` into `-`, trimming `-` at both ends. `Fix the Login bug!` becomes `fix-the-login-bug`.
 
@@ -60,6 +65,16 @@ EOF
 ## When done
 
 Delete the file. A file untouched for 10 minutes stops showing anyway.
+
+## Events: the Status panel's Log tab
+
+Finishes, stuck jobs and problem rows are logged on their own. To log something else (a failure you caught, a result worth seeing later), append an event:
+
+```sh
+python3 ~/.claude/progress-bar/events.py add error nightly-import "Nightly import crashed" "ValueError: bad row 1204" ~/logs/nightly-import.log
+```
+
+Levels: `error`, `warning`, `success`, `info`. Keep the title to a few plain words. To have job logs scanned for errors, add their folder to `~/.claude-progress/log-dirs.txt`.
 
 ## To-dos: keep `~/.claude-progress/todo.txt` current
 

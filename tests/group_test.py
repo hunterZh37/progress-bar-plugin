@@ -1,17 +1,32 @@
-"""Tests for the status line grouper. Runs the exact GROUP_PY text from hooks/group.ts.
+"""Tests for the status line grouper and the events log. Runs the exact GROUP_PY text from hooks/group.ts
+and EVENTS_PY from hooks/events.ts.
 
 python3 tests/group_test.py
 """
-import io, os, re, shutil, sys, tempfile, time, types, unittest
+import io, json, os, re, shutil, subprocess, sys, tempfile, time, types, unittest
 
 SRC = open(os.path.join(os.path.dirname(__file__), '..', 'hooks', 'group.ts'), encoding='utf-8').read()
 PY = re.search(r'String\.raw`(.*)`', SRC, re.S).group(1)
+EV_SRC = open(os.path.join(os.path.dirname(__file__), '..', 'hooks', 'events.ts'), encoding='utf-8').read()
+EV_PY = re.search(r'EVENTS_PY = String\.raw`(.*)`', EV_SRC, re.S).group(1)
 
 
-def load(root):
+def load(root, lib=None):
+    """The grouper as group.py. With lib, it sits in that folder beside events.py, as setup installs it."""
     os.environ['PROGRESS_DIR'] = root
     mod = types.ModuleType('group')
+    if lib:
+        with open(os.path.join(lib, 'events.py'), 'w') as f:
+            f.write(EV_PY)
+        mod.__dict__['__file__'] = os.path.join(lib, 'group.py')
     exec(compile(PY, 'group.py', 'exec'), mod.__dict__)
+    return mod
+
+
+def load_events(root):
+    os.environ['PROGRESS_DIR'] = root
+    mod = types.ModuleType('events')
+    exec(compile(EV_PY, 'events.py', 'exec'), mod.__dict__)
     return mod
 
 
@@ -179,6 +194,140 @@ class Group(unittest.TestCase):
 
     def run_summary(self, text):
         return self.g.main(io.StringIO(text), T0, summary=True)
+
+    def test_cpu_percent_is_never_done_and_a_busy_process_never_finishes(self):
+        self.assertEqual(self.g.kind('▶ box: train.py · 100% CPU · 12:50'), 'running')
+        self.run_('▶ box: train.py · 540% CPU · 12:50\n', now=T0)
+        self.assertEqual(self.run_('', now=T0 + 60), [])
+
+    def test_stuck_parent_with_a_running_child_is_waiting_on_it(self):
+        self.write('big-batch.json', '{"done":1,"total":3}')
+        self.write('child-step.json', '{"done":1,"total":2,"parent":"big-batch","title":"Child step · details"}')
+        self.write('titles.txt', '# id\ttitle\twhy\tparent\nother-kid\tOther kid\t\tlonely\n')
+        self.run_('▶ big-batch ██░░ 1/3\n▶ child-step ██░░ 1/2\n▶ lonely ██░░ 1/9\n', now=T0)
+        out = self.run_('▶ big-batch ██░░ 1/3\n▶ child-step ███░ 2/2x\n▶ lonely ██░░ 1/9\n', now=T0 + 11 * 60)
+        self.assertIn('  ◐ big-batch ██░░ 1/3 · waiting on: Child step', out)
+        self.assertTrue(any(l.startswith('  \033[33m⚠ stuck 11m\033[0m lonely') for l in out))
+        summary = self.g.main(io.StringIO('▶ big-batch ██░░ 1/3\n▶ child-step ███░ 2/2x\n▶ lonely ██░░ 1/9\n'), T0 + 11 * 60, summary=True)
+        self.assertIn('⚠ 1 stuck', summary[0])
+
+    def test_titles_parent_column_and_child_that_changed_recently(self):
+        self.write('titles.txt', 'box: rebuild\tRebuild lists\twhat it unlocks\tparent-job\n')
+        self.run_('▶ parent-job ██░░ 1/3\n▶ box: rebuild ██░░ 1/5\n', now=T0)
+        self.run_('▶ parent-job ██░░ 1/3\n▶ box: rebuild ██░░ 2/5\n', now=T0 + 5 * 60)
+        # The child has vanished but changed 6 min ago: the parent still waits on it.
+        out = self.run_('▶ parent-job ██░░ 1/3\n', now=T0 + 11 * 60)
+        self.assertIn('  ◐ parent-job ██░░ 1/3 · waiting on: Rebuild lists', out)
+
+
+class Events(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.lib = tempfile.mkdtemp()
+        self.logs = tempfile.mkdtemp()
+        os.makedirs(os.path.join(self.root, '.state'))
+        self.g = load(self.root, self.lib)
+        self.ev = load_events(self.root)
+
+    def tearDown(self):
+        for d in (self.root, self.lib, self.logs):
+            shutil.rmtree(d)
+
+    def write(self, rel, text, base=None):
+        with open(os.path.join(base or self.root, rel), 'w') as f:
+            f.write(text)
+
+    def events(self):
+        try:
+            with open(os.path.join(self.root, 'events.jsonl')) as f:
+                return [json.loads(l) for l in f]
+        except FileNotFoundError:
+            return []
+
+    def test_grouper_logs_done_stuck_and_problem_once(self):
+        self.write('nightly.json', '{"done":1,"total":2,"title":"Nightly import · all files"}')
+        g = lambda text, t: self.g.main(io.StringIO(text), t)
+        g('▶ nightly ██░░ 1/2\n✖ error deploy · 1m\n', T0)
+        g('▶ nightly ██░░ 1/2\n✖ error deploy · 1m\n', T0 + 11 * 60)
+        g('▶ nightly ██░░ 1/2\n✖ error deploy · 1m\n', T0 + 12 * 60)
+        os.remove(os.path.join(self.root, 'nightly.json'))
+        g('✖ error deploy · 1m\n', T0 + 13 * 60)
+        g('✖ error deploy · 1m\n', T0 + 14 * 60)
+        got = [(e['level'], e['title']) for e in self.events()]
+        self.assertEqual(sorted(got), sorted([('error', 'deploy: problem'), ('warning', 'Nightly import stuck'), ('success', 'nightly done')]))
+
+    def test_summary_counts_unseen_errors_and_the_log_seen_file_clears_them(self):
+        now = time.time()
+        self.ev.emit('error', 'a', 'A crashed', ts=now - 60)
+        self.ev.emit('error', 'b', 'B crashed', ts=now - 30)
+        self.ev.emit('error', 'c', 'Old crash', ts=now - 2 * 86400)
+        self.ev.emit('warning', 'd', 'D stuck', ts=now - 10)
+        self.assertIn('✖ 2 errors', self.g.main(io.StringIO(''), now, summary=True)[0])
+        self.write('.state/log-seen.txt', str(int(now - 45)))
+        self.assertIn('✖ 1 error ·', self.g.main(io.StringIO(''), now, summary=True)[0])
+        self.write('.state/log-seen.txt', str(int(now)))
+        self.assertNotIn('error', self.g.main(io.StringIO(''), now, summary=True)[0])
+
+    def test_emit_keeps_the_newest_lines(self):
+        self.ev.CAP = 5
+        for i in range(8):
+            self.ev.emit('info', 's', 't' + str(i), ts=T0 + i)
+        self.assertEqual([e['title'] for e in self.events()], ['t3', 't4', 't5', 't6', 't7'])
+
+    def test_add_from_the_command_line(self):
+        p = os.path.join(self.lib, 'events.py')
+        env = dict(os.environ, PROGRESS_DIR=self.root)
+        subprocess.run([sys.executable, p, 'add', 'success', 'build', 'Build done', 'all 5 steps', '/x.log'], env=env, check=True)
+        e = self.events()[0]
+        self.assertEqual((e['level'], e['source'], e['title'], e['detail'], e['path']), ('success', 'build', 'Build done', 'all 5 steps', '/x.log'))
+        self.assertEqual(subprocess.run([sys.executable, p, 'unseen'], env=env, capture_output=True, text=True).stdout.strip(), '0')
+
+    def test_no_log_folders_means_no_scan(self):
+        self.assertFalse(self.ev.due())
+        self.write('log-dirs.txt', '# none here\n/does/not/exist\n')
+        self.assertFalse(self.ev.due())
+
+    def test_scan_errors_signals_limits_and_finishes_from_where_it_stopped(self):
+        self.write('log-dirs.txt', '# folders\n' + self.logs + '/\n')
+        self.assertTrue(self.ev.due())
+        self.assertFalse(self.ev.due())  # rate limited
+        old = os.path.join(self.logs, 'label-20260101-1200.log')
+        self.write('label-20260101-1200.log', '  1/9 batches\nTraceback (most recent call last):\n  File "x.py"\nsubprocess.CalledProcessError: died with <Signals.SIGTERM: 15>.\n', self.logs)
+        self.write('label-20260101-1300.log', '  2/9 batches\n', self.logs)
+        self.write('crash.log', 'start\nTraceback (most recent call last):\n  File "y.py", line 3\nValueError: bad\nrate limit hit, waiting\n', self.logs)
+        self.write('ok.log', 'step\n  4/4\n', self.logs)
+        past = time.time() - 300
+        for f in os.listdir(self.logs):
+            os.utime(os.path.join(self.logs, f), (past, past))
+        self.ev.scan()
+        got = {(e['source'], e['level'], e['title']) for e in self.events()}
+        self.assertEqual(got, {
+            ('label', 'warning', 'label stopped (restart or kill)'),
+            ('crash', 'error', 'crash crashed'),
+            ('crash', 'warning', 'crash: usage limit or billing'),
+            ('ok', 'success', 'ok done'),
+        })
+        stopped = next(e for e in self.events() if e['level'] == 'warning' and e['source'] == 'label')
+        self.assertTrue(stopped['detail'].startswith('resumed in label-20260101-1300.log'))
+        self.assertEqual(stopped['path'], old)
+        n = len(self.events())
+        self.ev.scan()
+        self.assertEqual(len(self.events()), n)  # offsets: nothing read twice
+        with open(old, 'a') as f:
+            f.write('ERROR: disk full\n')
+        self.ev.scan()
+        self.assertEqual(self.events()[-1]['title'], 'label: error')
+        self.assertEqual(self.ev.log_of('label'), old)
+
+    def test_grouper_starts_a_scan_when_due(self):
+        self.write('log-dirs.txt', self.logs + '\n')
+        self.write('x.log', 'ERROR boom\n', self.logs)
+        self.g.main(io.StringIO(''), time.time())
+        for _ in range(50):
+            if self.events():
+                break
+            time.sleep(0.1)
+        self.assertEqual(self.events()[0]['title'], 'x: error')
 
 
 if __name__ == '__main__':

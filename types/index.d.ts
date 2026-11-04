@@ -14,7 +14,18 @@ export type Conn = { name: string; kind: ConnKind; account?: string }
 /** Status panel: the last connector check (epoch ms, 0 for none), whether one runs now, the Claude login (email · org) and the list. */
 export type Conns = { at: number; checking: boolean; login: string; list: Conn[] }
 /** Status panel: the tab shown. */
-export type Tab = 'list' | 'connectors' | 'github'
+export type Tab = 'list' | 'connectors' | 'github' | 'log'
+
+/** Status panel: a job's plain-language title, what it unlocks and its parent job's slug, from its progress file or titles.txt. */
+export type Meta = { title?: string; why?: string; parent?: string }
+/** Log tab: an event's level. */
+export type Level = 'error' | 'warning' | 'success' | 'info'
+/** Log tab: one line of ~/.claude-progress/events.jsonl. `ts` is epoch seconds. */
+export type Ev = { ts: number; level: Level; source: string; title: string; detail?: string; path?: string }
+/** Log tab: the filter shown. */
+export type LogFilter = 'all' | 'error' | 'warning' | 'success'
+/** Log tab: events newest first, the filter, the id of the row showing its detail, when the tab was last opened (epoch s) and the log folders from log-dirs.txt. */
+export type Log = { events: Ev[]; filter: LogFilter; open: string; seenAt: number; dirs: string[] }
 
 /** GitHub tab: one local branch, ahead/behind its upstream. */
 export type Branch = { name: string; current: boolean; ahead: number; behind: number }
@@ -27,6 +38,6 @@ export type Gh = { repos: Repo[]; sel: number; at: number }
 
 declare module 'claude-code' {
   interface PluginState {
-    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh }
+    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log }
   }
 }

@@ -26,6 +26,8 @@ Live progress bars and a to-do list in the Claude Code status line. One line per
 - **Status panel:** an optional docked pane beside the chat with the same groups, foldable headers and a one-line status line.
 - **Connectors:** a second tab in the panel shows which MCP connectors are connected, need sign-in or failed.
 - **GitHub:** a third tab shows the session repo's branch, other branches and recent commits. Click one to open it on GitHub.
+- **Titles and parents:** a progress file can name its job in plain words (`title`), say what it unlocks (`why`) and point at a parent job (`parent`). Cards show the title, and a child draws inside its parent's card.
+- **Log:** a fourth tab lists errors, warnings and finishes from `~/.claude-progress/events.jsonl`, written by the grouper and by a scanner for your own log folders. Unseen errors show as `!N` on the tab and `✖ N errors` in the status line.
 
 ## Install
 
@@ -57,7 +59,7 @@ This writes `~/.claude/progress-bar/statusline.sh`. It never edits your settings
 ```
 
 - **`refreshInterval: 1`** redraws the status line every second, so bars move while Claude is idle.
-- **Grouping** runs through `~/.claude/progress-bar/group.py`, which setup writes beside the script. It needs only the system `python3`. Without it the lines print ungrouped.
+- **Grouping** runs through `~/.claude/progress-bar/group.py`, which setup writes beside the script with `events.py` (the events log). Both need only the system `python3`. Without it the lines print ungrouped.
 - **Updating the plugin?** Run setup again to get the new scripts.
 
 Already have a status line? Setup reads it and builds it into the script. The bars print first, then your old status line, which still gets the session JSON on stdin. Its lines print as is, below the groups. Run setup before you change the setting.
@@ -83,13 +85,28 @@ Already have a status line? Setup reads it and builds it into the script. The ba
 `~/.claude-progress/<slug>.json`:
 
 ```json
-{"done": 2, "total": 5, "step": "render pages", "startedAt": 1767225600000}
+{"done": 2, "total": 5, "step": "render pages", "startedAt": 1767225600000,
+ "title": "Docs site · all pages", "why": "the public help pages", "parent": "release-prep"}
 ```
 
+| Field | Does |
+| --- | --- |
+| `done`, `total` | Draw the bar. Leave them out and the line says `working` |
+| `step` | A few words on the current step |
+| `startedAt` | Optional, ms. The file's time otherwise |
+| `title` | Optional plain-language name. The card shows it in bold, with the id and badge dim below. The part before ` · ` names the job in the Log tab and in `waiting on:` |
+| `why` | Optional. What the job unlocks, shown dim as `unlocks: …` |
+| `parent` | Optional slug of the job this one is part of. While both run, this card draws inside the parent's, marked `↳` |
+
 - **Slug:** the job or subagent description, lowercased, each run of other characters turned into `-`. `Build docs!` becomes `build-docs`.
-- **done** and **total** draw the bar. Leave them out and the line says `working`.
-- **startedAt** is optional, in milliseconds.
 - **Delete the file when done.** Files older than 10 minutes are hidden.
+- **Jobs that can't write the file** (a log-only job, a row from another tool) get the same fields from `~/.claude-progress/titles.txt`, one job per line, tab separated: `<job id><TAB><title><TAB><why><TAB><parent>`. The job id is the name the row shows. Empty columns are fine, `#` starts a comment. A progress file's own fields win.
+
+```
+# job id	title	why	parent
+nightly-import	Nightly import · all files	the morning dashboard
+box: train.py	Train the model	better search	release-prep
+```
 
 Shell helper:
 
@@ -163,6 +180,7 @@ The first match wins. Clicking needs a terminal with link support (iTerm2, WezTe
 - It writes subagent lines to `~/.claude-progress/.lines/agents-<session>.txt` (one file per open session, so sessions never overwrite each other) and job lines to `jobs.txt`. At most 6 lines each.
 - The status line script prints every `.lines/*.txt` file changed in the last 2 minutes. Other tools can drop their own lines there too.
 - `group.py` sorts those lines into sections, adds the to-dos and links, and remembers ended jobs in `~/.claude-progress/.state/group-seen.json`.
+- With `events.py` beside it, `group.py` logs done, stuck and problem rows once each to `~/.claude-progress/events.jsonl` (sent keys in `.state/events-sent.json`) and starts a log folder scan in the background at most every 30 seconds (offsets in `.state/log-offsets.json`).
 
 ## Status panel
 
@@ -191,34 +209,49 @@ Optional. Shows the full groups in a docked pane named **Status**, and shrinks t
 The status line then reads:
 
 ```
-▶ 2 running · ⚠ 1 stuck · ☐ 3 to-do · full view in the Status panel
+▶ 2 running · ⚠ 1 stuck · ✖ 1 error · ☐ 3 to-do · full view in the Status panel
 ```
+
+`✖ N errors` shows only while the Log tab has unseen errors.
 
 - **Needs setup:** the panel runs `~/.claude/progress-bar/statusline.sh` with `PB_FULL=1` every second while it is open. `panel on` refreshes that script and `group.py` and keeps your chained status line.
 - **Fold:** press a header, or its hotkey (`1` to-do, `2` running, `3` done, `4` waiting, `5` problems). It writes `~/.claude-progress/.state/folded.txt`, the same file `/progress-bar fold` uses.
 - **Off by default:** `panel on` writes `~/.claude-progress/.state/panel-on`. With that file the pane opens at session start and the status line prints the summary. `panel off` deletes it and closes the pane. `/progress-bar panel` opens it once without turning it on.
 - **To-do menu:** click a to-do for Mark as done, Move back to to-do or Delete. It edits `~/.claude-progress/todo.txt`, on the line that still holds that item's text, so a line added since the panel drew never hits the wrong item. TO-DO lists open items only. Checked-off ones move to DONE under **Checked-off to-dos**, after finished jobs, and count there.
 - **Rows:** to-dos one per line under each owner, running jobs as cards (see **Running cards**), done jobs dimmed with their finish time.
-- **Tabs:** `▌List  │   Connectors  │   GitHub`, the shown one marked `▌`. **List** (the default) shows the sections above. **Connectors** shows your connectors, its label adding `!N` when N need attention. **GitHub** shows your repos.
+- **Tabs:** `▌List  │   Connectors  │   GitHub  │   Log`, the shown one marked `▌`. **List** (the default) shows the sections above. **Connectors** shows your connectors, its label adding `!N` when N need attention. **GitHub** shows your repos. **Log** shows the events log, its label adding `!N` for unseen errors.
 
 ## Running cards
 
 Each RUNNING job in the Status panel is a card, so every kind of job reads the same way.
 
 ```
-◐ healthcare-classify  🏷 labeling
+◐ Health care labels · 148K orgs
+  healthcare-classify   🏷  labeling
   ████████████░░░░░░░░ 64%  1,234 of 2,000 batches
   ▸ scoring
   ⏳ 1h19m left   ⏱ 42m so far   ⚡ 31/min
+  unlocks: the health care filter
 
-◓ Build docs  🤖 Claude agent
-  ░░░░███░░░░░░░░░░░░░  steps not reported
-  ⏱ 3m so far   🔧 12 actions · last: Edit
+◓ Release prep
+  release-prep   🤖  Claude agent
+  ████████████████░░░░ 75%  6 of 8 steps
+  ▸ waiting on: Train the model
+  ⏱ 22m so far   🔧 52 actions
+    ↳ Train the model
+      gpu-box: train.py   🖥  on gpu-box
+      ░░░░███░░░░░░░░░  steps not reported
+      ⚙ 5.4 cores busy   ⏱ 12:50 running
 
 Claude Max this week  ██████░░░░  62% used
 ```
 
-- **Kind badge:** 🏷 **labeling** for names ending `-classify`, `-verify`, `-judge` or `-candidates`. 🖥 **on host** for names starting `host:` (any `name:` prefix, such as `gpu-box:train`). 🤖 **Claude agent** when the row reports `N tools`. ⚙ **job** for the rest.
+- **Title:** from `title` in the progress file or `titles.txt`. The card shows it in bold, then the job id and badge dim on the next line. Without a title the id is the heading, badge beside it.
+- **Unlocks:** `why` shows dim at the bottom as `unlocks: …`.
+- **Children:** a job whose `parent` is also running draws inside the parent's card, indented and marked `↳`. One level only: a parent that has a running parent of its own keeps its own card.
+- **Waiting on:** a parent whose numbers have not moved is not stuck while a child runs or changed in the last 10 minutes. Its step line reads `▸ waiting on: <child title>` instead of `no progress for`. The grouper does the same in the status line.
+- **Kind badge:** 🏷  **labeling** for names ending `-classify`, `-verify`, `-judge` or `-candidates`. 🖥  **on host** for names starting `host:` or `host: ` (any `name:` prefix, such as `gpu-box: train.py`). 🤖  **Claude agent** when the row reports `N tools`. ⚙  **job** for the rest.
+- **Busy processes:** a row detail `N% CPU` is never progress. The card shows the sliding piece and `⚙ N cores busy`, and a ps run time (`12:50`) as `⏱ 12:50 running`. A busy process that ends never shows as finished.
 - **Name:** a trailing status word (`working`, `running`, `pending`, `waiting`) is left out.
 - **Bar:** the percent, then `a of b steps` (or `batches` when the row says `a/b batches`).
 - **No percent:** a 3-block piece slides along the bar with `steps not reported`, so it still reads as working.
@@ -226,6 +259,49 @@ Claude Max this week  ██████░░░░  62% used
 - **Step line:** `▸ step`, from any detail that is not a number or time.
 - **Facts line:** `⏳ X left` (from `X left`, `ETA X` or `done in X`), `⏱ Y so far`, `⚡ N/min`, `🔧 N actions · last: Tool`.
 - **Claude Max meter:** one shared meter under RUNNING, from a row detail `7d N%` or `Max 7-day used N%` (the highest one). Green under 50%, yellow under 80%, red above.
+- **Done at 100%:** a row that reached 100% but still reports shows under DONE as one dim line, `✓ <title>  finishing · 7/7`, without a bar.
+
+## Log tab
+
+The **Log** tab of the Status panel lists what happened to your jobs, newest first.
+
+```
+ List  │   Connectors  │   GitHub  │  ▌Log
+
+✖ 1 error  ⚠ 1 warning  ✓ 3 done   last 24 h
+▌All   Errors   Warnings   Done
+
+✖ 14:02  Nightly import crashed  nightly-import
+     Traceback (most recent call last):
+     ValueError: bad row 1204
+     ↗ open log
+⚠ 13:40  Train the model stopped (restart or kill)  train
+✓ 13:12  Docs site done  docs-site
+```
+
+- **Counts and filters:** errors, warnings and finishes from the last 24 hours. Filter by All, Errors, Warnings or Done. The newest 40 rows show.
+- **Rows:** press one to show its detail (up to 12 lines). `↗ open log` shows only for a log file inside one of your log folders, and opens it with `open` (macOS) or `xdg-open`.
+- **Unseen errors:** errors from the last 24 hours logged since you last opened the tab show as `!N` on its label and `✖ N errors` in the one-line status line. Opening the tab clears both (it writes `~/.claude-progress/.state/log-seen.txt`).
+- **From the grouper:** a job that moves to DONE (success), a job stuck for the first time (warning) and a PROBLEMS row (error), each logged once. A parent waiting on a child is not logged as stuck.
+- **From your logs (optional):** list folders in `~/.claude-progress/log-dirs.txt`, one per line (`~` works, `#` starts a comment). None by default. At most every 30 seconds, `events.py scan` reads each `*.log` there changed in the last 24 hours, from where it stopped last time. It logs a Python traceback or an `ERROR` line as an error, a run ended by `SIGTERM` or `SIGKILL` as a warning `stopped (restart or kill)` with `resumed in <newer log>` when a newer log of the same job made progress, a rate limit or billing line as a warning (at most every 30 minutes per log), and a finish (`N/N` or a line starting `done` or `finished`) as a success. A log named `job-20260101-1200.log` belongs to job `job`.
+- **Your own events:** `python3 ~/.claude/progress-bar/events.py add <level> <source> <title> [detail] [path]`, or append one line to the file yourself.
+
+### Events format
+
+`~/.claude-progress/events.jsonl`, one JSON object per line. Only the newest 2,000 lines are kept.
+
+```json
+{"ts": 1767225600, "level": "error", "source": "nightly-import", "title": "Nightly import crashed", "detail": "Traceback ...", "path": "/Users/me/logs/nightly-import.log"}
+```
+
+| Field | Does |
+| --- | --- |
+| `ts` | Epoch seconds |
+| `level` | `error`, `warning`, `success` or `info` (anything else reads as `info`) |
+| `source` | The job id or progress-file slug |
+| `title` | A few plain words |
+| `detail` | Optional. More lines, shown when the row is pressed |
+| `path` | Optional. The log file, for `↗ open log` |
 
 ## Connectors
 
@@ -314,7 +390,7 @@ Optional. Makes each section header a link that folds or unfolds that section.
 
 ## Privacy
 
-Everything stays on your machine. The plugin reads and writes only files under `~/.claude-progress/`, `~/.claude/progress-bar/` and `~/.cache/progress-bar/`, plus `~/Applications/ProgressBarToggle.app` if you run `setup mac-clicks`. The plugin makes no network calls itself. While the Status panel is open, the Connectors tab runs `claude mcp list`, which contacts your configured connectors to check them. The GitHub tab runs local `git` only, and opens a page in your browser when you click.
+Everything stays on your machine. The plugin reads and writes only files under `~/.claude-progress/`, `~/.claude/progress-bar/` and `~/.cache/progress-bar/`, and reads the `*.log` files in folders you list in `log-dirs.txt`, plus `~/Applications/ProgressBarToggle.app` if you run `setup mac-clicks`. The plugin makes no network calls itself. While the Status panel is open, the Connectors tab runs `claude mcp list`, which contacts your configured connectors to check them. The GitHub tab runs local `git` only, and opens a page in your browser when you click.
 
 ## License
 

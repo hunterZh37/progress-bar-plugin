@@ -14,10 +14,14 @@ With --summary it prints one count line instead (the status line does this while
 RUNNING rows get a spinner, or a yellow "stuck" mark when their numbers have not moved for
 ~/.claude-progress/.state/stuck-minutes (default 10) minutes. Stuck rows sort first.
 Job names link to their progress file, or to a URL from ~/.claude-progress/links.txt ("<regex> | <url>").
+A job with a "parent" (its progress file, or the 4th column of ~/.claude-progress/titles.txt) is that parent's child.
+A stuck parent whose child runs, or changed in the last 10 min, is not stuck: its row ends "· waiting on: <child>".
+With events.py beside this file, done, stuck and problem rows are logged once each to ~/.claude-progress/events.jsonl
+(the Status panel's Log tab), a scan of the log folders starts at most every 30 s, and --summary counts unseen errors.
 With ~/.claude-progress/.state/clicks-on (from /progress-bar setup mac-clicks), section headers link to
 progressbar://toggle/<section>, which the ProgressBarToggle app turns into a fold or unfold.
 """
-import json, os, re, sys, time
+import json, os, re, subprocess, sys, time
 
 HOME = os.path.expanduser('~')
 ROOT = os.environ.get('PROGRESS_DIR') or os.path.join(HOME, '.claude-progress')
@@ -26,6 +30,24 @@ KEEP = 30 * 60
 MARKS = '▶✔✖■'
 SPIN = '◐◓◑◒'  # 4 frames: a full turn every 4 s at refreshInterval 1
 ELAPSED = re.compile(r'^(\d+h)?\d+m$|^\d+s$|^ETA ')
+CPU = re.compile(r'\d+(\.\d+)?% CPU')
+LIVE_CHILD = 10 * 60
+
+
+def load_events():
+    """events.py beside this file, or None."""
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        p = os.path.join(here, 'events.py')
+        if not os.path.exists(p):
+            return None
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('progress_bar_events', p)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return m
+    except Exception:
+        return None
 
 
 def slugify(n):
@@ -46,7 +68,8 @@ def kind(l):
     if l.startswith('✖') or l.startswith('■') or ' ✗ ' in l:
         return 'problem'
     # "· done" only at the end or as "· done:", so "· done in 1h" (a time left) stays running.
-    if l.startswith('✔') or re.search(r'\b100(\.0)?%', l) or re.search(r'· done(:|\s*$)', l):
+    # "100% CPU" is a busy process, not a finished job.
+    if l.startswith('✔') or re.search(r'\b100(\.0)?%(?!\s*CPU)', l) or re.search(r'· done(:|\s*$)', l):
         return 'done'
     if re.search(r'\b(waiting|pending)\b|\bwaits for\b', l):
         return 'waiting'
@@ -155,13 +178,13 @@ def main(stdin, now, summary=False):
         sig = signature(l)
         prev = seen.get(slugify(n)) or {}
         changed = prev.get('changed', now) if prev.get('sig') == sig else now
-        seen[slugify(n)] = {'name': n, 'at': now, 'kind': k, 'sig': sig, 'changed': changed}
+        seen[slugify(n)] = {'name': n, 'at': now, 'kind': k, 'sig': sig, 'changed': changed, 'cpu': bool(CPU.search(l))}
     # Jobs that disappeared count as finished, kept 30 min.
     for s, v in list(seen.items()):
         if s in current:
             continue
-        if now - v.get('at', 0) > KEEP:
-            del seen[s]
+        if now - v.get('at', 0) > KEEP or v.get('cpu'):
+            del seen[s]  # a busy process that ends is not a finished job
             continue
         if os.path.exists(os.path.join(ROOT, s + '.json')):
             continue  # still reporting, just not shown this poll
@@ -196,15 +219,48 @@ def main(stdin, now, summary=False):
     except ValueError:
         stuck_after = 600
 
+    ev = load_events()
+    tt = titles()
+    running = set(slugify(name_of(l)) for l in groups['running'])
+
+    parents = {}
+
+    def parent_of(s):
+        if s not in parents:
+            p = progress_file(s).get('parent') or tt.get(s, ('', '', ''))[2]
+            p = slugify(p) if isinstance(p, str) else ''
+            parents[s] = p if p != s else ''
+        return parents[s]
+
+    def waiting_on(l):
+        """The title of a child that runs or changed in the last 10 min, or ''."""
+        k = slugify(name_of(l))
+        for c, v in seen.items():
+            if c == k or not isinstance(v, dict):
+                continue
+            if (c in running or now - v.get('changed', 0) < LIVE_CHILD) and parent_of(c) == k:
+                return nice(c, v.get('name', c), tt)
+        return ''
+
     def stuck_for(l):
         v = seen.get(slugify(name_of(l))) or {}
         d = now - v.get('changed', now)
-        return d if d >= stuck_after else None
+        return d if d >= stuck_after and not waiting_on(l) else None
 
     def running_deco(i, body):
         d = stuck_for(i)
+        if d is None and now - (seen.get(slugify(name_of(i))) or {}).get('changed', now) >= stuck_after:
+            return SPIN[int(now) % len(SPIN)] + ' ' + body + ' · waiting on: ' + waiting_on(i)
         mark = '\033[33m⚠ stuck ' + ago(d) + '\033[0m' if d is not None else SPIN[int(now) % len(SPIN)]
         return mark + ' ' + body + ('' if has_step(i) else ' · in progress')
+
+    if ev:
+        log_events(ev, groups, seen, now, stuck_for)
+        try:
+            if ev.due():
+                subprocess.Popen([sys.executable, ev.__file__, 'scan'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        except Exception:
+            pass
 
     groups['running'].sort(key=lambda l: stuck_for(l) is None)
 
@@ -221,7 +277,8 @@ def main(stdin, now, summary=False):
 
     todo = parse_todo(read(os.path.join(ROOT, 'todo.txt')) or '')
     if summary:
-        return [summary_line(groups, sum(len(v) for v in todo.values()), sum(1 for l in groups['running'] if stuck_for(l) is not None))] + other
+        n_err = ev.unseen(now) if ev else 0
+        return [summary_line(groups, sum(len(v) for v in todo.values()), sum(1 for l in groups['running'] if stuck_for(l) is not None), n_err)] + other
     if todo:
         n_items = sum(len(v) for v in todo.values())
         if 'todo' in folded:
@@ -236,13 +293,69 @@ def main(stdin, now, summary=False):
     return out + other
 
 
-def summary_line(groups, n_todo, n_stuck):
+def progress_file(slug):
+    try:
+        p = json.loads(read(os.path.join(ROOT, slug + '.json')) or '{}')
+        return p if isinstance(p, dict) else {}
+    except Exception:
+        return {}
+
+
+def titles():
+    """job slug -> (title, why, parent) from ~/.claude-progress/titles.txt (<job id><TAB><title><TAB><why><TAB><parent>)."""
+    out = {}
+    for l in (read(os.path.join(ROOT, 'titles.txt')) or '').splitlines():
+        if not l.strip() or l.startswith('#'):
+            continue
+        c = [x.strip() for x in l.split('\t')] + ['', '', '']
+        if c[0]:
+            out[slugify(c[0])] = tuple(c[1:4])
+    return out
+
+
+def nice(slug, name, tt):
+    """A job's short title: its progress file's "title", else titles.txt, else its name. The part before " · "."""
+    t = progress_file(slug).get('title')
+    t = (t if isinstance(t, str) else '') or tt.get(slug, ('',))[0] or name
+    return t.split(' · ')[0]
+
+
+def log_events(ev, groups, seen, now, stuck_for):
+    """Done, stuck and problem rows, each logged once per job (keys in .state/events-sent.json)."""
+    try:
+        sent = ev.sent()
+        for l in groups['running']:
+            n = name_of(l)
+            k = slugify(n)
+            if 'done:' + k in sent:
+                ev.forget('done:' + k)  # running again: its next finish logs again
+            d = stuck_for(l)
+            if d is not None and 'stuck:' + k not in sent:
+                ev.once('stuck:' + k, 'warning', n, ev.nice(n) + ' stuck', 'no progress for ' + ago(d) + '\n' + l, ev.log_of(n))
+        for l in groups['done']:
+            n = name_of(re.sub(r'^[✔]\s*', '', l))
+            k = slugify(n)
+            if 'done:' + k not in sent:
+                ev.once('done:' + k, 'success', n, ev.nice(n) + ' done', re.sub(r'^✔\s*', '', l), ev.log_of(n), (seen.get(k) or {}).get('at'))
+                ev.forget('stuck:' + k)
+        for l in groups['problem']:
+            n = name_of(l)
+            k = slugify(n)
+            if 'problem:' + k not in sent:
+                ev.once('problem:' + k, 'error', n, ev.nice(n) + ': problem', l, ev.log_of(n))
+    except Exception:
+        pass
+
+
+def summary_line(groups, n_todo, n_stuck, n_err=0):
     """One line for the status line while the Status panel shows the full view."""
     out = ['▶ ' + str(len(groups['running'])) + ' running']
     if n_stuck:
         out.append('⚠ ' + str(n_stuck) + ' stuck')
     if groups['problem']:
         out.append('✖ ' + str(len(groups['problem'])) + ' problems')
+    if n_err:
+        out.append('✖ ' + str(n_err) + ' error' + ('' if n_err == 1 else 's'))
     if groups['waiting']:
         out.append('⏸ ' + str(len(groups['waiting'])) + ' waiting')
     out.append('☐ ' + str(n_todo) + ' to-do')
