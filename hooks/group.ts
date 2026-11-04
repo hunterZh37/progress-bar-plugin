@@ -23,7 +23,7 @@ ROOT = os.environ.get('PROGRESS_DIR') or os.path.join(HOME, '.claude-progress')
 STATE = os.path.join(ROOT, '.state', 'group-seen.json')
 KEEP = 30 * 60
 MARKS = '▶✔✖■'
-SPIN = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+SPIN = '◐◓◑◒'  # 4 frames: a full turn every 4 s at refreshInterval 1
 ELAPSED = re.compile(r'^(\d+h)?\d+m$|^\d+s$|^ETA ')
 
 
@@ -201,7 +201,7 @@ def main(stdin, now):
 
     def running_deco(i, body):
         d = stuck_for(i)
-        mark = '\033[33m⚠ stuck ' + ago(d) + '\033[0m' if d is not None else SPIN[int(now) % 10]
+        mark = '\033[33m⚠ stuck ' + ago(d) + '\033[0m' if d is not None else SPIN[int(now) % len(SPIN)]
         return mark + ' ' + body + ('' if has_step(i) else ' · in progress')
 
     groups['running'].sort(key=lambda l: stuck_for(l) is None)
