@@ -160,5 +160,64 @@ class Paths(unittest.TestCase):
         self.assertNotIn('—', src)
 
 
+class Index(unittest.TestCase):
+    """index.json, the Chat tab's local record of both directions, and the say command."""
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.m = person(os.path.join(self.tmp, 'alice'))
+        self.m.save_conf({'me': 'alice', 'channels': {'t': {'peer': 'bob', 'me': 'alice', 'owner': 'alice', 'repo': 'r', 'role': 'owner'}}})
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        os.environ.pop('PB_CHANNEL_HOME', None)
+
+    def test_chat_names(self):
+        self.assertTrue(self.m.is_chat('chat-20261104T220553Z-6a1f.md'))
+        self.assertTrue(self.m.is_chat('chat-20261104T220553Z-6a1f-2.md'))
+        self.assertFalse(self.m.is_chat('notes.md'))
+        self.assertFalse(self.m.is_chat('chat-20261104T220553Z.png'))
+
+    def test_index_add_dedupes_and_orders_by_send_time(self):
+        a = {'id': 'a' * 16, 'sent': 20}
+        b = {'id': 'b' * 16, 'sent': 10}
+        self.assertEqual(self.m.index_add([a, b]), 2)
+        self.assertEqual(self.m.index_add([a]), 0)
+        self.assertEqual([e['id'] for e in json.load(open(self.m.INDEX))], ['b' * 16, 'a' * 16])
+
+    def test_say_writes_a_chat_md_and_sends_it(self):
+        sent = []
+        def fake_send(args):
+            sent.append((args[1], os.path.basename(args[0]), open(args[0]).read()))
+            return 'Sent'
+        self.m.cmd_send = fake_send
+        self.assertEqual(self.m.cmd_say(['t', 'hello', 'there']), 'Sent')
+        self.assertEqual(sent[0][0], 't')
+        self.assertTrue(self.m.is_chat(sent[0][1]))
+        self.assertEqual(sent[0][2], 'hello there\n')
+        self.assertEqual(os.listdir(self.m.OUTBOX), [])  # the outbox copy goes once sent
+        with self.assertRaisesRegex(self.m.Fail, 'at most'):
+            self.m.cmd_say(['t', 'x' * (self.m.MAX_SAY + 1)])
+        with self.assertRaisesRegex(self.m.Fail, 'Usage'):
+            self.m.cmd_say(['t'])
+
+    def test_backfill_reads_received_and_own_sent_messages(self):
+        src = os.path.join(self.tmp, 'chat-20261104T220553Z-ab12.md')
+        open(src, 'w').write('hi bob\n')
+        bob = person(os.path.join(self.tmp, 'bob'))
+        os.environ['PB_CHANNEL_HOME'] = os.path.join(self.tmp, 'alice')
+        msg = os.path.join(self.m.REPOS, 't', 'msgs', 'bob', '20261104T220553Z-ab12-chat.md.enc')
+        self.m.seal(src, os.path.basename(src), 'alice', 'bob', {'bob': bob.pub_doc('bob'), 'alice': self.m.pub_doc('alice')}, msg)
+        got = os.path.join(self.m.CH, 't', 'plan.md')
+        self.m.write_json(self.m.RECEIVED, [{'id': 'c' * 16, 'channel': 't', 'from': 'bob', 'filename': 'plan.md', 'path': got, 'sent': 5, 'ts': 6}])
+        self.assertEqual(self.m.backfill(), 2)
+        self.assertEqual(self.m.backfill(), 0)
+        idx = json.load(open(self.m.INDEX))
+        self.assertEqual([e['dir'] for e in idx], ['in', 'out'])
+        out = idx[1]
+        self.assertTrue(out['chat'] and out['verified'])
+        self.assertEqual(open(out['path']).read(), 'hi bob\n')
+        self.assertTrue(out['path'].startswith(os.path.join(self.m.CH, 't', 'sent') + os.sep))
+
+
 if __name__ == '__main__':
     unittest.main()

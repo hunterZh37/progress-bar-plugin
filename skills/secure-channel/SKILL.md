@@ -10,7 +10,7 @@ The progress-bar plugin keeps one encrypted channel per collaborator. Files go b
 ## Sending ("send this to Sam")
 
 1. Work out which file the person means. If it is unclear, ask. Send only what they asked to send.
-2. Call the `mcp__progress-bar__channel_send` tool with `file` (a path) and `to` (the channel name). The person can also type `/progress-bar send <file> to <name>`.
+2. Call the `mcp__progress-bar__channel_send` tool with `file` (a path) and `to` (the channel name). The person can also type `/progress-bar send <file> to <name>`, or `/progress-bar say <name> <text>` for a short chat line. The Status panel Chat tab shows each thread.
 3. Allowed types: `.md .markdown .txt .pdf .png .jpg .jpeg .gif .webp`, up to 10 MB. To send other text, save it as `.md` first.
 4. If the tool says the name is unknown, run `/progress-bar channel list` or ask the person to.
 

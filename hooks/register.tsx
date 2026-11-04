@@ -5,6 +5,7 @@ import { autonextCommand, ownJobs, tickAutonext } from './autonext'
 import { CHECKPOINT_PY } from './checkpoint'
 import { EVENTS_PY } from './events'
 import { GROUP_PY } from './group'
+import { backfillChat, sayCommand } from './chat'
 import { CHANNEL_EVERY, SEND_TOOL, channelCommand, pollChannel, sendCommand, sendFile } from './channel'
 import { inboxCommand } from './inbox'
 import { resolveHome } from './home'
@@ -55,13 +56,14 @@ const EVENTS_PY_REL = '.claude/progress-bar/events.py'
 const CHECKPOINT_PY_REL = '.claude/progress-bar/checkpoint.py'
 const DEMO = 'progress-bar-demo'
 const USAGE = [
-  'Usage: /progress-bar [setup | demo | action | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | channel | send <file> to <name> | fold <section> | unfold <section> | toggle <section>]',
+  'Usage: /progress-bar [setup | demo | action | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | channel | send <file> to <name> | say <name> <text> | fold <section> | unfold <section> | toggle <section>]',
   '  action: steps only you can run (list, add, done, skip <reason>, copy, check). While one is open your prompts are held',
   '  autonext: when a job finishes, start (on), suggest (ask, the default) or skip (off) the top ready to-do of its machine',
   '  (no argument): show the bars and open the Status panel\n  panel: open the Status panel. panel on: open it at every session start, with a one-line status line',
   '  checkpoint (or away): save the running jobs. The Status panel shows what happened since once you are back',
   '  inbox: emails that need you (~/.claude-progress/inbox.json). inbox setup: write the example Gmail checker',
   '  channel: an encrypted channel to a collaborator (invite, join, list, read, leave). send <file> to <name>: send them a file',
+  '  say <name> <text>: send a short chat line on that channel (the Status panel\'s Chat tab shows the thread)',
   '  setup mac-clicks [off]: click a section header to fold it (macOS)',
   '  sections: todo, running, waiting, done, problems, all',
   '  todo: todo | todo add [name] <text> | todo done <n|text> | todo clear',
@@ -368,7 +370,7 @@ export const register: Register = on => {
   })
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup [mac-clicks [off]] | demo | action [list|add|done|skip <reason>] | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | channel | send <file> to <name> | fold <section>]' })
+    await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup [mac-clicks [off]] | demo | action [list|add|done|skip <reason>] | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | channel | send <file> to <name> | say <name> <text> | fold <section>]' })
     await $.tool.register(SEND_TOOL).catch(() => undefined)
     await $.tool.register(ACTION_TOOL).catch(() => undefined)
     // An installed status line script and group.py follow the plugin version (per-project to-dos, session filter).
@@ -377,7 +379,7 @@ export const register: Register = on => {
     $.clock.every(5000, () => { void poll($); void tickAutonext($) })
     await startPanel($, await resolveHome($))
     const home = await resolveHome($)
-    void pollChannel($, home)
+    void backfillChat($, home).then(() => pollChannel($, home)).catch(() => undefined)
     $.clock.every(CHANNEL_EVERY, () => pollChannel($, home))
     // Action needed: checks every 30 s, and the in-app pane for actions not shown in the last 10 min.
     void tickActions($, home)
@@ -423,6 +425,7 @@ export const register: Register = on => {
       : /^inbox\b/.test(arg) ? await inboxCommand($, await resolveHome($), arg.slice(5))
       : /^channel\b/.test(arg) ? await channelCommand($, await resolveHome($), raw.slice(7))
       : /^send\b/.test(arg) ? await sendCommand($, await resolveHome($), raw.slice(4))
+      : /^say\b/.test(arg) ? await sayCommand($, await resolveHome($), raw.slice(3))
       : /^(fold|unfold|toggle)\b/.test(arg) ? await fold($, arg)
       : USAGE
     return { text }

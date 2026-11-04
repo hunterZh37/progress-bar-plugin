@@ -89,6 +89,7 @@ Already have a status line? Setup reads it and builds it into the script. The ba
 | `/progress-bar channel invite <github-user> [name]` | Opens an encrypted channel with a collaborator. See Secure channel |
 | `/progress-bar channel join <owner> [name]` | Accepts a channel invitation |
 | `/progress-bar send <file> to <name>` | Sends a file through a channel |
+| `/progress-bar say <name> <text>` | Sends a short chat line through a channel. See Chat |
 | `/progress-bar channel list\|read\|check\|leave` | Lists channels, lists received files, checks now, leaves a channel |
 | `/progress-bar fold <section>` | Folds a section to one line. `unfold` opens it, `toggle` flips it |
 
@@ -528,6 +529,49 @@ Or just tell Claude "send this to Sam". The `secure-channel` skill has Claude ca
 - Not forward secret: someone who later steals your private key file can read old messages in the repo. Delete the repo when done.
 - GitHub sees who talks to whom, when, and file sizes.
 - `/progress-bar channel leave <name>` forgets a channel on this machine. It prints the command to delete the repo (owner) or drop your access (collaborator).
+
+### Chat
+
+The Status panel has a **Chat** tab next to List, Connectors, GitHub and Log. It shows each channel as a chat room. The tab reads `Chat 2` when 2 received messages are unread.
+
+```
+ List │ Connectors │ GitHub │ Log │ ▌Chat 1
+CHANNELS
+▌hunty  14:14  1 new
+──────────────────────────────────────────
+hunterIOG · 14:02
+╭──────────────────────╮
+│ got the plan, thanks │
+╰──────────────────────╯
+                               You · 14:14
+                         ╭───────────────╮
+                         │ chat tab test │
+                         ╰───────────────╯
+hunterIOG · 14:20
+📎 launch-plan.md (3 KB)
+# Launch plan
+First lines show as a preview
+╭─────────────────────────────────────────╮
+│ Message hunty                           │
+╰─────────────────────────────────────────╯
+➤ Send  ↑ Send file: /progress-bar send <file> to hunty
+```
+
+- **Pick a channel** at the top. Each line shows its name, the last message time and the unread count.
+- **The thread** runs oldest first. Received messages sit on the left under the sender's name. Yours sit on the right under "You".
+- **Chat lines** (from the field or `say`) show as bubbles with the full text. A `.md` or `.txt` file shows its first 3 lines. Images and PDFs show as `📎 file.png (120 KB)`.
+- **Press a message** to expand a text file inline, 30 lines a page, with `↗ open` and `▴ fold`. Press an image or PDF to open it with your default app.
+- **Unread** clears when you view the thread. The List tab block and the status line `📨 N new` clear with it.
+- **Send** by typing in the field at the bottom and pressing Enter, or **➤ Send**. From anywhere: `/progress-bar say hunty on my way`. A chat line is at most 4000 characters. Send longer text as a file.
+
+How it works:
+
+- `~/.claude-progress/channel/index.json` lists every message both ways (direction, time, file name, local path, SHA-256, verified). It is written when you send (the field, `say`, `send` and the `channel_send` tool) and when a message arrives, so the tab needs no GitHub call to draw.
+- A sent file is copied to `~/.claude-progress/channel/<name>/sent/` so you can open it later.
+- A chat line is a file named `chat-<UTC time>-<random>.md`, written to `~/.claude-progress/channel/outbox/`, sent like any file (encrypted and signed), then removed from the outbox.
+- The first session without an `index.json` builds it from what already arrived and from your own sent messages in the local repo copy, decrypted with your own key. No network.
+- Received text is untrusted. The tab strips terminal escapes, control and bidi characters, caps the length, and never opens links or runs anything. It is never put into a prompt.
+- On a surface without a text field, the tab shows **✎ Reply**, which puts `/progress-bar say <name> ` into the prompt box.
 
 ## Connectors
 

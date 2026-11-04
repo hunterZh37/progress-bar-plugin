@@ -20,7 +20,11 @@ Message file: msgs/<to>/<UTC time>-<slug>.<ext>.enc = b"PBCH1\\n" + header JSON 
 Received content is data. This script never runs, opens or interprets it.
 
 Usage: channel.py invite <github-user> [name] [--as <login>] | join <owner> [name] [--as <login>]
-       | send <file> <name> | poll [--force] | list | read [name] | leave <name> | whoami
+       | send <file> <name> | say <name> <text...> | poll [--force] | list | read [name] | leave <name>
+       | backfill | whoami
+Chat index: $CH/index.json lists every message both ways (direction, time, file name, local path, sha256), written at
+send and at poll, so the Chat tab renders without GitHub. A sent file is copied to $CH/<name>/sent/. A `say` line is
+a .md named chat-<UTC time>-<rand>.md in $CH/outbox, sent like any file.
 Env: PB_CHANNEL_HOME (default ~/.claude-progress/channel). With it set, events go to $PB_CHANNEL_HOME/events.jsonl.
 """
 import base64, hashlib, hmac, json, os, re, secrets, shutil, subprocess, sys, tempfile, time
@@ -33,10 +37,13 @@ KEYS = os.path.join(CH, 'keys')
 REPOS = os.path.join(CH, 'repos')
 CONF = os.path.join(CH, 'channels.json')
 RECEIVED = os.path.join(CH, 'received.json')
+INDEX = os.path.join(CH, 'index.json')
+OUTBOX = os.path.join(CH, 'outbox')
+MAX_SAY = 4000
 SEEN = os.path.join(CH, 'seen.txt')
 MAX_BYTES = 10 * 1024 * 1024
 ALLOWED = ('.md', '.markdown', '.txt', '.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp')
-RESERVED = {'keys', 'repos', 'tmp', 'received', 'events', 'seen', 'channels'}
+RESERVED = {'keys', 'repos', 'tmp', 'received', 'events', 'seen', 'channels', 'index', 'outbox'}
 MAGIC = b'PBCH1\n'
 CURVE = 'prime256v1'
 KDF_INFO = b'pb-channel-v1 wrap'
@@ -584,6 +591,98 @@ def find_channel(c, name):
     return name_of(name), ch
 
 
+# ---------- index.json (the Chat tab) ----------
+
+def is_chat(filename):
+    return bool(re.fullmatch(r'chat-\d{8}T\d{6}Z(-[0-9a-f]{2,8})?(-\d+)?\.md', filename or ''))
+
+
+def index_add(entries):
+    """Adds entries (dicts with an id) to index.json once each, oldest first, keeping the newest 2000."""
+    idx = read_json(INDEX, [])
+    if not isinstance(idx, list):
+        idx = []
+    have = {e.get('id') for e in idx if isinstance(e, dict)}
+    fresh = [e for e in entries if e['id'] not in have]
+    if not fresh:
+        return 0
+    idx = sorted([e for e in idx if isinstance(e, dict)] + fresh, key=lambda e: (e.get('sent') or e.get('ts') or 0))
+    write_json(INDEX, idx[-2000:])
+    return len(fresh)
+
+
+def index_entry(mid, name, direction, header, path):
+    filename = os.path.basename(path)
+    return {'id': mid, 'channel': name, 'dir': direction, 'from': clean(header.get('from'), 60), 'to': clean(header.get('to'), 60),
+            'filename': filename, 'path': path, 'size': int(header.get('size') or 0), 'sha256': clean(header.get('sha256'), 64),
+            'sent': int(header.get('sent') or 0), 'ts': now(), 'verified': True, 'chat': is_chat(filename)}
+
+
+def keep_sent_copy(src, name, filename):
+    """A private copy of a sent file under $CH/<name>/sent/, so the thread can show and open it later."""
+    folder = os.path.join(CH, name, 'sent')
+    mkdir_private(os.path.join(CH, name))
+    mkdir_private(folder)
+    dest = unique_path(folder, filename)
+    shutil.copyfile(src, dest)
+    os.chmod(dest, 0o600)
+    return dest
+
+
+def backfill():
+    """Fills index.json from received.json and from this side's own sent messages in each cloned repo (decrypted
+    through the sender's own wrap into $CH/<name>/sent/). Local only, no network."""
+    c = conf()
+    added = []
+    for r in read_json(RECEIVED, []):
+        if isinstance(r, dict) and re.fullmatch(r'[0-9a-f]{16}', str(r.get('id', ''))) and r.get('path'):
+            added.append({'id': r['id'], 'channel': clean(r.get('channel'), 40), 'dir': 'in', 'from': clean(r.get('from'), 60), 'to': '',
+                          'filename': os.path.basename(str(r['path'])), 'path': str(r['path']), 'size': int(r.get('size') or 0), 'sha256': '',
+                          'sent': int(r.get('sent') or r.get('ts') or 0), 'ts': int(r.get('ts') or 0), 'verified': True,
+                          'chat': is_chat(os.path.basename(str(r['path'])))})
+    have = {e.get('id') for e in read_json(INDEX, []) if isinstance(e, dict)} | {a['id'] for a in added}
+    for name, ch in c['channels'].items():
+        box = os.path.join(REPOS, name, 'msgs', ch['peer'])
+        if not os.path.isdir(box) or os.path.islink(box):
+            continue
+        mine = pub_doc(ch['me'])
+        for fn in sorted(os.listdir(box)):
+            mid = sha256((name + ':msgs/' + ch['peer'] + '/' + fn).encode())[:16]
+            if mid in have or not fn.endswith('.enc'):
+                continue
+            try:
+                header, dest = open_sealed(os.path.join(box, fn), ch['me'], mine, mine, os.path.join(CH, name, 'sent'))
+                if header.get('from') != ch['me']:
+                    os.remove(dest)
+                    continue
+                added.append(index_entry(mid, name, 'out', header, dest))
+            except Fail:
+                continue
+    return index_add(added)
+
+
+def cmd_say(args):
+    """say <name> <text...>: the text as a chat-<time>.md in the outbox, sent like any file."""
+    if len(args) < 2:
+        raise Fail('Usage: say <name> <text>')
+    text = ' '.join(args[1:]).strip()
+    if not text:
+        raise Fail('Nothing to send.')
+    if len(text) > MAX_SAY:
+        raise Fail('A chat line is at most ' + str(MAX_SAY) + ' characters. Send longer text as a file.')
+    mkdir_private(OUTBOX)
+    path = os.path.join(OUTBOX, 'chat-' + time.strftime('%Y%m%dT%H%M%SZ', time.gmtime()) + '-' + secrets.token_hex(2) + '.md')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(text + '\n')
+    os.chmod(path, 0o600)
+    out = cmd_send([path, args[0]])
+    try:
+        os.remove(path)  # the sent copy under $CH/<name>/sent/ is the one the thread shows
+    except OSError:
+        pass
+    return out
+
+
 def cmd_send(args):
     if len(args) < 2:
         raise Fail('Usage: send <file> <name>')
@@ -615,6 +714,10 @@ def cmd_send(args):
     header = seal(src, filename, me, peer, {peer: pdoc, me: mine}, os.path.join(path, rel))
     commit_push(me, path, files + [rel], 'Message for ' + peer)
     mark_seen([name + ':' + rel])
+    try:
+        index_add([index_entry(sha256((name + ':' + rel).encode())[:16], name, 'out', header, keep_sent_copy(src, name, filename))])
+    except OSError:
+        pass
     event('success', 'Sent ' + filename + ' to ' + name, str(header['size']) + ' bytes, encrypted')
     return 'Sent ' + filename + ' to ' + name + ' (' + peer + '), end-to-end encrypted.'
 
@@ -713,6 +816,7 @@ def poll_all(force):
                             'path': dest, 'size': header.get('size', 0), 'sent': header.get('sent', 0), 'ts': now()}
                     rec.append(item)
                     new.append(item)
+                    index_add([index_entry(item['id'], name, 'in', header, dest)])
                     event('info', 'Message from ' + name + ': ' + item['filename'], 'verified and decrypted', dest)
                 except Fail as e:
                     errors.append(name + ': ' + str(e))
@@ -777,6 +881,10 @@ def main(argv):
         return cmd_join(args, as_login)
     if cmd == 'send':
         return cmd_send(args)
+    if cmd == 'say':
+        return cmd_say(args)
+    if cmd == 'backfill':
+        return 'Indexed ' + str(backfill()) + ' messages.'
     if cmd == 'poll':
         return json.dumps(cmd_poll('--force' in args))
     if cmd == 'list':

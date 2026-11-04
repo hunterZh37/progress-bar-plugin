@@ -16,7 +16,7 @@ export type Conn = { name: string; kind: ConnKind; account?: string; url?: strin
 /** Status panel: the last connector check (epoch ms, 0 for none), whether one runs now, the Claude login (email · org) and the list. */
 export type Conns = { at: number; checking: boolean; login: string; list: Conn[] }
 /** Status panel: the tab shown. */
-export type Tab = 'list' | 'connectors' | 'github' | 'log'
+export type Tab = 'list' | 'connectors' | 'github' | 'log' | 'chat'
 
 /** Status panel: a job's plain-language title, what it unlocks and its parent job's slug, from its progress file or titles.txt. */
 export type Meta = { title?: string; why?: string; parent?: string }
@@ -56,6 +56,10 @@ export type Recap = { cp: Checkpoint | null; lastTick: number; open: boolean }
 export type ChanItem = { id: string; channel: string; from: string; filename: string; path: string; ts: number }
 /** Secure channel: the unread received files, newest first. */
 export type Channel = { items: ChanItem[] }
+/** Chat tab: one message of ~/.claude-progress/channel/index.json, either direction. `sent` is epoch s, `text` the sanitized preview (a chat line whole), `chat` a say line drawn as a bubble. */
+export type ChatMsg = { id: string; channel: string; dir: 'in' | 'out'; from: string; filename: string; path: string; size: number; sent: number; chat: boolean; text: string; unread: boolean }
+/** Chat tab: messages oldest first, channel names, the one shown, the expanded message, its page and full lines, the compose state (`n` renews the field after a send). */
+export type ChatState = { msgs: ChatMsg[]; channels: string[]; sel: string; open: string; page: number; full: string[]; sending: boolean; note: string; draft: string; n: number }
 
 /** Action needed: one row of ~/.claude-progress/actions.json. `created` and `closed` are epoch s. `check` is a read-only test, never the command. */
 export type Action = { id: string; title: string; command?: string; why: string; check?: string; priority: 'high'; created: number; project?: string; status: 'open' | 'done' | 'skipped'; skipReason?: string; closed?: number }
@@ -65,6 +69,6 @@ export type ActionUi = { confirm: string; term: string; failId: string; fail: st
 
 declare module 'claude-code' {
   interface PluginState {
-    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; project: Project; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards; recap: Recap; inbox: Inbox; channel: Channel; actions: Action[]; actionUi: ActionUi }
+    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; project: Project; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards; recap: Recap; inbox: Inbox; channel: Channel; chat: ChatState; actions: Action[]; actionUi: ActionUi }
   }
 }

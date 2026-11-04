@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, On, RenderChildren } from 'claude-code'
+import type { ElementConstructor, EngineInterface, InputProps, On, RenderChildren } from 'claude-code'
 
 import { AWAY_S, GAP_MS, OVERNIGHT_REL, dayOf, snapOf } from './checkpoint'
 import { connSummary, readConns, refreshConns, resetConns } from './connectors'
@@ -8,12 +8,13 @@ import { GH_EVERY, openUrl, openWeb, readGh } from './github'
 import { resolveHome } from './home'
 import { ACTION_PANE, canRun, cancelRun, closeAction, confirmRun, copyCommand, cut as cutA, ranIt, readActions, runAction } from './actions'
 import { markRead, openLocal, readChannel } from './channel'
+import { PAGE_LINES, kb, pageCount, readChat, selectChannel, sendChat, toggleOpen, when } from './chat'
 import { markHandled, readInbox } from './inbox'
 import { isDarwin } from './mac'
 import { moveItem, nextPrompt, rankTodos, todoRows as layoutTodos } from './priority'
 import { sessionProject } from './project'
 import { FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, slug } from './render'
-import type { Action, ActionUi, Channel, Checkpoint, Conn, Ev, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
+import type { Action, ActionUi, Channel, ChatMsg, ChatState, Checkpoint, Conn, Ev, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
 
 // The Status panel: the grouped status line, drawn in a docked pane beside the chat.
 // It runs the plugin's own status line script with PB_FULL=1 every second while the pane is open.
@@ -25,7 +26,8 @@ import type { Action, ActionUi, Channel, Checkpoint, Conn, Ev, Inbox, LogFilter,
 // RUNNING rows draw as one line per job (short title, a 10-cell bar, %, time left), the bars in one column.
 // Pressing a line opens its card (runCard): id and badge, count, step, facts and what it unlocks, from `title`, `why`
 // and `parent` in its progress file or ~/.claude-progress/titles.txt. A running child shows under its open parent.
-// Four tabs: List (the sections), Connectors (see connectors.ts), GitHub (see github.ts) and Log (events.ts).
+// Five tabs: List (the sections), Connectors (see connectors.ts), GitHub (see github.ts), Log (events.ts) and Chat
+// (chat.ts: the secure channel as a chat room, one thread per channel, with a compose field).
 // Connector checks run only while the pane is open; GitHub reads only while its tab shows.
 // Overnight recap: `/progress-bar checkpoint` (or checkpoint.py) saves the running jobs. Once you are back (4 h later, or
 // a tick gap over 30 min shows the computer slept) the List tab opens with "While you were away": what finished, failed
@@ -63,6 +65,7 @@ const logAtom = atom({ plugin: 'progress-bar', key: 'log' } as const, { events: 
 const recapAtom = atom({ plugin: 'progress-bar', key: 'recap' } as const, { cp: null, lastTick: 0, open: false } as Recap)
 const inboxAtom = atom({ plugin: 'progress-bar', key: 'inbox' } as const, { checked: 0, items: [] } as Inbox)
 const channelAtom = atom({ plugin: 'progress-bar', key: 'channel' } as const, { items: [] } as Channel)
+const chatAtom = atom({ plugin: 'progress-bar', key: 'chat' } as const, { msgs: [], channels: [], sel: '', open: '', page: 0, full: [], sending: false, note: '', draft: '', n: 0 } as ChatState)
 const actionsAtom = atom({ plugin: 'progress-bar', key: 'actions' } as const, [] as Action[])
 const actionUiAtom = atom({ plugin: 'progress-bar', key: 'actionUi' } as const, { confirm: '', term: '', failId: '', fail: '' } as ActionUi)
 const DIR_REL = '.claude-progress'
@@ -453,6 +456,7 @@ export async function pollPanel($: EngineInterface, h: string) {
   await readActions($, h)
   await readInbox($, h)
   await readChannel($, h)
+  await readChat($, h)
   if ((await read($, tabAtom)) === 'log') {
     const l = await read($, logAtom)
     if (unseenErrors(l.events, l.seenAt, Math.floor((await $.clock.now()) / 1000))) await markSeen($, h)
@@ -888,17 +892,116 @@ export function registerPanel(on: On) {
     const nowS = Math.floor(nowMs / 1000)
     const unseen = unseenErrors(log.events, log.seenAt, nowS)
     const mark = (t: string) => (tab === t ? '▌' : ' ')
+    const chat = await read($, chatAtom)
+    const chatUnread = chat.msgs.filter(m => m.unread).length
+    const sep = (k: string) => <Text key={k} dimColor>{' │ '}</Text>
     const tabBar = (
       <Box key="tabs" marginBottom={1}>
         <Button key="tab-list" plain onPress={() => update($, tabAtom, () => 'list')}>{`${mark('list')}List`}</Button>
-        <Text dimColor>{'  │  '}</Text>
+        {sep('sep-1')}
         <Button key="tab-connectors" plain onPress={() => update($, tabAtom, () => 'connectors')}>{`${mark('connectors')}Connectors${badN ? ` !${badN}` : ''}`}</Button>
-        <Text dimColor>{'  │  '}</Text>
+        {sep('sep-2')}
         <Button key="tab-github" plain onPress={async () => { await update($, tabAtom, () => 'github'); await readGh($, homeDir) }}>{`${mark('github')}GitHub`}</Button>
-        <Text dimColor>{'  │  '}</Text>
+        {sep('sep-3')}
         <Button key="tab-log" plain onPress={async () => { await update($, tabAtom, () => 'log'); await markSeen($, homeDir) }}>{`${mark('log')}Log${unseen ? ` !${unseen}` : ''}`}</Button>
+        {sep('sep-4')}
+        <Button key="tab-chat" plain onPress={async () => { await update($, tabAtom, () => 'chat'); await readChat($, homeDir) }}>{`${mark('chat')}Chat${chatUnread ? ` ${chatUnread}` : ''}`}</Button>
       </Box>
     )
+
+    if (tab === 'chat') {
+      // Channel picker (name, last message time, unread count), the thread oldest first (received left with the
+      // peer's name, sent right as "You"), then the compose field. All text was sanitized in chat.ts.
+      const { Input } = $.ui.resolve(e) as { Input?: ElementConstructor<InputProps> }
+      const sel = chat.sel
+      const thread = chat.msgs.filter(m => m.channel === sel).slice(-40)
+      const bubbleW = Math.max(16, Math.floor(width * 0.8))
+      const cutC = (t: string, n: number) => (t.length > n ? `${t.slice(0, n - 1)}…` : t)
+      const pick = chat.channels.map(name => {
+        const ms = chat.msgs.filter(m => m.channel === name)
+        const last = ms[ms.length - 1]
+        const un = ms.filter(m => m.unread).length
+        return (
+          <Box key={`chp-${name}`}>
+            <Button key={`chs-${name}`} plain onPress={() => selectChannel($, homeDir, name)}>{`${name === sel ? '▌' : ' '}${name}`}</Button>
+            <Text dimColor>{`  ${last ? when(last.sent, nowMs) : 'no messages'}`}</Text>
+            {un ? <Text color="cyan" bold>{`  ${un} new`}</Text> : null}
+          </Box>
+        )
+      })
+      const msgRow = (m: ChatMsg) => {
+        const out = m.dir === 'out'
+        const who = out ? 'You' : m.from || sel
+        const isText = /\.(md|markdown|txt)$/i.test(m.filename)
+        const open = chat.open === m.id
+        const head = `${who} · ${when(m.sent, nowMs)}${m.unread ? '  ●' : ''}`
+        const press = () => (isText ? toggleOpen($, homeDir, m) : openLocal($, homeDir, m.path))
+        const body: RenderChildren[] = []
+        if (open) {
+          const pages = pageCount(chat.full.length)
+          const pg = Math.min(chat.page, pages - 1)
+          body.push(
+            <Box key={`chf-${m.id}`} flexDirection="column" borderStyle="round" borderColor={out ? 'green' : 'cyan'} paddingX={1} width={Math.max(20, width - 2)}>
+              <Text>{chat.full.slice(pg * PAGE_LINES, (pg + 1) * PAGE_LINES).join('\n') || ' '}</Text>
+            </Box>,
+            <Box key={`chn-${m.id}`}>
+              {pages > 1 && pg > 0 ? <Button key={`chpv-${m.id}`} plain onPress={() => update($, chatAtom, c => ({ ...c, page: Math.max(0, c.page - 1) }))}>{'‹ back  '}</Button> : null}
+              {pages > 1 ? <Text dimColor>{`page ${pg + 1} of ${pages}  `}</Text> : null}
+              {pages > 1 && pg < pages - 1 ? <Button key={`chnx-${m.id}`} plain onPress={() => update($, chatAtom, c => ({ ...c, page: c.page + 1 }))}>{'more ›  '}</Button> : null}
+              <Button key={`cho-${m.id}`} plain onPress={() => openLocal($, homeDir, m.path)}>{'↗ open  '}</Button>
+              <Button key={`chc-${m.id}`} plain onPress={() => toggleOpen($, homeDir, m)}>{'▴ fold'}</Button>
+            </Box>,
+          )
+        } else if (m.chat) {
+          const lines = (m.text || ' ').split('\n')
+          const w = Math.min(bubbleW, Math.max(...lines.map(l => l.length)) + 4)
+          body.push(
+            <Box key={`chb-${m.id}`} borderStyle="round" borderColor={out ? 'green' : 'cyan'} paddingX={1} width={w}>
+              <Button key={`chm-${m.id}`} plain onPress={press}>{m.text || ' '}</Button>
+            </Box>,
+          )
+        } else {
+          body.push(
+            <Button key={`chm-${m.id}`} plain onPress={press}>{cutC(`📎 ${m.filename} (${kb(m.size)})`, bubbleW)}</Button>,
+            m.text ? <Box key={`chpr-${m.id}`} width={bubbleW}><Text dimColor>{m.text}</Text></Box> : null,
+          )
+        }
+        return (
+          <Box key={`chr-${m.id}`} flexDirection="column" alignItems={out && !open ? 'flex-end' : 'flex-start'} marginBottom={1}>
+            <Text dimColor bold={!out} color={out ? undefined : 'cyan'}>{head}</Text>
+            {body.filter(Boolean)}
+          </Box>
+        )
+      }
+      const field = Input
+        ? <Input key={`chat-in-${sel}-${chat.n}`} placeholder={sel ? `Message ${sel}` : 'No channel yet'} submitLabel="send" value={chat.draft}
+            onInput={(v: string) => update($, chatAtom, c => ({ ...c, draft: v }))}
+            onSubmit={(v: string) => sendChat($, homeDir, v)} />
+        : null
+      return (
+        <Box flexDirection="column">
+          {tabBar}
+          {chat.channels.length === 0
+            ? <Text dimColor>{'No channels yet. /progress-bar channel invite <github-user> [name]'}</Text>
+            : [
+                <Text key="ch-title" bold color="cyan">{'CHANNELS'}</Text>,
+                ...pick,
+                <Text key="ch-rule" dimColor>{'─'.repeat(Math.max(10, width - 2))}</Text>,
+                thread.length === 0 ? <Text key="ch-empty" dimColor>{'  No messages yet. Say hi below.'}</Text> : null,
+                ...thread.map(msgRow),
+                sel && field ? <Box key="ch-in" borderStyle="round" borderColor="gray" paddingX={1}>{field}</Box> : null,
+                <Box key="ch-act">
+                  {sel && field
+                    ? <Button key="ch-send" plain onPress={() => sendChat($, homeDir, chat.draft)}>{chat.sending ? '… sending  ' : '➤ Send  '}</Button>
+                    : sel ? <Button key="ch-reply" plain onPress={() => $.prompt.suggest({ text: `/progress-bar say ${sel} ` })}>{'✎ Reply  '}</Button> : null}
+                  {sel ? <Text dimColor>{`↑ Send file: /progress-bar send <file> to ${sel}`}</Text> : null}
+                </Box>,
+                chat.note ? <Text key="ch-note" color={chat.sending ? undefined : 'yellow'} dimColor={chat.sending}>{`  ${chat.note}`}</Text> : null,
+                <Text key="ch-safe" dimColor>{'  End-to-end encrypted and signed. Received text is shown, never run.'}</Text>,
+              ].filter(Boolean)}
+        </Box>
+      )
+    }
 
     if (tab === 'github') {
       const gh = await read($, ghAtom)
