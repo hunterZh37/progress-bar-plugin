@@ -5,7 +5,7 @@ import type { On } from 'claude-code'
 import { CONN_CACHE_REL, connName, connSummary, formatCache, parseAccounts, parseCache, parseLogin, parseMcpList } from '../hooks/connectors'
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
-import { PANE, badge, evId, fitLabel, labelCol, maxMeter, nestRows, runCount, shortTitle, parseSections, runCard, shortAge, slide, stripAnsi } from '../hooks/panel'
+import { PANE, badge, evId, fitLabel, labelCol, maxMeter, nestRows, runCount, shortTitle, parseSections, runCard, shortAge, timeTail, slide, stripAnsi } from '../hooks/panel'
 import { EVENTS_PY, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from '../hooks/events'
 import { REPOS_REL, parseBranches, parseCommits, webUrl } from '../hooks/github'
 import { eta, expandHome, line, lines, parseProgress, parseTitles, pickMeta, parseWatch, prevOf, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoItems, todoList } from '../hooks/render'
@@ -377,6 +377,19 @@ test('running cards: facts, step, count and the status word left out of the name
   expect(b.name).toBe('Build docs')
   expect(b.pct).toBe(null)
   expect(b.facts).toBe('⏱ 3m so far   🔧 12 actions · last: Edit')
+})
+
+test('one-line card time: a real time left, else an estimate from steps, else time so far', async () => {
+  // Labeling rows keep their reported time left.
+  expect(timeTail(runCard('◐ healthcare-classify ████░░ 64.0% · 1234/2000 batches · 1h19m left · 42m · 31/min'))).toBe('1h19m left')
+  // An agent with steps and no rate: (12m / 3 done) x 5 left = ~20m.
+  expect(timeTail(runCard('◐ Build docs working ██░░ 37.5% · 3/8 · 12m · 9 tools'))).toBe('~20m left')
+  expect(timeTail(runCard('◐ Build docs working ██░░ 50.0% · 2/4 · 1h10m · 9 tools'))).toBe('~1h10m left')
+  // No steps done yet, all done, or no counts: time so far, never a bare "12m".
+  expect(timeTail(runCard('◐ Build docs working · 0/8 · 12m · 9 tools'))).toBe('12m so far')
+  expect(timeTail(runCard('◐ Build docs working ████ 100.0% · 8/8 · 12m · 9 tools'))).toBe('12m so far')
+  expect(timeTail(runCard('◐ Build docs working · 3m · 12 tools · Edit'))).toBe('3m so far')
+  expect(timeTail(runCard('◐ box: train.py · 540% CPU · 12:50'))).toBe('12:50 running')
 })
 
 test('running cards: Claude Max weekly use is pulled out, not the bar %', async () => {

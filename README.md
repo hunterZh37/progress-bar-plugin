@@ -243,7 +243,7 @@ Claude Max this week  ██████░░░░  62% used
 ```
 
 - **Count:** the RUNNING header counts top-level lines and notes nested ones, as `RUNNING  4 (+3 sub-jobs)`.
-- **Line:** a mark, `▸ <short title>`, a 10-cell bar, the percent, then one dim note: `N left`, the run time, `waiting on X`, or a yellow `⚠ no progress Nm`.
+- **Line:** a mark, `▸ <short title>`, a 10-cell bar, the percent, then one dim note: `N left`, the run time, `Nm so far`, `waiting on X`, or a yellow `⚠ no progress Nm`. A job that reports steps but no time left (an agent) shows an estimate, `~Nm left`, from its time so far per step done.
 - **Short title:** `title` from the progress file or `titles.txt`, cut at ` · ` or `: `. A remote job keeps `<host>: name` whole. Without a title the job id is used.
 - **Aligned bars:** the title column is 14 to 26 characters wide by pane width. Longer titles end in `…`.
 - **Open card:** the job id and kind badge, `a of b steps` (or `batches`, or `steps not reported`), `▸ step`, the facts and `unlocks: …`. It never repeats the percent or the time left. Open cards stay open while the session runs.
@@ -252,7 +252,7 @@ Claude Max this week  ██████░░░░  62% used
 - **Waiting on:** a parent whose numbers have not moved is not stuck while a child runs or changed in the last 10 minutes. Its line reads `waiting on <child title>` instead of `no progress`. The grouper does the same in the status line.
 - **Kind badge:** 🏷  **labeling** for names ending `-classify`, `-verify`, `-judge` or `-candidates`. 🖥  **on host** for names starting `host:` or `host: ` (any `name:` prefix, such as `gpu-box: train.py`). 🤖  **Claude agent** when the row reports `N tools`. ⚙  **job** for the rest.
 - **Busy processes:** a row detail `N% CPU` is never progress. The line shows the sliding piece and the run time, the card `⚙ N cores busy` and `⏱ 12:50 running`. A busy process that ends never shows as finished.
-- **Name:** a trailing status word (`working`, `running`, `pending`, `waiting`) is left out.
+- **Name:** a trailing status word (`working`, `running`, `pending`, `waiting`, `starting`) is left out.
 - **No percent:** a 3-block piece slides along the bar, so it still reads as working.
 - **Facts:** `⚙ N cores busy`, `⏱ 12:50 running`, `⏱ Y so far`, `⚡ N/min`, `🔧 N actions · last: Tool`.
 - **Claude Max meter:** one shared meter under RUNNING, from a row detail `7d N%` or `Max 7-day used N%` (the highest one). Green under 50%, yellow under 80%, red above.

@@ -113,7 +113,7 @@ export function runCard(row: string): RunCard {
   const spin = /^([◐◓◑◒])\s*/.exec(row)
   const clean = row.slice((stuck ?? spin)?.[0].length ?? 0)
   const rawName = clean.split(/\s+[█░]|\s+·\s+/)[0]!.trim()
-  const name = rawName.replace(/\s+(working|pending|waiting|running)$/, '')
+  const name = rawName.replace(/\s+(working|pending|waiting|running|starting)(…|\.\.\.)?$/, '')
   const pctM = /(\d+(?:\.\d+)?)%(?!\s*CPU)/.exec(clean.replace(/·\s*(7d|Max 7-day used) \d+%/g, ''))
   const parts = clean.slice(rawName.length).replace(/^[\s█░·]+/, '').split(' · ').map(x => x.trim()).filter(x => x && !/^\d+(\.\d+)?%$/.test(x))
   const host = /^([A-Za-z0-9_.-]+):\s?\S/.exec(name)?.[1]
@@ -156,6 +156,31 @@ export function runCard(row: string): RunCard {
     ran,
     elapsed,
   }
+}
+
+/** Minutes in "1h05m", "12m" or "45s", else 0. */
+const toMin = (t: string) => {
+  const m = /^(?:(\d+)h)?(\d+)m$/.exec(t)
+  if (m) return Number(m[1] ?? 0) * 60 + Number(m[2])
+  const sec = /^(\d+)s$/.exec(t)
+  return sec ? Number(sec[1]) / 60 : 0
+}
+const fmtMin = (n: number) => (n >= 60 ? `${Math.floor(n / 60)}h${String(Math.round(n % 60)).padStart(2, '0')}m` : `${Math.max(1, Math.round(n))}m`)
+
+/**
+ * The time on a job's one-line card. A reported time left wins ("12m left"). A row with step counts and no time left
+ * (an agent) gets an estimate from its time so far per step done ("~8m left", while 0 < done < total). Else its ps run
+ * time ("12:50 running"), else "Nm so far".
+ */
+export function timeTail(r: Pick<RunCard, 'left' | 'ran' | 'elapsed' | 'count'>): string {
+  if (r.left) return `${r.left} left`
+  const c = /^([\d,]+) of ([\d,]+)/.exec(r.count)
+  const done = c ? Number(c[1]!.replace(/,/g, '')) : 0
+  const total = c ? Number(c[2]!.replace(/,/g, '')) : 0
+  const so = toMin(r.elapsed)
+  if (so > 0 && done > 0 && done < total) return `~${fmtMin((so / done) * (total - done))} left`
+  if (r.ran) return `${r.ran} running`
+  return r.elapsed ? `${r.elapsed} so far` : ''
 }
 
 /** A job's short title: cut at " · " or ": ", keeping "<host>: name" whole for a remote job. */
@@ -468,7 +493,7 @@ export function registerPanel(on: On) {
       const pad = `${ind}    `
       const why = m0.why ? `unlocks: ${m0.why.replace(/^unlocks:?\s*/i, '')}` : ''
       const label = fitLabel(shortTitle(m0.title || r.name), labelCol(width, ind.length))
-      const tail = stuck ? `⚠ no progress ${stuck}` : waitOn ? `waiting on ${short(waitOn)}` : r.left ? `${r.left} left` : r.ran ? `${r.ran} running` : r.elapsed
+      const tail = stuck ? `⚠ no progress ${stuck}` : waitOn ? `waiting on ${short(waitOn)}` : timeTail(r)
       return [
         <Box key={`r${k}`}>
           <Text color={stuck ? 'yellow' : 'cyan'}>{`${ind}  ${mark} `}</Text>
