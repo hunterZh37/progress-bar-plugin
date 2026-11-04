@@ -1,5 +1,6 @@
 import type { EngineInterface, Register } from 'claude-code'
 
+import { ACTION_TOOL, CHECK_EVERY, actionCommand, addFromClaude, gatePrompt, isGated, tickActions } from './actions'
 import { autonextCommand, ownJobs, tickAutonext } from './autonext'
 import { CHECKPOINT_PY } from './checkpoint'
 import { EVENTS_PY } from './events'
@@ -52,7 +53,8 @@ const EVENTS_PY_REL = '.claude/progress-bar/events.py'
 const CHECKPOINT_PY_REL = '.claude/progress-bar/checkpoint.py'
 const DEMO = 'progress-bar-demo'
 const USAGE = [
-  'Usage: /progress-bar [setup | demo | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | channel | send <file> to <name> | fold <section> | unfold <section> | toggle <section>]',
+  'Usage: /progress-bar [setup | demo | action | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | channel | send <file> to <name> | fold <section> | unfold <section> | toggle <section>]',
+  '  action: steps only you can run (list, add, done, skip <reason>, copy, check). While one is open your prompts are held',
   '  autonext: when a job finishes, start (on), suggest (ask, the default) or skip (off) the top ready to-do of its machine',
   '  (no argument): show the bars and open the Status panel\n  panel: open the Status panel. panel on: open it at every session start, with a one-line status line',
   '  checkpoint (or away): save the running jobs. The Status panel shows what happened since once you are back',
@@ -364,8 +366,9 @@ export const register: Register = on => {
   })
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup [mac-clicks [off]] | demo | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | channel | send <file> to <name> | fold <section>]' })
+    await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup [mac-clicks [off]] | demo | action [list|add|done|skip <reason>] | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | channel | send <file> to <name> | fold <section>]' })
     await $.tool.register(SEND_TOOL).catch(() => undefined)
+    await $.tool.register(ACTION_TOOL).catch(() => undefined)
     // An installed status line script and group.py follow the plugin version (per-project to-dos, session filter).
     await refreshInstalled($).catch(() => undefined)
     void poll($)
@@ -374,7 +377,24 @@ export const register: Register = on => {
     const home = await resolveHome($)
     void pollChannel($, home)
     $.clock.every(CHANNEL_EVERY, () => pollChannel($, home))
+    // Action needed: checks every 30 s, and the popup for actions not shown in the last 10 min.
+    void tickActions($, home)
+    $.clock.every(CHECK_EVERY, () => tickActions($, home))
     return next(e)
+  })
+
+  // Action needed: the model asks the person to run a step only they can do.
+  on('tool.call', { tool: 'mcp__progress-bar__action_add' }, async ($, e) => {
+    const i = e as unknown as { title?: unknown; command?: unknown; why?: unknown; check?: unknown; global?: unknown }
+    const s = (v: unknown) => (typeof v === 'string' ? v : '')
+    return { result: await addFromClaude($, await resolveHome($), { title: s(i.title), command: s(i.command), why: s(i.why), check: s(i.check), global: i.global === true }) }
+  })
+
+  // The gate: while an action is open, the person's prompts are held (slash commands always pass).
+  on('prompt.submit', async ($, e, next) => {
+    if (!isGated(e)) return next(e)
+    const drop = await gatePrompt($, await resolveHome($), e.text)
+    return drop === null ? next(e) : { drop }
   })
 
   // "send this to <name>": the model calls channel_send. The engine's permission prompt asks the person first.
@@ -394,6 +414,7 @@ export const register: Register = on => {
       : arg === 'demo' ? await demo($)
       : arg === 'clear' ? await clear($)
       : /^panel\b/.test(arg) ? await panel($, arg.slice(5).trim())
+      : /^actions?\b/.test(arg) ? await actionCommand($, await resolveHome($), raw.replace(/^\S+\s*/, ''))
       : /^autonext\b/.test(arg) ? await autonextCommand($, arg.slice(8))
       : /^todo\b/.test(arg) ? await todo($, raw.slice(4).trim())
       : /^(checkpoint|away)\b/.test(arg) ? await checkpointCommand($, await resolveHome($), raw.replace(/^\S+\s*/, ''))

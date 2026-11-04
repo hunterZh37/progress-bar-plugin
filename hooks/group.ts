@@ -14,7 +14,8 @@ A stopped row (■) whose job log ends with a finish line counts as done, not a 
 To-dos sort by a leading "N. " (1 first). One ending "(after X)" is dim while a running job matches X. The top ready one per machine says next.
 Folded sections (~/.claude-progress/.state/folded.txt) show as one line with a count, unless PB_UNFOLD=1.
 With --summary it prints one count line instead (the status line does this while the Status panel is on).
-It starts with a yellow "✉ N need you" while ~/.claude-progress/inbox.json lists items not in .state/inbox-handled.txt
+It starts with a red "⛔ N actions needed" while ~/.claude-progress/actions.json has open actions for this project or none.
+Then a yellow "✉ N need you" while ~/.claude-progress/inbox.json lists items not in .state/inbox-handled.txt
 (the full view, outside the Status panel, starts with that line too).
 Then a cyan "📨 N new" while ~/.claude-progress/channel/received.json lists files not in .state/channel-read.txt (secure channel).
 It ends with "☀ recap ready" while an overnight checkpoint (.state/overnight.json) is 4 h old or the panel saw a sleep.
@@ -185,9 +186,20 @@ def todo_file(cwd=None):
     a value ending .txt being a file under ~/.claude-progress (todo.txt = the old single list).
     Else todos/<slug>.txt, the slug from the git root (or the folder) under home: ~/Desktop/NomBot -> desktop-nombot.
     No folder at all: todo.txt."""
+    return os.path.join(ROOT, project_of(cwd)[0])
+
+
+def _home_slug(r):
+    h = HOME.rstrip('/')
+    rel = r[len(h):] if _under(r, h) else r
+    return _slug(rel) or ('home' if r == h else 'root')
+
+
+def project_of(cwd=None):
+    """(list file under ROOT, project slug), as hooks/project.ts resolves them."""
     cwd = (os.environ.get('PB_CWD', '') if cwd is None else cwd).rstrip('/')
     if not cwd:
-        return os.path.join(ROOT, 'todo.txt')
+        return ('todo.txt', 'todo.txt')
     best = None
     for l in (read(os.path.join(ROOT, 'todos', 'projects.txt')) or '').splitlines():
         l = l.strip()
@@ -199,7 +211,10 @@ def todo_file(cwd=None):
             best = (pre, m.group(2).strip())
     if best:
         v = best[1]
-        return os.path.join(ROOT, v.lstrip('/')) if v.endswith('.txt') else os.path.join(ROOT, 'todos', _slug(v) + '.txt')
+        f = v.lstrip('/') if v.endswith('.txt') else 'todos/' + _slug(v) + '.txt'
+        if f == 'todo.txt':
+            return (f, _home_slug(best[0]))
+        return (f, re.sub(r'\.txt$', '', re.sub(r'^todos/', '', f)))
     root, d = '', cwd
     while d:
         if os.path.exists(os.path.join(d, '.git')):
@@ -209,10 +224,34 @@ def todo_file(cwd=None):
         if up == d:
             break
         d = up
-    r = root or cwd
-    h = HOME.rstrip('/')
-    rel = r[len(h):] if _under(r, h) else r
-    return os.path.join(ROOT, 'todos', (_slug(rel) or ('home' if r == h else 'root')) + '.txt')
+    sl = _home_slug(root or cwd)
+    return ('todos/' + sl + '.txt', sl)
+
+
+def action_count(cwd=None):
+    """Open actions in actions.json (Action needed) for this session's project, or with no project (global)."""
+    try:
+        data = json.loads(read(os.path.join(ROOT, 'actions.json')) or 'null')
+        if isinstance(data, dict):
+            data = data.get('actions')
+        if not isinstance(data, list):
+            return 0
+        f, sl = project_of(cwd)
+        keys = {f, sl}
+        n = 0
+        for a in data:
+            if not isinstance(a, dict) or not a.get('id') or not a.get('title') or a.get('status', 'open') not in ('open', None):
+                continue
+            p = str(a.get('project') or '')
+            if not p or p in keys or 'todos/' + p + '.txt' == f:
+                n += 1
+        return n
+    except Exception:
+        return 0
+
+
+def action_label(n):
+    return '\033[1;31m⛔ ' + str(n) + ' action' + ('' if n == 1 else 's') + ' needed\033[0m'
 
 
 def parse_todo(text, running=()):
@@ -407,7 +446,13 @@ def main(stdin, now, summary=False):
             line = '\033[36m📨 ' + str(n_chan) + ' new\033[0m · ' + line
         if n_mail:
             line = '\033[33m✉ ' + str(n_mail) + ' need you\033[0m · ' + line
+        n_act = action_count()
+        if n_act:
+            line = action_label(n_act) + ' · ' + line
         return [line] + other
+    n_act = action_count()
+    if n_act and os.environ.get('PB_FULL') != '1':
+        out.append(action_label(n_act))
     n_mail = inbox_count()
     if n_mail and os.environ.get('PB_FULL') != '1':
         out.append('\033[33m✉ ' + str(n_mail) + ' need you\033[0m')

@@ -537,6 +537,37 @@ class Projects(unittest.TestCase):
         os.environ['PB_CWD'] = os.path.join(self.home, 'loose', 'dir')
         self.assertEqual(self.g.main(io.StringIO(''), T0), [])
 
+    def test_actions_needed_count_by_project_first_in_summary_and_full_view(self):
+        self.write('todos/projects.txt', '~/Desktop/NomBot\ttodo.txt\n')
+        nb = os.path.join(self.home, 'Desktop', 'NomBot')
+        cy = os.path.join(self.home, 'work', 'Cyber Portal')
+        self.assertEqual(self.g.project_of(nb), ('todo.txt', 'desktop-nombot'))
+        self.assertEqual(self.g.project_of(cy), ('todos/work-cyber-portal.txt', 'work-cyber-portal'))
+        self.write('actions.json', json.dumps([
+            {'id': 'a1', 'title': 'global step', 'status': 'open'},
+            {'id': 'a2', 'title': 'nombot step', 'project': 'desktop-nombot', 'status': 'open'},
+            {'id': 'a3', 'title': 'cyber step', 'project': 'work-cyber-portal'},
+            {'id': 'a4', 'title': 'closed', 'status': 'done'},
+            {'id': 'a5', 'title': 'skipped', 'status': 'skipped'},
+            {'title': 'no id'},
+        ]))
+        self.assertEqual(self.g.action_count(nb), 2)
+        self.assertEqual(self.g.action_count(cy), 2)
+        self.assertEqual(self.g.action_count(os.path.join(self.home, 'loose', 'dir')), 1)
+        os.environ['PB_CWD'] = nb
+        line = self.g.main(io.StringIO(''), T0, summary=True)[0]
+        self.assertTrue(line.startswith('\033[1;31m⛔ 2 actions needed\033[0m · '), line)
+        self.assertEqual(self.g.main(io.StringIO(''), T0)[0], '\033[1;31m⛔ 2 actions needed\033[0m')
+        os.environ['PB_FULL'] = '1'
+        try:
+            self.assertNotIn('needed', ''.join(self.g.main(io.StringIO(''), T0)))
+        finally:
+            del os.environ['PB_FULL']
+        os.environ['PB_CWD'] = os.path.join(self.home, 'loose', 'dir')
+        self.assertIn('⛔ 1 action needed', self.g.main(io.StringIO(''), T0, summary=True)[0])
+        self.write('actions.json', 'not json')
+        self.assertEqual(self.g.action_count(nb), 0)
+
     def test_a_job_another_session_sees_never_finishes_here(self):
         os.environ['PB_SID'] = 'aaaa'
         try:

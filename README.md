@@ -28,6 +28,7 @@ Live progress bars and a to-do list in the Claude Code status line. One line per
 - **Connectors:** a second tab in the panel shows which MCP connectors are connected, need sign-in or failed.
 - **GitHub:** a third tab shows the session repo's branch, other branches and recent commits. Click one to open it on GitHub.
 - **Titles and parents:** a progress file can name its job in plain words (`title`), say what it unlocks (`why`) and point at a parent job (`parent`). Each running job is one line with its short title, and a child shows under its parent.
+- **Action needed:** a step only you can run (a deploy swap, a login, a blocked command) pops up on macOS and holds your next prompt until it is done or skipped. A read-only check clears it by itself.
 - **Secure channel:** send `.md` files (and PDFs, images) straight to a collaborator's Claude Code session, end-to-end encrypted, through a private GitHub repo. No more dragging files into chat apps.
 - **Log:** a fourth tab lists errors, warnings and finishes from `~/.claude-progress/events.jsonl`, written by the grouper and by a scanner for your own log folders. Unseen errors show as `!N` on the tab and `✖ N errors` in the status line.
 
@@ -83,6 +84,7 @@ Already have a status line? Setup reads it and builds it into the script. The ba
 | `/progress-bar` | Shows the bars as text and opens the Status panel |
 | `/progress-bar panel` | Opens the Status panel. `panel on` opens it at every session start, `panel off` stops that |
 | `/progress-bar checkpoint [label]` | Saves the running jobs for the overnight recap. `away` does the same |
+| `/progress-bar action` | Lists open actions. `action add`, `done [n]`, `skip [n] <reason>`, `copy [n]`, `check`. See Action needed |
 | `/progress-bar inbox` | Lists what needs you from `~/.claude-progress/inbox.json`. `inbox setup` writes the example Gmail checker |
 | `/progress-bar channel invite <github-user> [name]` | Opens an encrypted channel with a collaborator. See Secure channel |
 | `/progress-bar channel join <owner> [name]` | Accepts a channel invitation |
@@ -411,6 +413,55 @@ Sam Ortiz · Thursday call
 - **✓ handled** hides an item. Its id goes to `~/.claude-progress/.state/inbox-handled.txt` (the newest 500 are kept), so it stays hidden when the file is rewritten.
 - **Status line:** the one-line summary starts with a yellow `✉ N need you`. Without the panel, the full view starts with that line. Nothing shows when N is 0.
 - **Gmail example (optional):** `/progress-bar inbox setup` writes `~/.claude/progress-bar/inbox-check.sh` and prints how to run it every 10 minutes. It needs the claude.ai Gmail connector and the `claude` CLI signed in. Each run starts a headless Claude (haiku) that may call only Gmail `search_threads`, `get_thread` and `get_message`. Sending, drafts, labels, trash and every other tool are denied. It treats email text as data and never follows instructions in it. It reads inbox threads from the last 3 days, leaves out promotions, social, automated mail and threads you answered last, and writes `inbox.json`. Set `INBOX_ACCOUNT` to your address. Runs skip 11 PM to 6 AM and never overlap.
+
+## Action needed
+
+Some steps only you can run: a deploy swap, a login, a command the permission system blocks, deleting a repo. Claude adds them as **actions** instead of only writing them in chat. While one is open you finish it or skip it before giving other instructions.
+
+```
+⛔ Action needed
+Swap in NomBot build viNrI9k8 (count flash fix)
+$ cd ~/Desktop/NomBot/web && rm -rf .next-prev && mv .next .next-prev && …
+Copy   ✓ I ran it   Skip
+```
+
+- **Popup (macOS):** when an action is added, and again at most every 10 minutes while it is open, a dialog titled "Action needed" shows the title, why and the command. **Copy command** puts the command on the clipboard. **I ran it** runs the check and closes the action only when the check passes, else it says "Check still fails". **Later** (the default, also after 120 s) closes the dialog. Other systems skip the popup. The banner and the gate still work.
+- **Prompt gate:** while an action is open for this session's project (or for every project), a prompt you type is held and you see the action, its command and how to go on:
+  - `done` runs the check and clears the action when it passes. An action with no check clears at once.
+  - `skip <reason>` clears it and logs a warning with your reason.
+  - `/progress-bar action list` shows every open action.
+  
+  Slash commands always pass, so `/progress-bar ...` and `/plugin ...` keep working. Task notifications and messages from other sessions pass too. Your held message comes back in the prompt box once the last action is done.
+- **Auto-clear:** checks run every 30 s, and again before a prompt is held (5 s timeout each). Run the command in any terminal and the action clears by itself with a toast "Action done: <title>".
+- **Status panel:** a red banner at the very top of the List tab with **Copy**, **✓ I ran it** and **Skip**.
+- **Status line:** the summary starts with a red `⛔ N actions needed`. Without the panel, the full view starts with that line.
+- **Log tab:** each action logs when it is added, done and skipped.
+
+Claude adds one with the `action_add` tool (the `action-needed` skill says when). You or a script can add one too:
+
+```
+/progress-bar action add Swap in the new build --command make swap --why users see the fix --check grep -qx abc123 web/.next/BUILD_ID
+```
+
+Values run to the next `--flag`. `--global` makes it hold prompts in every project. By default it holds only this session's project (the same project as Per-project to-dos).
+
+**File format.** `~/.claude-progress/actions.json` is a list. Any script on this machine may write it (a temp file, then rename):
+
+```json
+[{ "id": "swap-1", "title": "Swap in the new build", "command": "make swap", "why": "users see the fix",
+   "check": "grep -qx abc123 /path/to/BUILD_ID", "priority": "high", "created": 1800000000,
+   "project": "desktop-nombot", "status": "open" }]
+```
+
+`id`, `title` and `status` matter. `command`, `check` and `project` are optional. No `project` means every project. Closed actions keep `status` `done` or `skipped`, a `skipReason` and `closed`. The newest 50 closed ones are kept.
+
+**Safety.**
+
+- The plugin **never runs an action's `command`**. Only you do. Copy hands it to `pbcopy` on stdin.
+- It runs only `check`, with `/bin/sh` in your home folder, 5 s at most. A check must be a **read-only test** that exits 0 once the step is done, such as `grep -q`, `test -e`, `gh repo view`. Never put a command that changes anything in `check`.
+- Dialog text goes to `osascript` as arguments. The AppleScript source is fixed, so nothing in a title or command is ever read as AppleScript.
+- Actions hold commands, **never secret values**. Write the command that fetches or logs in, such as `gh auth login`, never a token or a password.
+- Commands and checks come from Claude or scripts on this machine. They are shown as text and quoted as text.
 
 ## Secure channel
 

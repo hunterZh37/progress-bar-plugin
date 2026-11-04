@@ -6,13 +6,14 @@ import { connSummary, readConns, refreshConns, resetConns } from './connectors'
 import { EVENTS_REL, LOG_DIRS_REL, SEEN_REL, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from './events'
 import { GH_EVERY, openUrl, openWeb, readGh } from './github'
 import { resolveHome } from './home'
+import { closeAction, copyCommand, cut as cutA, ranIt, readActions } from './actions'
 import { markRead, openLocal, readChannel } from './channel'
 import { markHandled, readInbox } from './inbox'
 import { isDarwin } from './mac'
 import { moveItem, nextPrompt, rankTodos, todoRows as layoutTodos } from './priority'
 import { sessionProject } from './project'
 import { FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, slug } from './render'
-import type { Channel, Checkpoint, Conn, Ev, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
+import type { Action, Channel, Checkpoint, Conn, Ev, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
 
 // The Status panel: the grouped status line, drawn in a docked pane beside the chat.
 // It runs the plugin's own status line script with PB_FULL=1 every second while the pane is open.
@@ -62,6 +63,7 @@ const logAtom = atom({ plugin: 'progress-bar', key: 'log' } as const, { events: 
 const recapAtom = atom({ plugin: 'progress-bar', key: 'recap' } as const, { cp: null, lastTick: 0, open: false } as Recap)
 const inboxAtom = atom({ plugin: 'progress-bar', key: 'inbox' } as const, { checked: 0, items: [] } as Inbox)
 const channelAtom = atom({ plugin: 'progress-bar', key: 'channel' } as const, { items: [] } as Channel)
+const actionsAtom = atom({ plugin: 'progress-bar', key: 'actions' } as const, [] as Action[])
 const DIR_REL = '.claude-progress'
 const META_MS = 24 * 60 * 60_000
 
@@ -434,6 +436,7 @@ export async function pollPanel($: EngineInterface, h: string) {
   await readTodos($, h)
   await readMeta($, h)
   await readEvents($, h)
+  await readActions($, h)
   await readInbox($, h)
   await readChannel($, h)
   if ((await read($, tabAtom)) === 'log') {
@@ -1014,9 +1017,30 @@ export function registerPanel(on: On) {
       </Box>,
     ]
 
+    // Action needed: steps only the person can run, first of all (actions.ts). The plugin never runs the command.
+    const acts = await read($, actionsAtom)
+    const actBlock: RenderChildren[] = acts.length === 0 ? [] : [
+      <Box key="act" flexDirection="column" borderStyle="bold" borderColor="red" paddingX={1} marginBottom={1}>
+        <Text key="act-h" bold color="red">{`⛔ Action needed${acts.length > 1 ? `  ${acts.length}` : ''}`}</Text>
+        {acts.slice(0, 3).flatMap(a => [
+          <Text key={`act-t-${a.id}`} bold>{cutA(a.title, Math.max(16, width - 6))}</Text>,
+          a.command ? <Text key={`act-c-${a.id}`} color="red">{cutA(`$ ${a.command}`, Math.max(16, width - 6))}</Text> : null,
+          <Box key={`act-b-${a.id}`}>
+            {a.command ? <Button key={`act-copy-${a.id}`} plain onPress={() => copyCommand($, a)}>{'Copy'}</Button> : null}
+            {a.command ? <Text dimColor>{'   '}</Text> : null}
+            <Button key={`act-ran-${a.id}`} plain onPress={() => ranIt($, homeDir, a)}>{'✓ I ran it'}</Button>
+            <Text dimColor>{'   '}</Text>
+            <Button key={`act-skip-${a.id}`} plain onPress={() => closeAction($, homeDir, a.id, 'skipped', 'skipped in the Status panel')}>{'Skip'}</Button>
+          </Box>,
+        ].filter(Boolean) as RenderChildren[])}
+        {acts.length > 3 ? <Text key="act-more" dimColor>{`+${acts.length - 3} more. /progress-bar action list`}</Text> : null}
+      </Box>,
+    ]
+
     return (
       <Box flexDirection="column">
         {tabBar}
+        {actBlock}
         {inboxBlock}
         {chanBlock}
         {banner}
