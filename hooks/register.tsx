@@ -123,7 +123,8 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number }
     const name = f.name.slice(0, -5)
     if (used.has(name) || now - f.mtimeMs > FRESH_MS) continue
     const p = await readP($, `${dir}/${f.name}`)
-    if (!p) continue
+    // Only progress files count: inbox.json and other data files have no done/total or step.
+    if (!p || name === 'inbox' || (p.done === null && !p.step)) continue
     rows.push({ id: `file:${name}`, description: name, status: 'running', startedAt: p.startedAt ?? f.mtimeMs, tools: 0, lastTool: '', done: p.done, total: p.total, step: p.step })
   }
   return { rows, now }
