@@ -281,6 +281,19 @@ export function slide(nowMs: number, barW: number): [number, number] {
 }
 
 /** The shared Claude Max meter: 10 cells, green under 50%, yellow under 80%, else red. */
+/**
+ * The Max meter's value: the live reading while a job reports one, else the last saved reading (up to 7 days) with
+ * its time ("as of 12:39"). `save` is set when the saved reading should be updated.
+ */
+export function maxReading(live: number | null, saved: { pct: number; at: number } | null, now: number): { used: number | null; asOf: string; save: boolean } {
+  if (live !== null) return { used: live, asOf: '', save: !saved || saved.pct !== live || now - saved.at > 60_000 }
+  if (saved && typeof saved.pct === 'number' && now - saved.at < 7 * 86_400_000) {
+    const t = new Date(saved.at)
+    return { used: saved.pct, asOf: `as of ${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`, save: false }
+  }
+  return { used: null, asOf: '', save: false }
+}
+
 export function maxMeter(used: number): { filled: number; color: 'green' | 'yellow' | 'red' } {
   return { filled: Math.round((Math.min(100, used) / 100) * 10), color: used >= 80 ? 'red' : used >= 50 ? 'yellow' : 'green' }
 }
@@ -598,6 +611,9 @@ export function registerPanel(on: On) {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Button, Text } = $.ui.resolve(e)
     const homeDir = await resolveHome($)
+    const maxFile = `${homeDir}/${DIR_REL}/.state/max-usage.json`
+    let maxSaved: { pct: number; at: number } | null = null
+    try { maxSaved = JSON.parse(String(await $.fs.read(maxFile))) } catch { maxSaved = null }
     const lines = await read($, linesAtom)
     const folded = new Set(await read($, foldedAtom))
     const todos = await read($, todosAtom)
@@ -735,7 +751,10 @@ export function registerPanel(on: On) {
     }
     const runRows = (rows: string[]) => {
       const cards = rows.map(runCard)
-      const used = cards.reduce<number | null>((a, c) => (c.maxUsed === null ? a : Math.max(a ?? 0, c.maxUsed)), null)
+      const live = cards.reduce<number | null>((a, c) => (c.maxUsed === null ? a : Math.max(a ?? 0, c.maxUsed)), null)
+      const reading = maxReading(live, maxSaved, nowMs)
+      if (reading.save && live !== null) void $.fs.write(maxFile, JSON.stringify({ pct: live, at: nowMs })).catch(() => undefined)
+      const used = reading.used
       const out = nestRows(cards.map(c => c.name), meta).flatMap(({ i, kids }) => {
         const c = cards[i]!
         const k0 = kids.length ? cards[kids[0]!]! : undefined
@@ -752,6 +771,7 @@ export function registerPanel(on: On) {
           <Text color={m.color}>{'█'.repeat(m.filled)}</Text>
           <Text dimColor>{'░'.repeat(10 - m.filled)}</Text>
           <Text>{`  ${used}% used`}</Text>
+          {reading.asOf ? <Text dimColor>{`  · ${reading.asOf}`}</Text> : null}
         </Box>,
       ]
     }

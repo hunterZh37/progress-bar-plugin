@@ -6,7 +6,7 @@ import { CONN_CACHE_REL, connUrl, connName, connSummary, formatCache, parseAccou
 import { CHECKPOINT_PY } from '../hooks/checkpoint'
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
-import { PANE, badge, evId, fitLabel, labelCol, machineTitle, machines, maxMeter, nestRows, runCount, shortTitle, parseSections, runCard, shortAge, timeTail, slide, stripAnsi } from '../hooks/panel'
+import { PANE, maxReading, badge, evId, fitLabel, labelCol, machineTitle, machines, maxMeter, nestRows, runCount, shortTitle, parseSections, runCard, shortAge, timeTail, slide, stripAnsi } from '../hooks/panel'
 import { EVENTS_PY, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from '../hooks/events'
 import { REPOS_REL, parseBranches, parseCommits, webUrl } from '../hooks/github'
 import { blocker, clip, doneEvents, isRunningRow, jobMachine, keyWords, moveItem, nextPrompt, nextReady, parseCaps, parseItem, parseMode, rankTodos, ranked, rowName, shortJob, todoRows } from '../hooks/priority'
@@ -1108,4 +1108,12 @@ test('to-do rows: one line each, ▶ next, ⏸ blocked, one waits for line per r
   expect(shortJob('Hunty: Similar orgs · step')).toBe('Hunty: Similar orgs')
   expect(shortJob('Arts classify: batch 3')).toBe('Arts classify')
   expect(clip('abcdef', 4)).toBe('abc…')
+})
+
+test('the Max meter keeps the last reading when no job reports one', () => {
+  const at = new Date(2026, 10, 4, 12, 39).getTime()
+  expect(maxReading(30, null, at)).toEqual({ used: 30, asOf: '', save: true })
+  expect(maxReading(null, { pct: 22, at }, at + 60_000)).toEqual({ used: 22, asOf: 'as of 12:39', save: false })
+  expect(maxReading(null, { pct: 22, at }, at + 8 * 86_400_000).used).toBe(null)
+  expect(maxReading(null, null, at).used).toBe(null)
 })
