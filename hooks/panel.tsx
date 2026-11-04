@@ -6,10 +6,11 @@ import { connSummary, readConns, refreshConns, resetConns } from './connectors'
 import { EVENTS_REL, LOG_DIRS_REL, SEEN_REL, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from './events'
 import { GH_EVERY, openUrl, openWeb, readGh } from './github'
 import { resolveHome } from './home'
+import { markHandled, readInbox } from './inbox'
 import { isDarwin } from './mac'
 import { moveItem, nextPrompt, rankTodos, todoRows as layoutTodos } from './priority'
 import { FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, slug } from './render'
-import type { Checkpoint, Conn, Ev, LogFilter, Meta, Recap, Snap, Todo } from '../types'
+import type { Checkpoint, Conn, Ev, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
 
 // The Status panel: the grouped status line, drawn in a docked pane beside the chat.
 // It runs the plugin's own status line script with PB_FULL=1 every second while the pane is open.
@@ -26,6 +27,8 @@ import type { Checkpoint, Conn, Ev, LogFilter, Meta, Recap, Snap, Todo } from '.
 // Overnight recap: `/progress-bar checkpoint` (or checkpoint.py) saves the running jobs. Once you are back (4 h later, or
 // a tick gap over 30 min shows the computer slept) the List tab opens with "While you were away": what finished, failed
 // or moved since. Dismiss archives the checkpoint to .state/overnight-YYYY-MM-DD.json.
+// Inbox (inbox.ts): items in ~/.claude-progress/inbox.json show first on the List tab. A press opens the https url,
+// "✓ handled" hides the item.
 
 export const PANE = 'progress-bar-status'
 const TITLE = 'Status'
@@ -54,6 +57,7 @@ const openAtom = atom({ plugin: 'progress-bar', key: 'openCards' } as const, [] 
 const metaAtom = atom({ plugin: 'progress-bar', key: 'meta' } as const, {} as Record<string, Meta>)
 const logAtom = atom({ plugin: 'progress-bar', key: 'log' } as const, { events: [], filter: 'all', open: '', seenAt: 0, dirs: [] } as { events: Ev[]; filter: LogFilter; open: string; seenAt: number; dirs: string[] })
 const recapAtom = atom({ plugin: 'progress-bar', key: 'recap' } as const, { cp: null, lastTick: 0, open: false } as Recap)
+const inboxAtom = atom({ plugin: 'progress-bar', key: 'inbox' } as const, { checked: 0, items: [] } as Inbox)
 const DIR_REL = '.claude-progress'
 const META_MS = 24 * 60 * 60_000
 
@@ -400,6 +404,7 @@ export async function pollPanel($: EngineInterface, h: string) {
   await readTodos($, h)
   await readMeta($, h)
   await readEvents($, h)
+  await readInbox($, h)
   if ((await read($, tabAtom)) === 'log') {
     const l = await read($, logAtom)
     if (unseenErrors(l.events, l.seenAt, Math.floor((await $.clock.now()) / 1000))) await markSeen($, h)
@@ -937,9 +942,28 @@ export function registerPanel(on: On) {
       ]
     }
 
+    // Inbox: what needs you, first. A press opens the item (https only), "✓ handled" hides it.
+    const inbox = await read($, inboxAtom)
+    const cutI = (t: string, n: number) => (t.length > n ? `${t.slice(0, n - 1)}…` : t)
+    const inboxBlock: RenderChildren[] = inbox.items.length === 0 ? [] : [
+      <Box key="inbox" flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} marginBottom={1}>
+        <Text key="ib-h" bold color="yellow">{`✉ Inbox  ${inbox.items.length} need you`}</Text>
+        {inbox.items.flatMap(it => [
+          it.url
+            ? <Button key={`ib-o-${it.id}`} plain onPress={() => openWeb($, it.url)}>{cutI(`${it.from} · ${it.subject}`, Math.max(16, width - 8))}</Button>
+            : <Text key={`ib-o-${it.id}`}>{cutI(`${it.from} · ${it.subject}`, Math.max(16, width - 8))}</Text>,
+          <Box key={`ib-w-${it.id}`}>
+            <Text dimColor>{cutI(`  ${it.why}${it.due ? ` · due ${it.due}` : ''}  `, Math.max(16, width - 20))}</Text>
+            <Button key={`ib-x-${it.id}`} plain onPress={() => markHandled($, homeDir, it.id)}>{'✓ handled'}</Button>
+          </Box>,
+        ])}
+      </Box>,
+    ]
+
     return (
       <Box flexDirection="column">
         {tabBar}
+        {inboxBlock}
         {banner}
         {sections.length === 0 && <Text dimColor>Nothing running.</Text>}
         {sections.map((sec, n) => {

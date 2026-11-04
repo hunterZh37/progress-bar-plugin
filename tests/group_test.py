@@ -219,6 +219,20 @@ class Group(unittest.TestCase):
         os.remove(os.path.join(self.root, '.state', 'overnight.json'))
         self.assertNotIn('recap ready', self.g.main(io.StringIO(''), T0 + 9 * 3600, summary=True)[0])
 
+    def test_inbox_need_you_in_summary_and_full_view(self):
+        self.assertNotIn('need you', self.run_summary('')[0])
+        self.write('inbox.json', json.dumps({'checked': T0, 'items': [{'id': 'a1'}, {'id': 'b2'}, {'id': 'c3'}, {'from': 'no id'}]}))
+        self.write('.state/inbox-handled.txt', 'b2\n')
+        self.assertTrue(self.run_summary('')[0].startswith('\033[33m✉ 2 need you\033[0m · ▶ 0 running'))
+        self.assertEqual(self.run_('▶ import ██░░ 50.0%\n')[0], '\033[33m✉ 2 need you\033[0m')
+        os.environ['PB_FULL'] = '1'
+        try:
+            self.assertNotIn('need you', ''.join(self.run_('▶ import ██░░ 50.0%\n')))
+        finally:
+            del os.environ['PB_FULL']
+        self.write('inbox.json', 'not json')
+        self.assertNotIn('need you', self.run_summary('')[0])
+
     def test_pb_unfold_ignores_folded_sections(self):
         self.write('.state/folded.txt', 'running\n')
         os.environ['PB_UNFOLD'] = '1'

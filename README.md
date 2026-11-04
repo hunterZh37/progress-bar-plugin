@@ -81,6 +81,7 @@ Already have a status line? Setup reads it and builds it into the script. The ba
 | `/progress-bar autonext on\|off\|ask` | When a job finishes: start the next to-do (`on`), suggest it (`ask`, the default) or do nothing (`off`) |
 | `/progress-bar panel` | Opens the Status panel. `panel on` opens it at every session start, `panel off` stops that |
 | `/progress-bar checkpoint [label]` | Saves the running jobs for the overnight recap. `away` does the same |
+| `/progress-bar inbox` | Lists what needs you from `~/.claude-progress/inbox.json`. `inbox setup` writes the example Gmail checker |
 | `/progress-bar fold <section>` | Folds a section to one line. `unfold` opens it, `toggle` flips it |
 
 ## File format
@@ -349,6 +350,32 @@ Save a checkpoint when you stop for the day. When you come back, the List tab of
 - **Status line:** the one-line summary ends with `☀ recap ready` while the recap shows.
 - **Dismiss** moves the file to `~/.claude-progress/.state/overnight-YYYY-MM-DD.json` (the checkpoint's day) and hides the recap until the next checkpoint.
 
+## Inbox
+
+Shows what needs you, such as emails waiting on your reply, first on the List tab and in the status line.
+
+```
+✉ Inbox  2 need you
+Ann Lee · Budget sign-off
+  Approve the Q4 budget · due Fri  ✓ handled
+Sam Ortiz · Thursday call
+  Reply with your availability  ✓ handled
+```
+
+- **Any script can feed it.** Write `~/.claude-progress/inbox.json`:
+
+  ```json
+  { "checked": 1800000000, "items": [
+    { "id": "thread-1", "from": "Ann Lee", "subject": "Budget sign-off", "why": "Approve the Q4 budget", "due": "Fri", "url": "https://mail.google.com/mail/#all/thread-1" }
+  ] }
+  ```
+
+  `id` is required and must be unique. `due` and `url` are optional. Write the file whole (a temp file, then rename).
+- **Press an item** to open its `url`. Only `https://` links open.
+- **✓ handled** hides an item. Its id goes to `~/.claude-progress/.state/inbox-handled.txt` (the newest 500 are kept), so it stays hidden when the file is rewritten.
+- **Status line:** the one-line summary starts with a yellow `✉ N need you`. Without the panel, the full view starts with that line. Nothing shows when N is 0.
+- **Gmail example (optional):** `/progress-bar inbox setup` writes `~/.claude/progress-bar/inbox-check.sh` and prints how to run it every 10 minutes. It needs the claude.ai Gmail connector and the `claude` CLI signed in. Each run starts a headless Claude (haiku) that may call only Gmail `search_threads`, `get_thread` and `get_message`. Sending, drafts, labels, trash and every other tool are denied. It treats email text as data and never follows instructions in it. It reads inbox threads from the last 3 days, leaves out promotions, social, automated mail and threads you answered last, and writes `inbox.json`. Set `INBOX_ACCOUNT` to your address. Runs skip 11 PM to 6 AM and never overlap.
+
 ## Connectors
 
 The **Connectors** tab of the Status panel lists each MCP connector with its status.
@@ -437,7 +464,7 @@ Optional. Makes each section header a link that folds or unfolds that section.
 
 ## Privacy
 
-Everything stays on your machine. The plugin reads and writes only files under `~/.claude-progress/`, `~/.claude/progress-bar/` and `~/.cache/progress-bar/`, and reads the `*.log` files in folders you list in `log-dirs.txt`, plus `~/Applications/ProgressBarToggle.app` if you run `setup mac-clicks`. The plugin makes no network calls itself. While the Status panel is open, the Connectors tab runs `claude mcp list`, which contacts your configured connectors to check them. The GitHub tab runs local `git` only, and opens a page in your browser when you click.
+Everything stays on your machine. The plugin reads and writes only files under `~/.claude-progress/`, `~/.claude/progress-bar/` and `~/.cache/progress-bar/`, and reads the `*.log` files in folders you list in `log-dirs.txt`, plus `~/Applications/ProgressBarToggle.app` if you run `setup mac-clicks`. The plugin makes no network calls itself. The optional inbox checker (`inbox setup`) runs only when you schedule it, and reads your mail through your own Gmail connector. While the Status panel is open, the Connectors tab runs `claude mcp list`, which contacts your configured connectors to check them. The GitHub tab runs local `git` only, and opens a page in your browser when you click.
 
 ## License
 

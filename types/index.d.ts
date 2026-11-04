@@ -38,6 +38,11 @@ export type Repo = { name: string; path: string; url: string; branch: string; di
 /** GitHub tab: the repos found, the one shown and when they were read (epoch ms). */
 export type Gh = { repos: Repo[]; sel: number; at: number }
 
+/** Inbox: one item of ~/.claude-progress/inbox.json. url: https only, '' otherwise. */
+export type InboxItem = { id: string; from: string; subject: string; why: string; due?: string; url: string }
+/** Inbox: when it was last checked (epoch s) and the items not marked handled. */
+export type Inbox = { checked: number; items: InboxItem[] }
+
 /** Overnight recap: one running job at checkpoint time (`/progress-bar checkpoint` or checkpoint.py). */
 export type Snap = { name: string; pct?: number; done?: number; total?: number }
 /** Overnight recap: ~/.claude-progress/.state/overnight.json. `since` and `woke` are epoch s; woke is when the panel saw a clock gap over 30 min (the computer slept). */
@@ -47,6 +52,6 @@ export type Recap = { cp: Checkpoint | null; lastTick: number; open: boolean }
 
 declare module 'claude-code' {
   interface PluginState {
-    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards; recap: Recap }
+    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards; recap: Recap; inbox: Inbox }
   }
 }

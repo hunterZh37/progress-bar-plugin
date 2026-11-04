@@ -4,6 +4,7 @@ import { autonextCommand, ownJobs, tickAutonext } from './autonext'
 import { CHECKPOINT_PY } from './checkpoint'
 import { EVENTS_PY } from './events'
 import { GROUP_PY } from './group'
+import { inboxCommand } from './inbox'
 import { resolveHome } from './home'
 import { macClicks, parseMacClicks } from './mac'
 import { checkpointCommand, panelCommand, registerPanel, startPanel } from './panel'
@@ -49,10 +50,11 @@ const EVENTS_PY_REL = '.claude/progress-bar/events.py'
 const CHECKPOINT_PY_REL = '.claude/progress-bar/checkpoint.py'
 const DEMO = 'progress-bar-demo'
 const USAGE = [
-  'Usage: /progress-bar [setup | demo | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | fold <section> | unfold <section> | toggle <section>]',
+  'Usage: /progress-bar [setup | demo | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | fold <section> | unfold <section> | toggle <section>]',
   '  autonext: when a job finishes, start (on), suggest (ask, the default) or skip (off) the top ready to-do of its machine',
   '  panel: open the Status panel. panel on: open it at every session start, with a one-line status line',
   '  checkpoint (or away): save the running jobs. The Status panel shows what happened since once you are back',
+  '  inbox: emails that need you (~/.claude-progress/inbox.json). inbox setup: write the example Gmail checker',
   '  setup mac-clicks [off]: click a section header to fold it (macOS)',
   '  sections: todo, running, waiting, done, problems, all',
   '  todo: todo | todo add [name] <text> | todo done <n|text> | todo clear',
@@ -337,7 +339,7 @@ export const register: Register = on => {
   })
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup [mac-clicks [off]] | demo | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | fold <section>]' })
+    await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup [mac-clicks [off]] | demo | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | fold <section>]' })
     void poll($)
     $.clock.every(5000, () => { void poll($); void tickAutonext($) })
     await startPanel($, await resolveHome($))
@@ -357,6 +359,7 @@ export const register: Register = on => {
       : /^autonext\b/.test(arg) ? await autonextCommand($, arg.slice(8))
       : /^todo\b/.test(arg) ? await todo($, raw.slice(4).trim())
       : /^(checkpoint|away)\b/.test(arg) ? await checkpointCommand($, await resolveHome($), raw.replace(/^\S+\s*/, ''))
+      : /^inbox\b/.test(arg) ? await inboxCommand($, await resolveHome($), arg.slice(5))
       : /^(fold|unfold|toggle)\b/.test(arg) ? await fold($, arg)
       : USAGE
     return { text }
