@@ -147,5 +147,20 @@ class Group(unittest.TestCase):
         self.assertIn('stuck 31m', self.run_('▶ j ██░░ 1/2\n', now=T0 + 31 * 60)[1])
 
 
+    def test_summary_line_counts_every_group(self):
+        self.write('todo.txt', '[you]\na\nb\nx done\n[mac]\nc\n')
+        self.write('.state/folded.txt', 'running todo\n')
+        lines = '▶ slow ██░░ 50.0% · 2/4\n▶ fast ██░░ 1/4\n▶ helper waiting · 1m\n✖ error broken · 2m\nopus · main\n'
+        self.g.main(io.StringIO(lines), T0, summary=True)
+        out = self.g.main(io.StringIO(lines.replace('1/4', '2/4', 1).replace('fast ██░░ 1/4', 'fast ███░ 3/4')), T0 + 11 * 60, summary=True)
+        self.assertEqual(out, ['▶ 2 running · ⚠ 1 stuck · ✖ 1 problems · ⏸ 1 waiting · ☐ 3 to-do · full view in the Status panel', 'opus · main'])
+
+    def test_summary_line_leaves_out_empty_extras(self):
+        self.assertEqual(self.run_summary(''), ['▶ 0 running · ☐ 0 to-do · full view in the Status panel'])
+
+    def run_summary(self, text):
+        return self.g.main(io.StringIO(text), T0, summary=True)
+
+
 if __name__ == '__main__':
     unittest.main()

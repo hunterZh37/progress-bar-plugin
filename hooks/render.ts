@@ -153,6 +153,13 @@ export function lines(rows: Row[], now: number, max = MAX_LINES): string[] {
 /** Quotes a string for POSIX sh inside single quotes. */
 export const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
 
+/** The chained command inside an installed script (its `prev=` line), so a rewrite keeps it. */
+export function prevOf(script: string): string | undefined {
+  const m = /^prev='((?:[^']|'\\'')*)'$/m.exec(script)
+  const v = m ? m[1]!.replace(/'\\''/g, "'") : ''
+  return v || undefined
+}
+
 /** The status line script `/progress-bar setup` writes. `prev` is a command to chain after the bars. */
 export function statusScript(prev?: string): string {
   return [
@@ -161,6 +168,8 @@ export function statusScript(prev?: string): string {
     '# Prints each fresh (<2 min) ~/.claude-progress/.lines/*.txt, then the previous status line if any,',
     '# grouped into TO-DO / PROBLEMS / RUNNING / WAITING / DONE by group.py beside this script.',
     '# Without python3 the lines print ungrouped.',
+    '# While the Status panel is on (~/.claude-progress/.state/panel-on) it prints one summary line,',
+    '# unless PB_FULL=1 (the panel itself runs it that way for the full view).',
     'input=$(cat)',
     `prev=${shQuote(prev ?? '')}`,
     'lines() {',
@@ -175,7 +184,9 @@ export function statusScript(prev?: string): string {
     'group="$HOME/.claude/progress-bar/group.py"',
     'if [ -f "$group" ] && command -v python3 >/dev/null 2>&1; then',
     '  out=$(lines)',
-    '  printf \'%s\\n\' "$out" | python3 "$group" 2>/dev/null || printf \'%s\\n\' "$out"',
+    '  mode=',
+    '  if [ -f "$HOME/.claude-progress/.state/panel-on" ] && [ "$PB_FULL" != 1 ]; then mode=--summary; fi',
+    '  printf \'%s\\n\' "$out" | python3 "$group" $mode 2>/dev/null || printf \'%s\\n\' "$out"',
     'else',
     '  lines',
     'fi',

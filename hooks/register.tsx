@@ -1,8 +1,10 @@
 import type { EngineInterface, Register } from 'claude-code'
 
 import { GROUP_PY } from './group'
+import { resolveHome } from './home'
 import { macClicks, parseMacClicks } from './mac'
-import { FRESH_MS, eta, expandHome, lines, parseProgress, parseWatch, readLog, slug, statusScript, todoAdd, todoClear, todoDone, todoList } from './render'
+import { panelCommand, registerPanel, startPanel } from './panel'
+import { FRESH_MS, eta, expandHome, lines, parseProgress, parseWatch, prevOf, readLog, slug, statusScript, todoAdd, todoClear, todoDone, todoList } from './render'
 import type { Progress, Row } from './render'
 
 const WATCH = '.watch.json'
@@ -42,7 +44,8 @@ const SCRIPT_REL = '.claude/progress-bar/statusline.sh'
 const GROUP_REL = '.claude/progress-bar/group.py'
 const DEMO = 'progress-bar-demo'
 const USAGE = [
-  'Usage: /progress-bar [setup | demo | clear | todo | fold <section> | unfold <section> | toggle <section>]',
+  'Usage: /progress-bar [setup | demo | clear | todo | panel [on|off] | fold <section> | unfold <section> | toggle <section>]',
+  '  panel: open the Status panel. panel on: open it at every session start, with a one-line status line',
   '  setup mac-clicks [off]: click a section header to fold it (macOS)',
   '  sections: todo, running, waiting, done, problems, all',
   '  todo: todo | todo add [name] <text> | todo done <n|text> | todo clear',
@@ -52,13 +55,6 @@ const SECTIONS = ['todo', 'running', 'waiting', 'done', 'problems']
 type Seen = { startedAt: number; tools: number; lastTool: string }
 
 const seen = new Map<string, Seen>()
-let home = ''
-
-async function resolveHome($: EngineInterface) {
-  if (home) return home
-  home = ((await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE')) ?? '').replace(/[\\/]+$/, '')
-  return home
-}
 const dirOf = (h: string) => `${h}/.claude-progress`
 
 async function readP($: EngineInterface, path: string): Promise<Progress | null> {
@@ -150,6 +146,7 @@ async function sessionKeyOf($: EngineInterface): Promise<string> {
 // Job files (~/.claude-progress/*.json) are the same for every session, so they go to one shared jobs.txt.
 async function poll($: EngineInterface) {
   const { rows, now } = await collect($)
+  const home = await resolveHome($)
   if (!home) return
   await sessionKeyOf($)
   const agents = rows.filter(r => !r.id.startsWith('file:'))
@@ -170,7 +167,7 @@ const snippet = `"statusLine": { "type": "command", "command": "~/${SCRIPT_REL}"
 
 async function show($: EngineInterface) {
   const { rows, now } = await collect($)
-  const h = home
+  const h = await resolveHome($)
   const current = await statusLineCommand($)
   const installed = h ? await $.fs.exists(`${h}/${SCRIPT_REL}`).catch(() => false) : false
   const wired = !!current && current.includes(SCRIPT_REL)
@@ -187,8 +184,8 @@ async function setup($: EngineInterface) {
   const h = await resolveHome($)
   if (!h) return 'Could not find your home folder ($HOME is unset).'
   const current = await statusLineCommand($)
-  const prev = current && !current.includes(SCRIPT_REL) ? current : undefined
   const path = `${h}/${SCRIPT_REL}`
+  const prev = current && !current.includes(SCRIPT_REL) ? current : await installedPrev($, path)
   await $.fs.write(path, statusScript(prev))
   await $.fs.write(`${h}/${GROUP_REL}`, GROUP_PY)
   await $.process.run(['chmod', '+x', path]).catch(() => undefined)
@@ -197,6 +194,28 @@ async function setup($: EngineInterface) {
     ? 'Your settings already point at it.'
     : `Add this to ~/.claude/settings.json (replacing any "statusLine" there):\n  ${snippet}`
   return `Wrote ${path} and group.py beside it.${chain}\n${done}\n"refreshInterval": 1 redraws the status line every second.`
+}
+
+/** The command an installed script chains, so running setup again keeps it. */
+async function installedPrev($: EngineInterface, path: string): Promise<string | undefined> {
+  try { return prevOf(String(await $.fs.read(path))) } catch { return undefined }
+}
+
+/** Rewrites an installed script and group.py with this version's, keeping the chained command. No-op when not installed. */
+async function refreshInstalled($: EngineInterface) {
+  const h = await resolveHome($)
+  const path = `${h}/${SCRIPT_REL}`
+  if (!h || !(await $.fs.exists(path).catch(() => false))) return
+  await $.fs.write(path, statusScript(await installedPrev($, path)))
+  await $.fs.write(`${h}/${GROUP_REL}`, GROUP_PY)
+}
+
+/** `/progress-bar panel [on|off]`: the panel runs the installed script, so it needs setup first. */
+async function panel($: EngineInterface, arg: string): Promise<string> {
+  const h = await resolveHome($)
+  if (h && arg !== 'off' && !(await $.fs.exists(`${h}/${SCRIPT_REL}`).catch(() => false))) return 'The Status panel draws the status line script. Run `/progress-bar setup` first.'
+  if (arg === 'on') await refreshInstalled($)
+  return panelCommand($, h, arg)
 }
 
 /** `/progress-bar setup mac-clicks [off]`: also refreshes group.py, which draws the header links. */
@@ -288,6 +307,8 @@ async function clear($: EngineInterface) {
 }
 
 export const register: Register = on => {
+  registerPanel(on)
+
   on('tool.call', async ($, e, next) => {
     if (e.agentId) {
       const s = seen.get(e.agentId) ?? { startedAt: await $.clock.now(), tools: 0, lastTool: '' }
@@ -299,9 +320,10 @@ export const register: Register = on => {
   })
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup [mac-clicks [off]] | demo | clear | todo | fold <section>]' })
+    await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup [mac-clicks [off]] | demo | clear | todo | panel [on|off] | fold <section>]' })
     void poll($)
     $.clock.every(5000, () => { void poll($) })
+    await startPanel($, await resolveHome($))
     return next(e)
   })
 
@@ -314,6 +336,7 @@ export const register: Register = on => {
       : arg.startsWith('setup ') && parseMacClicks(arg.slice(6)) ? await setupMacClicks($, parseMacClicks(arg.slice(6))!)
       : arg === 'demo' ? await demo($)
       : arg === 'clear' ? await clear($)
+      : /^panel\b/.test(arg) ? await panel($, arg.slice(5).trim())
       : /^todo\b/.test(arg) ? await todo($, raw.slice(4).trim())
       : /^(fold|unfold|toggle)\b/.test(arg) ? await fold($, arg)
       : USAGE

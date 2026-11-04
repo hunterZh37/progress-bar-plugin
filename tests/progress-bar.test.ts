@@ -4,7 +4,8 @@ import type { On } from 'claude-code'
 
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
-import { eta, expandHome, line, lines, parseProgress, parseWatch, readLog, slug, statusScript, todoAdd, todoClear, todoDone, todoItems, todoList } from '../hooks/render'
+import { PANE, parseSections, runningRow, stripAnsi } from '../hooks/panel'
+import { eta, expandHome, line, lines, parseProgress, parseWatch, prevOf, readLog, slug, statusScript, todoAdd, todoClear, todoDone, todoItems, todoList } from '../hooks/render'
 
 const NOW = 1_800_000_000_000
 const HOME = '/home/u'
@@ -236,7 +237,7 @@ test('/progress-bar shows a watched log, and stopped when its process is gone', 
 test('/progress-bar with an unknown argument prints usage', async ($, on) => {
   world(on)
   const { text } = await run($, 'nope')
-  expect(text.split('\n')[0]).toBe('Usage: /progress-bar [setup | demo | clear | todo | fold <section> | unfold <section> | toggle <section>]')
+  expect(text.split('\n')[0]).toBe('Usage: /progress-bar [setup | demo | clear | todo | panel [on|off] | fold <section> | unfold <section> | toggle <section>]')
 })
 
 test('/progress-bar todo add, list, done and clear write todo.txt', async ($, on) => {
@@ -302,4 +303,105 @@ test('/progress-bar setup mac-clicks off unregisters and removes the app and fla
   expect(text).toContain('Click to fold is off.')
   expect(ran).toContainEqual([LSREGISTER, '-u', app])
   expect(ran).toContainEqual(['rm', '-rf', app, `${HOME}/.claude/progress-bar/ProgressBarToggle.applescript`, `${HOME}/.claude-progress/.state/clicks-on`])
+})
+
+test('the script prints one summary line while the panel is on, unless PB_FULL=1', async () => {
+  const s = statusScript()
+  expect(s).toContain('if [ -f "$HOME/.claude-progress/.state/panel-on" ] && [ "$PB_FULL" != 1 ]; then mode=--summary; fi')
+  expect(s).toContain('| python3 "$group" $mode')
+  expect(GROUP_PY).toContain("'--summary' in sys.argv[1:]")
+  expect(GROUP_PY).toContain("full view in the Status panel")
+})
+
+test('prevOf reads the chained command back out of an installed script', async () => {
+  expect(prevOf(statusScript("jq -r '.model'"))).toBe("jq -r '.model'")
+  expect(prevOf(statusScript())).toBe(undefined)
+})
+
+const FULL = [
+  '\x1b]8;;progressbar://toggle/todo\x07▾ ☐ TO-DO\x1b]8;;\x07',
+  '  YOU: review PR · call Sam',
+  '  MAC: run import',
+  '▾ ▶ RUNNING',
+  '  \x1b[33m⚠ stuck 12m\x1b[0m nightly-import ████████████████░░░░ 80.0% · 4/5 · batch 4 · 12m',
+  '  ◐ Build docs █████░░░░░░░░░░░░░░░ 25.0% · 1/4 · render · 0m · 0 tools',
+  '▸ ✔ DONE (2)',
+  'opus 4 · main',
+].join('\n')
+
+test('the panel parser: sections, counts, folded headers and trailing lines', async () => {
+  const { sections, other } = parseSections(stripAnsi(FULL).split('\n'))
+  expect(sections.map(s => [s.key, s.folded, s.count, s.rows.length])).toEqual([['todo', false, 3, 2], ['running', false, 2, 2], ['done', true, 2, 0]])
+  expect(other).toEqual(['opus 4 · main'])
+  expect(runningRow(sections[1]!.rows[0]!)).toEqual({ mark: '⚠ 12m', stuck: true, name: 'nightly-import', pct: 80, details: '4/5 · batch 4 · 12m' })
+  expect(runningRow(sections[1]!.rows[1]!).mark).toBe('◐')
+})
+
+/** A world for the panel: the status script answers FULL, files live in `files`. */
+function panelWorld(on: On, files: Record<string, string>) {
+  const ran: { argv: string[]; env?: Record<string, string>; stdin?: string }[] = []
+  mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  on('command.register', () => ({ value: { command: 'progress-bar' } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('agent.list', () => ({ value: [] as never }))
+  on('fs.list', () => ({ value: [] }))
+  on('fs.read', (_, e) => {
+    const text = files[e.path]
+    if (text === undefined) throw new Error('ENOENT')
+    return { value: text }
+  })
+  on('fs.write', (_, e) => { files[e.path] = e.text; return { value: undefined } })
+  on('fs.exists', (_, e) => ({ value: e.path in files }))
+  on('settings.read', () => ({ value: {} as never }))
+  on('process.run', (_, e) => {
+    ran.push({ argv: [...e.argv], env: e.init?.env, stdin: e.init?.stdin })
+    if (e.argv[0] === 'rm') for (const f of e.argv.slice(2)) delete files[f]
+    const stdout = e.argv[1]?.endsWith('statusline.sh') ? FULL : ''
+    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  const opened: string[] = []
+  on('ui.open', (_, e) => { opened.push(e.id); return { value: { isPlaced: true } } })
+  on('ui.close', () => ({ value: undefined }))
+  on('ui.panes', () => ({ value: [] as never }))
+  return { ran, opened }
+}
+
+const SCRIPT = `${HOME}/.claude/progress-bar/statusline.sh`
+const FLAG = `${DIR}/.state/panel-on`
+const FOLDED = `${DIR}/.state/folded.txt`
+
+test('the panel draws sections and rows, and a header press writes folded.txt', async ($, on) => {
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n' }
+  const { ran, opened } = panelWorld(on, files)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  expect(opened).toEqual([PANE])
+  expect(ran).toContainEqual({ argv: ['/bin/sh', SCRIPT], env: { PB_FULL: '1' }, stdin: '{}' })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { title: 'Status', isFocused: false, bodyColumns: 52, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } })
+  expect((await ui.find({ type: 'Text', text: /^  You$/ }))?.text).toBe('  You')
+  expect((await ui.find({ type: 'Text', text: /call Sam/ }))?.text).toBe('    ○ call Sam')
+  expect((await ui.find({ type: 'Text', text: /^nightly-import$/ }))?.text).toBe('nightly-import')
+  expect((await ui.find({ type: 'Text', text: /4\/5 · batch 4/ }))?.text).toBe('    4/5 · batch 4 · 12m')
+  await ui.press({ key: 'h-running' })
+  expect(files[FOLDED]).toBe('running')
+  await ui.press({ key: 'h-running' })
+  expect(files[FOLDED]).toBe('')
+  await ui.unmount()
+})
+
+test('/progress-bar panel on and off: the flag file, and setup first', async ($, on) => {
+  const files: Record<string, string> = {}
+  const { opened } = panelWorld(on, files)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  expect(opened).toEqual([])
+  expect((await run($, 'panel')).text).toContain('Run `/progress-bar setup` first.')
+  files[SCRIPT] = statusScript("jq -r '.model'")
+  expect((await run($, 'panel on')).text).toContain('Status panel on')
+  expect(files[FLAG]).toBe('on\n')
+  expect(prevOf(files[SCRIPT]!)).toBe("jq -r '.model'")
+  expect(files[`${HOME}/.claude/progress-bar/group.py`]).toBe(GROUP_PY)
+  expect(opened).toEqual([PANE])
+  expect((await run($, 'panel off')).text).toContain('Status panel off')
+  expect(files[FLAG]).toBe(undefined)
+  expect((await run($, 'panel')).text).toContain('`/progress-bar panel on` opens it at every session start.')
 })

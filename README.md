@@ -23,6 +23,7 @@ Live progress bars and a to-do list in the Claude Code status line. One line per
 - **To-dos:** `~/.claude-progress/todo.txt` shows first. Claude keeps it current.
 - **Links:** job names open their progress file, or a URL you set in `links.txt`.
 - **Status line:** a small script prints all this above your existing status line.
+- **Status panel:** an optional docked pane beside the chat with the same groups, foldable headers and a one-line status line.
 
 ## Install
 
@@ -72,6 +73,7 @@ Already have a status line? Setup reads it and builds it into the script. The ba
 | `/progress-bar todo add [name] <text>` | Adds a to-do under `[name]` (default: the last heading, or `[todo]`) |
 | `/progress-bar todo done <n\|text>` | Marks a to-do done by number or by text it contains |
 | `/progress-bar todo clear` | Removes done to-dos |
+| `/progress-bar panel` | Opens the Status panel. `panel on` opens it at every session start, `panel off` stops that |
 | `/progress-bar fold <section>` | Folds a section to one line. `unfold` opens it, `toggle` flips it |
 
 ## File format
@@ -159,6 +161,39 @@ The first match wins. Clicking needs a terminal with link support (iTerm2, WezTe
 - It writes subagent lines to `~/.claude-progress/.lines/agents-<session>.txt` (one file per open session, so sessions never overwrite each other) and job lines to `jobs.txt`. At most 6 lines each.
 - The status line script prints every `.lines/*.txt` file changed in the last 2 minutes. Other tools can drop their own lines there too.
 - `group.py` sorts those lines into sections, adds the to-dos and links, and remembers ended jobs in `~/.claude-progress/.state/group-seen.json`.
+
+## Status panel
+
+Optional. Shows the full groups in a docked pane named **Status**, and shrinks the status line to one summary line.
+
+```
+/progress-bar panel on
+```
+
+```
+▾ ☐ TO-DO  3
+  You
+    ○ Review the deploy PR
+    ○ Sign in to the dashboard
+
+▾ ▶ RUNNING  2
+  ⚠ 14m nightly-import
+    ████████████████░░░░ 80.0%
+    4/5 · batch 4 · 31m
+
+▸ ✔ DONE  2
+```
+
+The status line then reads:
+
+```
+▶ 2 running · ⚠ 1 stuck · ☐ 3 to-do · full view in the Status panel
+```
+
+- **Needs setup:** the panel runs `~/.claude/progress-bar/statusline.sh` with `PB_FULL=1` every second while it is open. `panel on` refreshes that script and `group.py` and keeps your chained status line.
+- **Fold:** press a header, or its hotkey (`1` to-do, `2` running, `3` done, `4` waiting, `5` problems). It writes `~/.claude-progress/.state/folded.txt`, the same file `/progress-bar fold` uses.
+- **Off by default:** `panel on` writes `~/.claude-progress/.state/panel-on`. With that file the pane opens at session start and the status line prints the summary. `panel off` deletes it and closes the pane. `/progress-bar panel` opens it once without turning it on.
+- **Rows:** to-dos one per line under each owner, running jobs as name, bar and details (stuck ones in yellow), done jobs dimmed with their finish time.
 
 ## Fold sections
 

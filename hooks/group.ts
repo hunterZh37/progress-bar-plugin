@@ -10,6 +10,7 @@ Reads status lines on stdin and prints:
   then any line that is not a job (your own status line) as is.
 Jobs that vanish show as "finished HH:MM" for 30 min. Duplicate rows of one job are merged.
 Folded sections (~/.claude-progress/.state/folded.txt) show as one line with a count.
+With --summary it prints one count line instead (the status line does this while the Status panel is on).
 RUNNING rows get a spinner, or a yellow "stuck" mark when their numbers have not moved for
 ~/.claude-progress/.state/stuck-minutes (default 10) minutes. Stuck rows sort first.
 Job names link to their progress file, or to a URL from ~/.claude-progress/links.txt ("<regex> | <url>").
@@ -126,7 +127,7 @@ def parse_todo(text):
     return {k: v for k, v in todo.items() if v}
 
 
-def main(stdin, now):
+def main(stdin, now, summary=False):
     raw = [l.rstrip('\n') for l in stdin if l.strip()]
     jobs = [l for l in raw if is_job(l) and not l.startswith('…')]
     other = [l for l in raw if l not in jobs]
@@ -218,6 +219,8 @@ def main(stdin, now):
             out.append('  ' + (deco(i, body) if deco else body))
 
     todo = parse_todo(read(os.path.join(ROOT, 'todo.txt')) or '')
+    if summary:
+        return [summary_line(groups, sum(len(v) for v in todo.values()), sum(1 for l in groups['running'] if stuck_for(l) is not None))] + other
     if todo:
         n_items = sum(len(v) for v in todo.values())
         if 'todo' in folded:
@@ -232,6 +235,20 @@ def main(stdin, now):
     return out + other
 
 
+def summary_line(groups, n_todo, n_stuck):
+    """One line for the status line while the Status panel shows the full view."""
+    out = ['▶ ' + str(len(groups['running'])) + ' running']
+    if n_stuck:
+        out.append('⚠ ' + str(n_stuck) + ' stuck')
+    if groups['problem']:
+        out.append('✖ ' + str(len(groups['problem'])) + ' problems')
+    if groups['waiting']:
+        out.append('⏸ ' + str(len(groups['waiting'])) + ' waiting')
+    out.append('☐ ' + str(n_todo) + ' to-do')
+    out.append('full view in the Status panel')
+    return ' · '.join(out)
+
+
 if __name__ == '__main__':
-    print('\n'.join(main(sys.stdin, time.time())))
+    print('\n'.join(main(sys.stdin, time.time(), summary='--summary' in sys.argv[1:])))
 `
