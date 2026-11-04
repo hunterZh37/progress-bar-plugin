@@ -29,7 +29,7 @@ Call the `action_add` tool (`mcp__progress-bar__action_add`):
 
 Then tell the person in one line that an action is waiting and what it unblocks.
 
-The plugin never runs `command`. Do not run it yourself either, and do not try to work around a block that made the action necessary.
+The plugin never runs `command` on its own. The person may press **▶ Run** in the banner or popup, which asks them to confirm the full command and then runs it in a new visible terminal window. Only the person can press Run. You have no tool for it and must never try to trigger it, run the command yourself, or work around a block that made the action necessary. Write `command` so it runs as is in a terminal (slash commands like `/plugin update` get Copy, not Run).
 
 Without the tool (another machine, a script), the same works with `/progress-bar action add <title> --command <cmd> --why <text> --check <test>`, or by writing `~/.claude-progress/actions.json`.
 

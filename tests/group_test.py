@@ -78,6 +78,24 @@ class Group(unittest.TestCase):
             'Opus · ~/repo',
         ])
 
+    def test_inbox_row_from_older_builds_is_dropped(self):
+        out = self.run_('▶ inbox working · 2m\n▶ \033]8;;file:///x/inbox.json\033\\inbox\033]8;;\033\\ working · 2m\n▶ build ████░░░░ 40.0% · 2/5\n▶ inboxer working · 1m\n')
+        self.assertFalse(any(re.search(r'\binbox\b', l) for l in out))
+        self.assertTrue(any('build' in l for l in out))
+        self.assertTrue(any('inboxer' in l for l in out))
+
+    def test_helper_healthy_is_info_in_done_without_bar(self):
+        t = 1_800_000_000
+        out = self.run_('▶ hunty ✓ helper healthy · load 0.22 on 12 cores · idle\n▶ build ████░░░░ 40.0% · 2/5\n', now=t)
+        self.assertEqual(out, [
+            '▾ ▶ RUNNING',
+            '  ◐ build ████░░░░ 40.0% · 2/5 · in progress',
+            '▾ ✔ DONE',
+            '  hunty ✓ helper healthy · load 0.22 on 12 cores · idle',
+        ])
+        # When it goes away it is not reported as a finished job.
+        self.assertFalse(any('hunty' in l for l in self.run_('', now=t + 60)))
+
     def test_folded_sections(self):
         self.write('.state/folded.txt', 'todo\nrunning\n')
         self.write('todo.txt', '[a]\none\ntwo\n')

@@ -28,7 +28,7 @@ Live progress bars and a to-do list in the Claude Code status line. One line per
 - **Connectors:** a second tab in the panel shows which MCP connectors are connected, need sign-in or failed.
 - **GitHub:** a third tab shows the session repo's branch, other branches and recent commits. Click one to open it on GitHub.
 - **Titles and parents:** a progress file can name its job in plain words (`title`), say what it unlocks (`why`) and point at a parent job (`parent`). Each running job is one line with its short title, and a child shows under its parent.
-- **Action needed:** a step only you can run (a deploy swap, a login, a blocked command) pops up on macOS and holds your next prompt until it is done or skipped. A read-only check clears it by itself.
+- **Action needed:** a step only you can run (a deploy swap, a login, a blocked command) pops up on macOS and holds your next prompt until it is done or skipped. **▶ Run** runs it for you in a new terminal window after you confirm. A read-only check clears it by itself.
 - **Secure channel:** send `.md` files (and PDFs, images) straight to a collaborator's Claude Code session, end-to-end encrypted, through a private GitHub repo. No more dragging files into chat apps.
 - **Log:** a fourth tab lists errors, warnings and finishes from `~/.claude-progress/events.jsonl`, written by the grouper and by a scanner for your own log folders. Unseen errors show as `!N` on the tab and `✖ N errors` in the status line.
 
@@ -239,7 +239,7 @@ The first match wins. Clicking needs a terminal with link support (iTerm2, WezTe
 ## How it works
 
 - The plugin lists subagents, counts their tool calls and reads the progress files.
-- It writes subagent lines to `~/.claude-progress/.lines/agents-<session>.txt` (one file per open session, so sessions never overwrite each other) and job lines to `jobs.txt`. Each session's status line shows only its own bars: `agents-<session>.txt` and any `.lines/*-<session>.txt` file. Shared files such as `jobs.txt` show only in the project `todos/lines.txt` gives them to, or everywhere after `echo all > ~/.claude-progress/.state/scope`. At most 6 lines each. A JSON file counts as a job only if it has `done` and `total` or a `step`, so data files like `inbox.json` never show as jobs.
+- It writes subagent lines to `~/.claude-progress/.lines/agents-<session>.txt` (one file per open session, so sessions never overwrite each other) and job lines to `jobs.txt`. Each session's status line shows only its own bars: `agents-<session>.txt` and any `.lines/*-<session>.txt` file. Shared files such as `jobs.txt` show only in the project `todos/lines.txt` gives them to, or everywhere after `echo all > ~/.claude-progress/.state/scope`. At most 6 lines each. A JSON file counts as a job only if it has `done` and `total` or a `step`, so data files like `inbox.json` never show as jobs. The grouper also drops an `inbox` row that an older plugin build in another session still writes. A machine status row with `helper healthy` (like `<host> ✓ helper healthy · load 0.22 on 12 cores · idle`) shows under DONE with no bar, since it is not a job.
 - The status line script prints every `.lines/*.txt` file changed in the last 2 minutes. Other tools can drop their own lines there too.
 - `group.py` sorts those lines into sections, adds the to-dos and links, and remembers ended jobs in `~/.claude-progress/.state/group-seen-<session>.json`.
 - With `events.py` beside it, `group.py` logs done, stuck and problem rows once each to `~/.claude-progress/events.jsonl` (sent keys in `.state/events-sent.json`) and starts a log folder scan in the background at most every 30 seconds (offsets in `.state/log-offsets.json`).
@@ -422,10 +422,11 @@ Some steps only you can run: a deploy swap, a login, a command the permission sy
 ⛔ Action needed
 Swap in NomBot build viNrI9k8 (count flash fix)
 $ cd ~/Desktop/NomBot/web && rm -rf .next-prev && mv .next .next-prev && …
-Copy   ✓ I ran it   Skip
+▶ Run   Copy   ✓ I ran it   Skip
 ```
 
-- **Popup (macOS):** when an action is added, and again at most every 10 minutes while it is open, a dialog titled "Action needed" shows the title, why and the command. **Copy command** puts the command on the clipboard. **I ran it** runs the check and closes the action only when the check passes, else it says "Check still fails". **Later** (the default, also after 120 s) closes the dialog. Other systems skip the popup. The banner and the gate still work.
+- **▶ Run (macOS):** runs the command for you, no copy and paste. First a dialog "Run this command?" shows the **full command**, with **Run in Terminal** and **Cancel** (the default, also after 120 s). Run in Terminal writes the command to `~/.claude-progress/.state/run/<action id>.sh` (mode 0700) and opens a **new visible window** that runs it: Ghostty when it is installed, else Terminal.app. Logins, browser steps and password prompts work there, and the window stays open with "Done. You can close this window." The action then clears when its check passes (one check 10 s after launch, then every 30 s). An action with no check needs **✓ I ran it**. The Log tab gets "Action run in Terminal: <title>". Claude Code slash commands (like `/plugin update ...`) have no Run, since they are typed in Claude Code. Use Copy for those.
+- **Popup (macOS):** when an action is added, and again at most every 10 minutes while it is open, a dialog titled "Action needed" shows the title, why and the command. A dialog holds three buttons, so it shows **Run** (the same confirm, then a terminal window), **I ran it** and **Later**. For a slash command it shows **Copy command** instead of Run, which puts the command on the clipboard. **I ran it** runs the check and closes the action only when the check passes, else it says "Check still fails". **Later** (the default, also after 120 s) closes the dialog. Other systems skip the popup. The banner and the gate still work.
 - **Prompt gate:** while an action is open for this session's project (or for every project), a prompt you type is held and you see the action, its command and how to go on:
   - `done` runs the check and clears the action when it passes. An action with no check clears at once.
   - `skip <reason>` clears it and logs a warning with your reason.
@@ -433,7 +434,7 @@ Copy   ✓ I ran it   Skip
   
   Slash commands always pass, so `/progress-bar ...` and `/plugin ...` keep working. Task notifications and messages from other sessions pass too. Your held message comes back in the prompt box once the last action is done.
 - **Auto-clear:** checks run every 30 s, and again before a prompt is held (5 s timeout each). Run the command in any terminal and the action clears by itself with a toast "Action done: <title>".
-- **Status panel:** a red banner at the very top of the List tab with **Copy**, **✓ I ran it** and **Skip**.
+- **Status panel:** a red banner at the very top of the List tab with **▶ Run**, **Copy**, **✓ I ran it** and **Skip**.
 - **Status line:** the summary starts with a red `⛔ N actions needed`. Without the panel, the full view starts with that line.
 - **Log tab:** each action logs when it is added, done and skipped.
 
@@ -457,7 +458,8 @@ Values run to the next `--flag`. `--global` makes it hold prompts in every proje
 
 **Safety.**
 
-- The plugin **never runs an action's `command`**. Only you do. Copy hands it to `pbcopy` on stdin.
+- The plugin **never runs an action's `command` on its own**. Only you do, by hand or with **▶ Run**, which always asks first with the full command. Claude has **no tool or command for Run**, so it can never press it. Copy hands the command to `pbcopy` on stdin.
+- Run hands the command to the script file on stdin, never through a shell string or AppleScript. The terminal AppleScript is fixed and gets only the script's path as an argument.
 - It runs only `check`, with `/bin/sh` in your home folder, 5 s at most. A check must be a **read-only test** that exits 0 once the step is done, such as `grep -q`, `test -e`, `gh repo view`. Never put a command that changes anything in `check`.
 - Dialog text goes to `osascript` as arguments. The AppleScript source is fixed, so nothing in a title or command is ever read as AppleScript.
 - Actions hold commands, **never secret values**. Write the command that fetches or logs in, such as `gh auth login`, never a token or a password.
@@ -612,7 +614,7 @@ Optional. Makes each section header a link that folds or unfolds that section.
 
 ## Privacy
 
-Everything stays on your machine. The plugin reads and writes only files under `~/.claude-progress/`, `~/.claude/progress-bar/` and `~/.cache/progress-bar/`, and reads the `*.log` files in folders you list in `log-dirs.txt`, plus `~/Applications/ProgressBarToggle.app` if you run `setup mac-clicks`. The plugin makes no network calls itself, except the secure channel once you open one: it then talks to GitHub through your own `gh` and `git`, and stores only ciphertext there. The optional inbox checker (`inbox setup`) runs only when you schedule it, and reads your mail through your own Gmail connector. While the Status panel is open, the Connectors tab runs `claude mcp list`, which contacts your configured connectors to check them. The GitHub tab runs local `git` only, and opens a page in your browser when you click.
+Everything stays on your machine. The plugin reads and writes only files under `~/.claude-progress/`, `~/.claude/progress-bar/` and `~/.cache/progress-bar/`, and reads the `*.log` files in folders you list in `log-dirs.txt`, plus `~/Applications/ProgressBarToggle.app` if you run `setup mac-clicks`. It runs an action's command only when you press **▶ Run** and confirm, in a new terminal window you can see. The plugin makes no network calls itself, except the secure channel once you open one: it then talks to GitHub through your own `gh` and `git`, and stores only ciphertext there. The optional inbox checker (`inbox setup`) runs only when you schedule it, and reads your mail through your own Gmail connector. While the Status panel is open, the Connectors tab runs `claude mcp list`, which contacts your configured connectors to check them. The GitHub tab runs local `git` only, and opens a page in your browser when you click.
 
 ## License
 

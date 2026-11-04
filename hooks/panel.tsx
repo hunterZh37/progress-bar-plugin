@@ -6,7 +6,7 @@ import { connSummary, readConns, refreshConns, resetConns } from './connectors'
 import { EVENTS_REL, LOG_DIRS_REL, SEEN_REL, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from './events'
 import { GH_EVERY, openUrl, openWeb, readGh } from './github'
 import { resolveHome } from './home'
-import { closeAction, copyCommand, cut as cutA, ranIt, readActions } from './actions'
+import { canRun, closeAction, copyCommand, cut as cutA, ranIt, readActions, runAction } from './actions'
 import { markRead, openLocal, readChannel } from './channel'
 import { markHandled, readInbox } from './inbox'
 import { isDarwin } from './mac'
@@ -1017,7 +1017,8 @@ export function registerPanel(on: On) {
       </Box>,
     ]
 
-    // Action needed: steps only the person can run, first of all (actions.ts). The plugin never runs the command.
+    // Action needed: steps only the person can run, first of all (actions.ts). Run asks first with the full command,
+    // then opens a new visible terminal window. Slash commands have no Run (they are typed in Claude Code).
     const acts = await read($, actionsAtom)
     const actBlock: RenderChildren[] = acts.length === 0 ? [] : [
       <Box key="act" flexDirection="column" borderStyle="bold" borderColor="red" paddingX={1} marginBottom={1}>
@@ -1026,6 +1027,8 @@ export function registerPanel(on: On) {
           <Text key={`act-t-${a.id}`} bold>{cutA(a.title, Math.max(16, width - 6))}</Text>,
           a.command ? <Text key={`act-c-${a.id}`} color="red">{cutA(`$ ${a.command}`, Math.max(16, width - 6))}</Text> : null,
           <Box key={`act-b-${a.id}`}>
+            {canRun(a) ? <Button key={`act-run-${a.id}`} plain onPress={() => runAction($, homeDir, a)}>{'▶ Run'}</Button> : null}
+            {canRun(a) ? <Text dimColor>{'   '}</Text> : null}
             {a.command ? <Button key={`act-copy-${a.id}`} plain onPress={() => copyCommand($, a)}>{'Copy'}</Button> : null}
             {a.command ? <Text dimColor>{'   '}</Text> : null}
             <Button key={`act-ran-${a.id}`} plain onPress={() => ranIt($, homeDir, a)}>{'✓ I ran it'}</Button>

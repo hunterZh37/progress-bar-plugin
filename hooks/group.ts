@@ -87,6 +87,9 @@ def is_starting(l):
 
 
 def kind(l):
+    # Machine status ("<host> ✓ helper healthy · load 0.22 on 12 cores · idle"), not a job: a DONE row, no bar.
+    if 'helper healthy' in l:
+        return 'info'
     if l.startswith('✖') or l.startswith('■') or ' ✗ ' in l:
         return 'problem'
     # "· done" only at the end or as "· done:", so "· done in 1h" (a time left) stays running.
@@ -301,6 +304,9 @@ def parse_todo(text, running=()):
 
 def main(stdin, now, summary=False):
     raw = [l.rstrip('\n') for l in stdin if l.strip()]
+    # inbox.json is data for the Inbox block, not a job. Older plugin builds in other sessions still write an
+    # "inbox" row to the shared jobs list, so drop it here by name, not only in collect().
+    raw = [l for l in raw if not re.match(r'^\W*(?:\x1b\][^\x07]*\x07|\x1b\]8;;[^\x1b]*\x1b\\)*inbox\b', re.sub(r'\x1b\[[0-9;]*m', '', l))]
     jobs = [l for l in raw if is_job(l) and not l.startswith('…')]
     other = [l for l in raw if l not in jobs]
 
@@ -319,7 +325,7 @@ def main(stdin, now, summary=False):
     except Exception:
         state, fresh, seen = state_file(), False, {}
     ev = load_events()
-    groups = {'problem': [], 'running': [], 'waiting': [], 'done': []}
+    groups = {'info': [], 'problem': [], 'running': [], 'waiting': [], 'done': []}
     current = set()
     for l in jobs:
         n = name_of(l)
@@ -342,7 +348,7 @@ def main(stdin, now, summary=False):
             continue
         if os.path.exists(os.path.join(ROOT, s + '.json')):
             continue  # still reporting, just not shown this poll
-        if v.get('kind') != 'problem':
+        if v.get('kind') not in ('problem', 'info'):
             groups['done'].append('✔ ' + v.get('name', s) + ' · finished ' + time.strftime('%H:%M', time.localtime(v.get('at', now))))
     try:
         os.makedirs(os.path.dirname(state), exist_ok=True)
@@ -469,7 +475,7 @@ def main(stdin, now, summary=False):
     sec('✖ PROBLEMS', groups['problem'], 'problems')
     sec('▶ RUNNING', groups['running'], 'running', deco=running_deco)
     sec('⏸ WAITING', groups['waiting'], 'waiting')
-    sec('✔ DONE', groups['done'], 'done')
+    sec('✔ DONE', groups['info'] + groups['done'], 'done')
     return out + other
 
 

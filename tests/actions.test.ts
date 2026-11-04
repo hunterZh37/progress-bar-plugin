@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { ACTION_TOOL, FAIL_SCRIPT, POPUP_SCRIPT, addAction, appliesTo, blockText, failArgv, isGated, parseActions, parseAdd, parseButton, parseGate, popupArgv } from '../hooks/actions'
+import { ACTION_TOOL, CONFIRM_SCRIPT, FAIL_SCRIPT, GHOSTTY_SCRIPT, POPUP_SCRIPT, TERMINAL_SCRIPT, addAction, canRun, isSlashCommand, runScriptPath, runScriptText, appliesTo, blockText, failArgv, isGated, parseActions, parseAdd, parseButton, parseGate, popupArgv } from '../hooks/actions'
 import { PANE } from '../hooks/panel'
 import { statusScript } from '../hooks/render'
 import type { Action } from '../types'
@@ -19,7 +19,7 @@ const A = (o: Partial<Action> & { id: string; title: string }): Action => ({ why
 /** A fake machine. `passing` holds the check commands that exit 0. Every argv the plugin runs is kept. */
 const fills: string[] = []
 const toasts: string[] = []
-function world(on: On, files: Record<string, string>, passing: Set<string>, darwin = true) {
+function world(on: On, files: Record<string, string>, passing: Set<string>, darwin = true, osa: (argv: string[]) => string = () => 'Later\n') {
   const ran: { argv: string[]; stdin?: string }[] = []
   mock.env(on, { HOME })
   on('fs.read', (_, e) => { const t = files[String(e.path)]; if (t === undefined) throw new Error('ENOENT'); return { value: t } })
@@ -28,6 +28,7 @@ function world(on: On, files: Record<string, string>, passing: Set<string>, darw
   on('fs.list', () => ({ value: [] }))
   on('clock.now', () => ({ value: 1800000000000 }))
   on('clock.every', async () => { await new Promise<void>(() => {}); return { value: undefined } })
+  on('clock.after', async () => { await new Promise<void>(() => {}); return { value: undefined } })
   on('session.cwd', () => ({ value: `${HOME}/Desktop/NomBot` }))
   on('process.run', (_, e) => {
     const argv = [...e.argv]
@@ -37,7 +38,8 @@ function world(on: On, files: Record<string, string>, passing: Set<string>, darw
     if (argv[0] === 'uname') stdout = darwin ? 'Darwin' : 'Linux'
     if (argv[0] === '/bin/sh' && argv[2]?.includes('eval')) exitCode = passing.has(argv[4]!) ? 0 : 1
     if (argv[0] === '/bin/sh' && argv[2] === 'cat >> "$1"') files[argv[4]!] = (files[argv[4]!] ?? '') + (stdin ?? '')
-    if (argv[0] === 'osascript') stdout = 'Later\n'
+    if (argv[0] === 'osascript') stdout = osa(argv)
+    if (argv[0] === '/bin/sh' && argv[2]?.includes('chmod 700')) files[argv[4]!] = stdin ?? ''
     return { value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on('agent.list', () => ({ value: [] as never }))
@@ -111,7 +113,7 @@ test('AppleScript: the source is fixed, every action text reaches osascript only
   }
   const p = popupArgv(a)
   expect(p.slice(1, 1 + POPUP_SCRIPT.length * 2).filter((_, i) => i % 2 === 1)).toEqual(POPUP_SCRIPT)
-  expect(p.at(-1)).toBe('1')
+  expect(p.at(-1)).toBe('2')
   expect(p.at(-2)).toContain('rm -rf')
   expect(popupArgv(A({ id: 'n', title: 'no command' })).at(-1)).toBe('0')
   expect(failArgv(a).slice(1, 1 + FAIL_SCRIPT.length * 2).filter((_, i) => i % 2 === 1)).toEqual(FAIL_SCRIPT)
@@ -242,4 +244,71 @@ test('panel: red banner first on the List tab with Copy, I ran it and Skip', asy
   expect(parseActions(files[AF]!)[0]!.status).toBe('skipped')
   const t2 = (await ui.findAll({ type: 'Text' })).map(x => x.text ?? '')
   expect(t2).not.toContain('⛔ Action needed')
+})
+
+test('Run: slash commands and command-less actions have no Run, shell commands do', () => {
+  expect(isSlashCommand('/plugin update progress-bar')).toBe(true)
+  expect(isSlashCommand('  /reload-plugins')).toBe(true)
+  expect(isSlashCommand('/usr/bin/true')).toBe(false)
+  expect(isSlashCommand('gh auth refresh -s delete_repo')).toBe(false)
+  expect(canRun(A({ id: 'a', title: 't', command: '/plugin update progress-bar' }))).toBe(false)
+  expect(canRun(A({ id: 'a', title: 't' }))).toBe(false)
+  expect(canRun(A({ id: 'a', title: 't', command: 'echo hello' }))).toBe(true)
+  expect(popupArgv(A({ id: 'a', title: 't', command: 'echo hello' })).at(-1)).toBe('2')
+  expect(popupArgv(A({ id: 'a', title: 't', command: '/plugin update x' })).at(-1)).toBe('1')
+  expect(parseButton('Run\n')).toBe('run')
+  expect(POPUP_SCRIPT.join('\n')).toContain('{"Run", "I ran it", "Later"}')
+  expect(CONFIRM_SCRIPT.join('\n')).toContain('buttons {"Cancel", "Run in Terminal"} default button "Cancel"')
+  expect(runScriptPath('/h', '../../x y')).toBe('/h/.claude-progress/.state/run/______x_y.sh')
+  const t = runScriptText('echo "a\'b" && ls')
+  expect(t.split('\n')).toContain('echo "a\'b" && ls')
+  expect(t).toContain('echo "Done. You can close this window."')
+  expect(t.trimEnd().endsWith('exec "${SHELL:-/bin/zsh}" -l')).toBe(true)
+  for (const sc of [GHOSTTY_SCRIPT, TERMINAL_SCRIPT]) expect(sc.join('\n')).toContain('quoted form of p')
+})
+
+test('panel: slash command action shows Copy but no Run', async ($, on) => {
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [`${P}/.state/panel-on`]: 'on\n', [AF]: JSON.stringify([A({ id: 's1', title: 'Update the plugin', command: '/plugin update progress-bar' })]) }
+  world(on, files, new Set())
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  const keys = (await ui.findAll({ type: 'Button' })).map(b => String((b as { key?: unknown }).key ?? ''))
+  expect(keys).toContain('act-copy-s1')
+  expect(keys).not.toContain('act-run-s1')
+})
+
+test('panel Run: Cancel in the confirm dialog runs nothing', async ($, on) => {
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [`${P}/.state/panel-on`]: 'on\n', [AF]: JSON.stringify([A({ id: 'r1', title: 'Say hello', command: 'echo hello' })]) }
+  const ran = world(on, files, new Set(), true, argv => argv.some(x => x.includes('Run this command?')) ? 'Cancel\n' : 'Later\n')
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  await ui.press({ key: 'act-run-r1' })
+  const confirm = ran.find(x => x.argv[0] === 'osascript' && x.argv.some(y => y.includes('Run this command?')))!
+  expect(confirm.argv.at(-1)).toContain('echo hello')
+  expect(Object.keys(files).some(k => k.includes('/.state/run/'))).toBe(false)
+  expect(ran.some(x => x.argv.some(y => y.includes('Ghostty') || y.includes('"Terminal"')) || x.argv[0] === 'open')).toBe(false)
+  expect(ran.some(x => x.argv[0] === '/bin/sh' && x.argv[2]?.includes('chmod 700'))).toBe(false)
+  expect(parseActions(files[AF]!)[0]!.status).toBe('open')
+})
+
+test('panel Run: confirm writes a 0700 script with the exact command, AppleScript gets only its path', async ($, on) => {
+  const cmd = 'echo "it\'s" && gh auth status; echo $HOME'
+  const files: Record<string, string> = { '/Applications/Ghostty.app': '', [SCRIPT]: statusScript(), [`${P}/.state/panel-on`]: 'on\n', [AF]: JSON.stringify([A({ id: 'r1', title: 'Say hello', command: cmd, check: 'test -e /done' })]) }
+  const ran = world(on, files, new Set(), true, argv => argv.some(x => x.includes('Run this command?')) ? 'Run in Terminal\n' : '')
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  await ui.press({ key: 'act-run-r1' })
+  const path = `${P}/.state/run/r1.sh`
+  const w = ran.find(x => x.argv[0] === '/bin/sh' && x.argv[2]?.includes('chmod 700'))!
+  expect(w.argv.slice(2)).toEqual(['umask 077; mkdir -p "$(dirname "$1")" && cat > "$1" && chmod 700 "$1"', 'sh', path])
+  expect(w.stdin).toBe(runScriptText(cmd))
+  expect(files[path]!.split('\n')).toContain(cmd)
+  const term = ran.filter(x => x.argv[0] === 'osascript' && x.argv.some(y => y.includes('tell application "Ghostty"')))
+  expect(term.length).toBe(1)
+  expect(term[0]!.argv).toEqual(['osascript', ...GHOSTTY_SCRIPT.flatMap(l => ['-e', l]), path])
+  expect(term[0]!.argv.some(y => y.includes('gh auth status'))).toBe(false)
+  expect(ran.some(x => x.argv.some(y => y.includes('tell application "Terminal"')))).toBe(false)
+  const ev = files[`${P}/events.jsonl`] ?? ''
+  expect(ev).toContain('Action run in Terminal: Say hello')
+  expect(parseActions(files[AF]!)[0]!.status).toBe('open')
 })
