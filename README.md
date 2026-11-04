@@ -347,6 +347,7 @@ The **Connectors** tab of the Status panel lists each MCP connector with its sta
 - **Names and status only:** the URL or command of each connector is dropped as the output is read. It is never stored or shown, since it can hold passwords or tokens. From `claude auth status` only the email and organization name are kept.
 - **Shared cache:** `~/.cache/progress-bar/connectors.txt` holds `name<TAB>status` lines, the login and the check time. Every open session reads it, so one check serves all of them.
 - **Accounts (optional):** write `~/.claude-progress/connector-accounts.txt` to show which account each connector uses, on a dim line under it. One `name<TAB>account` per line, names as the tab shows them. Lines starting with `#` are comments.
+- **Open a connector:** press its name (marked `↗`) to open its web page. Google connectors open as the account in the accounts file (`?authuser=<email>`), so Gmail opens the right inbox. Add a third column, `name<TAB>account<TAB>https://...`, to set or change a connector's page.
 
 ```
 # connector<TAB>account

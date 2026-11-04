@@ -76,5 +76,11 @@ export async function readGh($: EngineInterface, h: string) {
 /** Opens a GitHub page in the browser: `open` on macOS, `xdg-open` elsewhere. Anything else is ignored. */
 export async function openUrl($: EngineInterface, url: string) {
   if (!/^https:\/\/github\.com\/[^\s@]+$/.test(url)) return
+  await openWeb($, url)
+}
+
+/** Opens any https page (a connector's web page). Anything that is not one plain https URL is ignored. */
+export async function openWeb($: EngineInterface, url: string) {
+  if (!/^https:\/\/[^\s"'`]+$/.test(url)) return
   try { await $.process.run([(await isDarwin($)) ? 'open' : 'xdg-open', url], { timeoutMs: 5000 }) } catch { /* nothing to open */ }
 }

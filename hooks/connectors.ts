@@ -71,13 +71,53 @@ export function parseCache(raw: string): { at: number; login: string; list: Conn
   return { at, login, list }
 }
 
-/** "name<TAB>account" lines; # starts a comment. */
+/** "name<TAB>account[<TAB>url]" lines; # starts a comment. */
 export function parseAccounts(raw: string): Map<string, string> {
   const m = new Map<string, string>()
   for (const l of raw.split('\n')) {
     if (!l.trim() || l.trim().startsWith('#')) continue
     const [name = '', account = ''] = l.split('\t')
     if (name.trim() && account.trim()) m.set(connName(name) || name.trim(), account.trim())
+  }
+  return m
+}
+
+/** Web pages for known connectors. Google pages take ?authuser=<email> so they open as the connected account. */
+const CONN_PAGES: Record<string, string> = {
+  'gmail': 'https://mail.google.com/mail/',
+  'google drive': 'https://drive.google.com/drive/my-drive',
+  'google docs': 'https://docs.google.com/document/',
+  'google sheets': 'https://docs.google.com/spreadsheets/',
+  'google slides': 'https://docs.google.com/presentation/',
+  'google calendar': 'https://calendar.google.com/calendar/',
+  'canva': 'https://www.canva.com/',
+  'adobe': 'https://www.adobe.com/',
+  'claude docs': 'https://claude.ai/',
+  'slack': 'https://app.slack.com/',
+  'notion': 'https://www.notion.so/',
+  'linear': 'https://linear.app/',
+  'github': 'https://github.com/',
+}
+
+/**
+ * The page a connector opens on press: a third "url" column in the accounts file wins, else a known page.
+ * Google pages get ?authuser=<the account's email>, so Gmail opens the right inbox. '' when there is none.
+ */
+export function connUrl(name: string, account = '', override = ''): string {
+  if (/^https:\/\/\S+$/.test(override)) return override
+  const page = CONN_PAGES[name.trim().toLowerCase()]
+  if (!page) return ''
+  const email = /[\w.+-]+@[\w-]+(\.[\w-]+)+/.exec(account)?.[0]
+  return email && /google\.com\//.test(page) ? `${page}?authuser=${encodeURIComponent(email)}` : page
+}
+
+/** "name<TAB>account<TAB>url" lines: the optional url column. */
+export function parseUrls(raw: string): Map<string, string> {
+  const m = new Map<string, string>()
+  for (const l of raw.split('\n')) {
+    if (!l.trim() || l.trim().startsWith('#')) continue
+    const [name = '', , url = ''] = l.split('\t')
+    if (name.trim() && url.trim()) m.set(connName(name) || name.trim(), url.trim())
   }
   return m
 }
@@ -90,7 +130,8 @@ async function readText($: EngineInterface, path: string): Promise<string> {
 export async function readConns($: EngineInterface, h: string): Promise<number> {
   const { at, login, list } = parseCache(await readText($, `${h}/${CONN_CACHE_REL}`))
   const accounts = parseAccounts(await readText($, `${h}/${CONN_ACCOUNTS_REL}`))
-  const withAcc = list.map(c => ({ ...c, account: accounts.get(c.name) ?? '' }))
+  const urls = parseUrls(await readText($, `${h}/${CONN_ACCOUNTS_REL}`))
+  const withAcc = list.map(c => ({ ...c, account: accounts.get(c.name) ?? '', url: connUrl(c.name, accounts.get(c.name) ?? '', urls.get(c.name) ?? '') }))
   const prev = await read($, connsAtom)
   if (prev.at !== at || prev.login !== login || JSON.stringify(prev.list) !== JSON.stringify(withAcc)) {
     await update($, connsAtom, c => ({ ...c, at, login, list: withAcc }))

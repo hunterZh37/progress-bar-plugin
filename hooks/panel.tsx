@@ -4,7 +4,7 @@ import type { EngineInterface, On, RenderChildren } from 'claude-code'
 import { AWAY_S, GAP_MS, OVERNIGHT_REL, dayOf, snapOf } from './checkpoint'
 import { connSummary, readConns, refreshConns, resetConns } from './connectors'
 import { EVENTS_REL, LOG_DIRS_REL, SEEN_REL, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from './events'
-import { GH_EVERY, openUrl, readGh } from './github'
+import { GH_EVERY, openUrl, openWeb, readGh } from './github'
 import { resolveHome } from './home'
 import { isDarwin } from './mac'
 import { FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, slug } from './render'
@@ -830,7 +830,9 @@ export function registerPanel(on: On) {
       const connRow = (c: Conn) => [
         <Box key={`c-${c.name}`}>
           <Text color={COLOR[c.kind]}>{`  ${MARK[c.kind]} `}</Text>
-          <Text bold>{c.name}</Text>
+          {c.url
+            ? <Button key={`c-open-${c.name}`} plain onPress={() => openWeb($, c.url!)}>{`${c.name}  ↗`}</Button>
+            : <Text bold>{c.name}</Text>}
           {c.kind !== 'ok' ? <Text color={COLOR[c.kind]}>{c.kind === 'auth' ? '  needs sign-in' : '  failed'}</Text> : null}
         </Box>,
         c.account ? <Text key={`c-a-${c.name}`} dimColor>{`    ${c.account}`}</Text> : null,

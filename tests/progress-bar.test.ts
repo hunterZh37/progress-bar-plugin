@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { CONN_CACHE_REL, connName, connSummary, formatCache, parseAccounts, parseCache, parseLogin, parseMcpList } from '../hooks/connectors'
+import { CONN_CACHE_REL, connUrl, connName, connSummary, formatCache, parseAccounts, parseCache, parseLogin, parseMcpList } from '../hooks/connectors'
 import { CHECKPOINT_PY } from '../hooks/checkpoint'
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
@@ -978,4 +978,12 @@ test('running rows name their machine', () => {
   expect(machineTitle('big-batch', 'Hunty CPU batch: checks', m)).toBe('Hunty: CPU batch')
   expect(machineTitle('hc', 'Health care: classify', m)).toBe('Mac: Health care')
   expect(machineTitle('x', 'Big batch', machines([], []))).toBe('Big batch')
+})
+
+test('connectors open their web page as the connected account', () => {
+  expect(connUrl('Gmail', 'me@example.org')).toBe('https://mail.google.com/mail/?authuser=me%40example.org')
+  expect(connUrl('Google Drive', 'me@example.org (unverified)')).toBe('https://drive.google.com/drive/my-drive?authuser=me%40example.org')
+  expect(connUrl('Canva', 'not signed in')).toBe('https://www.canva.com/')
+  expect(connUrl('my-db', '')).toBe('')
+  expect(connUrl('my-db', '', 'https://example.org/admin')).toBe('https://example.org/admin')
 })
