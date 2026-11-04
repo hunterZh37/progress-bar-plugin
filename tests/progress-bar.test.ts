@@ -6,7 +6,7 @@ import { CONN_CACHE_REL, connName, connSummary, formatCache, parseAccounts, pars
 import { CHECKPOINT_PY } from '../hooks/checkpoint'
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
-import { PANE, badge, evId, fitLabel, labelCol, maxMeter, nestRows, runCount, shortTitle, parseSections, runCard, shortAge, timeTail, slide, stripAnsi } from '../hooks/panel'
+import { PANE, badge, evId, fitLabel, labelCol, machineTitle, machines, maxMeter, nestRows, runCount, shortTitle, parseSections, runCard, shortAge, timeTail, slide, stripAnsi } from '../hooks/panel'
 import { EVENTS_PY, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from '../hooks/events'
 import { REPOS_REL, parseBranches, parseCommits, webUrl } from '../hooks/github'
 import { eta, expandHome, line, lines, parseProgress, parseTitles, pickMeta, parseWatch, prevOf, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoItems, todoList } from '../hooks/render'
@@ -923,7 +923,7 @@ test('short titles and the label column', async () => {
   expect(shortTitle('gpu-box: train: epoch 3')).toBe('gpu-box: train')
   expect(labelCol(30)).toBe(14)
   expect(labelCol(52)).toBe(22)
-  expect(labelCol(80)).toBe(26)
+  expect(labelCol(80)).toBe(34)
   expect(labelCol(52, 4)).toBe(18)
   expect(fitLabel('abc', 5)).toBe('abc  ')
   expect(fitLabel('abcdefgh', 5)).toBe('abcd…')
@@ -968,4 +968,14 @@ test('the RUNNING count: top-level lines, nested ones noted', async () => {
   expect(runCount(['a', 'b'], {})).toBe('2')
   expect(runCount(['big', 'kid', 'box-x', 'box: y'], { kid: { parent: 'big' } })).toBe('2 (+2 sub-jobs)')
   expect(runCount(['big', 'kid'], { kid: { parent: 'big' } })).toBe('1 (+1 sub-job)')
+})
+
+test('running rows name their machine', () => {
+  const m = machines(['hunty: embed', 'big-batch'], ['you', 'mac', 'hunty'])
+  expect(m).toEqual({ local: 'Mac', remote: ['hunty'] })
+  expect(machineTitle('hunty: embed', 'Similar orgs · 148K', m)).toBe('Hunty: Similar orgs')
+  expect(machineTitle('hunty: embed', 'hunty: embed', m)).toBe('Hunty: Embed')
+  expect(machineTitle('big-batch', 'Hunty CPU batch: checks', m)).toBe('Hunty: CPU batch')
+  expect(machineTitle('hc', 'Health care: classify', m)).toBe('Mac: Health care')
+  expect(machineTitle('x', 'Big batch', machines([], []))).toBe('Big batch')
 })

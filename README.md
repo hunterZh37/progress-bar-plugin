@@ -244,6 +244,7 @@ Claude Max this week  ██████░░░░  62% used
 ```
 
 - **Count:** the RUNNING header counts top-level lines and notes nested ones, as `RUNNING  4 (+3 sub-jobs)`.
+- **Machine:** each line starts with its machine, like `Hunty: Similar orgs` or `Mac: Health care`. Remote machines come from `<host>: name` rows and the to-do headings. The local one is the `[mac]` or `[local]` heading. With no remote machine, lines show the plain title.
 - **Line:** a mark, `▸ <short title>`, a 10-cell bar, the percent, then one dim note: `N left`, the run time, `Nm so far`, `waiting on X`, or a yellow `⚠ no progress Nm`. A job that reports steps but no time left (an agent) shows an estimate, `~Nm left`, from its time so far per step done.
 - **Short title:** `title` from the progress file or `titles.txt`, cut at ` · ` or `: `. A remote job keeps `<host>: name` whole. Without a title the job id is used.
 - **Aligned bars:** the title column is 14 to 26 characters wide by pane width. Longer titles end in `…`.

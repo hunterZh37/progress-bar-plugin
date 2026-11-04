@@ -195,8 +195,39 @@ export function shortTitle(t: string): string {
   return s.split(': ').slice(0, remote ? 2 : 1).join(': ')
 }
 
+const cap = (x: string) => x.charAt(0).toUpperCase() + x.slice(1)
+
+/**
+ * Machines for row labels: remote hosts are "<host>: name" row prefixes plus to-do headings ([mac], [hunty], ...).
+ * The local one is the heading named mac or local, else the first heading that is neither "you" nor a remote host.
+ */
+export function machines(rowNames: string[], owners: string[]): { local: string; remote: string[] } {
+  const prefixes = rowNames.map(n => /^([a-z0-9_.-]+):\s/.exec(n)?.[1]).filter((x): x is string => !!x)
+  const heads = [...new Set(owners.map(o => o.toLowerCase()))].filter(o => o !== 'you')
+  const local = heads.find(h => h === 'mac' || h === 'local') ?? heads.find(h => !prefixes.includes(h)) ?? ''
+  const remote = [...new Set([...prefixes, ...heads])].filter(h => h !== local)
+  return { local: local ? (local === 'mac' ? 'Mac' : cap(local)) : '', remote }
+}
+
+/**
+ * A running job's label with its machine in front: "Hunty: Similar orgs" or "Mac: Health care". The machine comes
+ * from the row name ("hunty: x"), else a title starting with a remote host ("Hunty CPU batch"), else the local one.
+ * With no remote machine known, it is the plain short title.
+ */
+export function machineTitle(name: string, title: string, m: { local: string; remote: string[] }): string {
+  const t = shortTitle(title)
+  if (!m.remote.length || !m.local) return t
+  const host = (x: string) => m.remote.find(h => x.toLowerCase() === h)
+  const n = /^([A-Za-z0-9_.-]+):\s/.exec(name)?.[1]
+  const lead = /^([A-Za-z0-9_.-]+)(?::|\s|$)/.exec(t)?.[1] ?? ''
+  const h = host(lead) ?? (n ? host(n) : undefined)
+  if (!h) return `${m.local}: ${t}`
+  const rest = lead.toLowerCase() === h ? t.slice(lead.length).replace(/^[\s:]+/, '') : t
+  return `${cap(h)}: ${cap(rest || t)}`
+}
+
 /** The label column on a job's line: 14 to 26 characters by pane width, less a child's indent, so every bar lines up. */
-export const labelCol = (width: number, ind = 0) => Math.max(10, Math.max(14, Math.min(26, width - 30)) - ind)
+export const labelCol = (width: number, ind = 0) => Math.max(10, Math.max(14, Math.min(34, width - 30)) - ind)
 
 /** A label cut or padded to its column. */
 export const fitLabel = (s: string, col: number) => (s.length > col ? `${s.slice(0, col - 1)}…` : s.padEnd(col))
@@ -592,6 +623,7 @@ export function registerPanel(on: On) {
     const openCards = new Set(await read($, openAtom))
     const metaOf = (name: string): Meta => meta[slug(name)] ?? {}
     const short = (t: string) => t.split(' · ')[0]!
+    const mach = machines((sections.find(x => x.key === 'running')?.rows ?? []).map(x => runCard(x).name), todos.map(t => t.owner))
     const MINI = 10
     const card = (r: RunCard, k: string, ind: string, child: boolean, kid: string) => {
       const m0 = metaOf(r.name)
@@ -605,7 +637,7 @@ export function registerPanel(on: On) {
       const mark = stuck ? '⚠' : child ? '↳' : r.mark === '⚠' ? '•' : r.mark
       const pad = `${ind}    `
       const why = m0.why ? `unlocks: ${m0.why.replace(/^unlocks:?\s*/i, '')}` : ''
-      const label = fitLabel(shortTitle(m0.title || r.name), labelCol(width, ind.length))
+      const label = fitLabel(machineTitle(r.name, m0.title || r.name, mach), labelCol(width, ind.length))
       const tail = stuck ? `⚠ no progress ${stuck}` : waitOn ? `waiting on ${short(waitOn)}` : timeTail(r)
       return [
         <Box key={`r${k}`}>
