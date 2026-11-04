@@ -5,7 +5,7 @@ import { GROUP_PY } from './group'
 import { resolveHome } from './home'
 import { macClicks, parseMacClicks } from './mac'
 import { panelCommand, registerPanel, startPanel } from './panel'
-import { FRESH_MS, eta, expandHome, lines, parseProgress, parseWatch, prevOf, readLog, slug, statusScript, todoAdd, todoClear, todoDone, todoList } from './render'
+import { FRESH_MS, eta, expandHome, lines, parseProgress, parseWatch, prevOf, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList } from './render'
 import type { Progress, Row } from './render'
 
 const WATCH = '.watch.json'
@@ -27,8 +27,8 @@ async function watchRow($: EngineInterface, h: string, dir: string, name: string
   } catch { return null }
   const p = readLog(w, text)
   const alive = w.process ? (await $.process.run(['pgrep', '-f', w.process]).catch(() => ({ exitCode: 1 }))).exitCode === 0 : null
-  const finished = p.done !== null && p.total !== null && p.done >= p.total
-  const state = p.error ? 'error' : finished ? 'done' : alive === false ? 'stopped' : 'running'
+  const state = watchState(p, alive, now - st.mtimeMs, text)
+  const finished = state === 'done'
   // A running job shows while its process lives or its log keeps changing; an ended one for FRESH_MS after its last write.
   if (!(alive === true && !finished) && now - st.mtimeMs > FRESH_MS) return null
   const startedAt = w.startedAt ?? st.mtimeMs

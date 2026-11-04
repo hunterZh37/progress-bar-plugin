@@ -130,7 +130,7 @@ progress nightly-import 2 5 "batch 3"
 | `count` + `total` | Or: done = lines matching `count` (one per finished step) |
 | `step` | Optional regex. Its last match (group 1) is shown as the step |
 | `error` | Optional regex. A match shows `✖ error` |
-| `process` | Optional `pgrep -f` pattern. Gone before done shows `■ stopped` |
+| `process` | Optional `pgrep -f` pattern. Gone before done, with the log quiet for 2 minutes and not ending in a finish line, shows `■ stopped` |
 | `startedAt` | Optional, ms. Adds an ETA |
 | `label` | Optional name, the slug otherwise |
 
@@ -281,6 +281,7 @@ The **Log** tab of the Status panel lists what happened to your jobs, newest fir
 - **Unseen errors:** errors from the last 24 hours logged since you last opened the tab show as `!N` on its label and `✖ N errors` in the one-line status line. Opening the tab clears both (it writes `~/.claude-progress/.state/log-seen.txt`).
 - **From the grouper:** a job that moves to DONE (success), a job stuck for the first time (warning) and a PROBLEMS row (error), each logged once. A parent waiting on a child is not logged as stuck.
 - **From your logs (optional):** list folders in `~/.claude-progress/log-dirs.txt`, one per line (`~` works, `#` starts a comment). None by default. At most every 30 seconds, `events.py scan` reads each `*.log` there changed in the last 24 hours, from where it stopped last time. It logs a Python traceback or an `ERROR` line as an error, a run ended by `SIGTERM` or `SIGKILL` as a warning `stopped (restart or kill)` with `resumed in <newer log>` when a newer log of the same job made progress, a rate limit or billing line as a warning (at most every 30 minutes per log), and a finish (`N/N` or a line starting `done` or `finished`) as a success. A log named `job-20260101-1200.log` belongs to job `job`.
+- **No false alarms:** one finish logs once, whether the scanner or the grouper sees it first. A `■ stopped` row whose log ends with a finish line counts as done. A watched job whose log changed in the last 2 minutes counts as running, whatever process wrote it. `starting` is a step, not part of a job's name, and a job last seen starting with no progress is never logged as done.
 - **Your own events:** `python3 ~/.claude/progress-bar/events.py add <level> <source> <title> [detail] [path]`, or append one line to the file yourself.
 
 ### Events format

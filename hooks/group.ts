@@ -8,7 +8,9 @@ export const GROUP_PY = String.raw`#!/usr/bin/env python3
 Reads status lines on stdin and prints:
   TO-DO (from ~/.claude-progress/todo.txt), then PROBLEMS / RUNNING / WAITING / DONE,
   then any line that is not a job (your own status line) as is.
-Jobs that vanish show as "finished HH:MM" for 30 min. Duplicate rows of one job are merged.
+Jobs that vanish show as "finished HH:MM" for 30 min, unless their last row said starting with no progress.
+Duplicate rows of one job are merged. A trailing status word (working, starting…) is not part of a job's name.
+A stopped row (■) whose job log ends with a finish line counts as done, not a problem.
 Folded sections (~/.claude-progress/.state/folded.txt) show as one line with a count.
 With --summary it prints one count line instead (the status line does this while the Status panel is on).
 RUNNING rows get a spinner, or a yellow "stuck" mark when their numbers have not moved for
@@ -61,7 +63,13 @@ def is_job(l):
 def name_of(l):
     s = re.sub(r'^[▶✔✖■]\s*(error\s*|stopped\s*)?', '', l)
     n = re.split(r'\s+[█░]|\s+·\s+', s, 1)[0].strip()
-    return re.sub(r'\s+(working|pending|waiting|running)$', '', n)
+    # A status word is not part of the name: "job starting…" and "job" are one job.
+    return re.sub(r'\s+(working|pending|waiting|running|starting)(…|\.\.\.)?$', '', n)
+
+
+def is_starting(l):
+    """A row that says starting and shows no progress yet: its job has not done anything to finish."""
+    return bool(re.search(r'\bstarting\b', l)) and not re.search(r'\d+/\d+|\d+(\.\d+)?%', l)
 
 
 def kind(l):
@@ -168,23 +176,27 @@ def main(stdin, now, summary=False):
         seen = json.loads(read(STATE) or '{}')
     except Exception:
         seen = {}
+    ev = load_events()
     groups = {'problem': [], 'running': [], 'waiting': [], 'done': []}
     current = set()
     for l in jobs:
         n = name_of(l)
         k = kind(l)
+        if l.startswith('■') and ev and ev.ended_ok(ev.log_of(n)):
+            # Stopped, but its log ends with a finish: a success, not a problem.
+            k, l = 'done', re.sub(r'^■\s*(stopped\s*)?', '✔ ', l)
         groups[k].append(l)
         current.add(slugify(n))
         sig = signature(l)
         prev = seen.get(slugify(n)) or {}
         changed = prev.get('changed', now) if prev.get('sig') == sig else now
-        seen[slugify(n)] = {'name': n, 'at': now, 'kind': k, 'sig': sig, 'changed': changed, 'cpu': bool(CPU.search(l))}
+        seen[slugify(n)] = {'name': n, 'at': now, 'kind': k, 'sig': sig, 'changed': changed, 'cpu': bool(CPU.search(l)), 'starting': is_starting(l)}
     # Jobs that disappeared count as finished, kept 30 min.
     for s, v in list(seen.items()):
         if s in current:
             continue
-        if now - v.get('at', 0) > KEEP or v.get('cpu'):
-            del seen[s]  # a busy process that ends is not a finished job
+        if now - v.get('at', 0) > KEEP or v.get('cpu') or v.get('starting'):
+            del seen[s]  # a busy process, or a job last seen starting, that ends is not a finished job
             continue
         if os.path.exists(os.path.join(ROOT, s + '.json')):
             continue  # still reporting, just not shown this poll
@@ -219,7 +231,6 @@ def main(stdin, now, summary=False):
     except ValueError:
         stuck_after = 600
 
-    ev = load_events()
     tt = titles()
     running = set(slugify(name_of(l)) for l in groups['running'])
 

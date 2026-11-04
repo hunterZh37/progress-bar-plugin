@@ -219,6 +219,20 @@ class Group(unittest.TestCase):
         out = self.run_('▶ parent-job ██░░ 1/3\n', now=T0 + 11 * 60)
         self.assertIn('  ◐ parent-job ██░░ 1/3 · waiting on: Rebuild lists', out)
 
+    def test_starting_is_a_step_not_part_of_the_name(self):
+        self.assertEqual(self.g.name_of('▶ import starting…'), 'import')
+        self.assertEqual(self.g.name_of('▶ import starting...'), 'import')
+        self.assertEqual(self.g.name_of('▶ import · starting'), 'import')
+        # One job: the starting row and the progress row merge, and nothing named "import starting" finishes later.
+        self.run_('▶ import starting…\n', now=T0)
+        out = self.run_('▶ import ██░░ 1/4\n', now=T0 + 60)
+        self.assertEqual(sum('import' in l for l in out), 1)
+        self.assertFalse(any('finished' in l for l in out))
+
+    def test_a_job_last_seen_starting_never_finishes(self):
+        self.run_('▶ import · starting\n', now=T0)
+        self.assertEqual(self.run_('', now=T0 + 60), [])
+
 
 class Events(unittest.TestCase):
     def setUp(self):
@@ -255,6 +269,30 @@ class Events(unittest.TestCase):
         g('✖ error deploy · 1m\n', T0 + 14 * 60)
         got = [(e['level'], e['title']) for e in self.events()]
         self.assertEqual(sorted(got), sorted([('error', 'deploy: problem'), ('warning', 'Nightly import stuck'), ('success', 'nightly done')]))
+
+    def test_stopped_row_whose_log_ends_done_is_a_success(self):
+        self.write('log-dirs.txt', self.logs + '\n')
+        self.write('.state/log-scan.stamp', '')  # no background scan: this test scans by hand
+        self.write('label-20260101-1200.log', '  8/9 batches\n  9/9 batches\ndone (cli): 135 orgs\n', self.logs)
+        self.write('crashy-20260101-1200.log', '  3/9 batches\n', self.logs)
+        out = [strip_links(l) for l in self.g.main(io.StringIO('■ stopped label ████ 9/9 batches\n■ stopped crashy ██░░ 3/9 batches\n'), T0)]
+        self.assertEqual(out, ['▾ ✖ PROBLEMS', '  ■ stopped crashy ██░░ 3/9 batches', '▾ ✔ DONE', '  label ████ 9/9 batches'])
+        got = sorted((e['level'], e['title']) for e in self.events())
+        self.assertEqual(got, [('error', 'crashy: problem'), ('success', 'label done')])
+
+    def test_a_finish_seen_by_the_scanner_and_the_grouper_logs_once(self):
+        self.write('log-dirs.txt', self.logs + '\n')
+        self.write('.state/log-scan.stamp', '')  # no background scan: this test scans by hand
+        self.write('train-20260101-1200.log', '  1/2\n  2/2\ndone (cli)\n', self.logs)
+        self.ev.scan()
+        self.g.main(io.StringIO('▶ train ██░░ 1/2\n'), T0)
+        self.ev.forget('done:train')  # running again: its next finish logs again
+        self.g.main(io.StringIO('✔ train ████ 2/2\n'), T0 + 60)
+        self.ev.scan()  # same finish line already read: nothing new
+        with open(os.path.join(self.logs, 'train-20260101-1300.log'), 'w') as f:
+            f.write('  2/2\n')
+        self.ev.scan()  # a second log of the same finished job: the grouper's key already holds it
+        self.assertEqual([e['title'] for e in self.events() if e['level'] == 'success'], ['train done', 'train done'])
 
     def test_summary_counts_unseen_errors_and_the_log_seen_file_clears_them(self):
         now = time.time()

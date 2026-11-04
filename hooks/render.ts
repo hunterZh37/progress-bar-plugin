@@ -87,6 +87,25 @@ export function readLog(w: Watch, text: string): { done: number | null; total: n
   return { done, total, step, error }
 }
 
+/** How long a log-backed job counts as running after its log last changed, whatever process wrote it. */
+export const LIVE_LOG_MS = 2 * 60_000
+
+/** True when the log's last non-blank line says it finished: a line starting `done` or `finished`, or `N/N`. */
+export function endsDone(text: string): boolean {
+  const last = text.split('\n').reverse().find(l => l.trim()) ?? ''
+  const m = /^\s*(\d+)\/(\d+)\b/.exec(last)
+  return /^\s*(done|finished)\b/i.test(last) || (!!m && m[1] === m[2] && Number(m[2]) > 0)
+}
+
+/** A watched job's state. A log changed in the last LIVE_LOG_MS is running even when the process is not found,
+ * and a stopped job whose log ends with a finish is done. */
+export function watchState(p: { done: number | null; total: number | null; error: boolean }, alive: boolean | null, logAgeMs: number, text: string): 'running' | 'done' | 'stopped' | 'error' {
+  if (p.error) return 'error'
+  if (p.done !== null && p.total !== null && p.done >= p.total) return 'done'
+  if (alive !== false || logAgeMs < LIVE_LOG_MS) return 'running'
+  return endsDone(text) ? 'done' : 'stopped'
+}
+
 /** Time left at the rate so far, or '' when it can't be told yet. */
 export function eta(elapsedMs: number, done: number | null, total: number | null): string {
   if (done === null || total === null || done <= 0 || done >= total || elapsedMs <= 0) return ''

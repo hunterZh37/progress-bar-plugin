@@ -8,7 +8,7 @@ import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hook
 import { PANE, badge, evId, fitLabel, labelCol, maxMeter, nestRows, runCount, shortTitle, parseSections, runCard, shortAge, slide, stripAnsi } from '../hooks/panel'
 import { EVENTS_PY, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from '../hooks/events'
 import { REPOS_REL, parseBranches, parseCommits, webUrl } from '../hooks/github'
-import { eta, expandHome, line, lines, parseProgress, parseTitles, pickMeta, parseWatch, prevOf, readLog, slug, statusScript, todoAdd, todoClear, todoDone, todoItems, todoList } from '../hooks/render'
+import { eta, expandHome, line, lines, parseProgress, parseTitles, pickMeta, parseWatch, prevOf, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoItems, todoList } from '../hooks/render'
 
 const NOW = 1_800_000_000_000
 const HOME = '/home/u'
@@ -111,6 +111,16 @@ test('a watch file counts finished steps, a step and an error', async () => {
   const log = 'SET\n(1 row)\nREFRESH MATERIALIZED VIEW\nREFRESH MATERIALIZED VIEW\n'
   expect(readLog(w, log)).toEqual({ done: 3, total: 5, step: 'REFRESH MATERIALIZED VIEW', error: false })
   expect(readLog(w, log + 'ERROR:  out of memory\n').error).toBe(true)
+})
+
+test('a watched job: a fresh log is running, a stopped one whose log ends done is done', async () => {
+  const p = { done: 3, total: 9, error: false }
+  expect(watchState(p, false, 60_000, '  3/9 batches\n')).toBe('running')
+  expect(watchState(p, false, 3 * 60_000, '  3/9 batches\n')).toBe('stopped')
+  expect(watchState(p, false, 3 * 60_000, '  3/9 batches\ndone (cli): 45 orgs\n\n')).toBe('done')
+  expect(watchState(p, false, 3 * 60_000, '  3/9 batches\n  9/9\n')).toBe('done')
+  expect(watchState(p, true, 3 * 60_000, '  3/9 batches\n')).toBe('running')
+  expect(watchState({ ...p, error: true }, false, 0, 'done\n')).toBe('error')
 })
 
 test('unusable watch files are null', async () => {

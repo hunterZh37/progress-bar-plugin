@@ -69,7 +69,8 @@ Log folders: one per line in ~/.claude-progress/log-dirs.txt (none by default, ~
 A scan reads each *.log there changed in the last 24 h from where the last scan stopped
 (offsets in .state/log-offsets.json) and logs: a Traceback or ERROR line (error), a run ended by
 SIGTERM or SIGKILL (warning "stopped (restart or kill)", naming newer logs of the same job that resumed it),
-a rate limit or billing line (warning, at most every 30 min per log) and a finish (success, once per log).
+a rate limit or billing line (warning, at most every 30 min per log) and a finish (success, once per job,
+under the same key as the grouper's done row).
 group.py imports this file. It logs done, stuck and problem rows once each and starts a scan at most every 30 s.
 """
 import glob, json, os, re, sys, time
@@ -258,6 +259,21 @@ def stopped_or_error(ev, job, path, text, detail):
         ev('error', nice(job) + ' crashed', detail)
 
 
+def ended_ok(path):
+    """True when the log's last line says it finished: a line starting done or finished, or N/N."""
+    if not path:
+        return False
+    try:
+        with open(path, 'rb') as f:
+            f.seek(max(0, os.path.getsize(path) - 4096))
+            tail = f.read().decode('utf-8', 'replace')
+    except OSError:
+        return False
+    last = next((l for l in reversed(tail.split('\n')) if l.strip()), '')
+    m = PROG.match(last)
+    return bool(DONE.match(last) or (m and m.group(1) == m.group(2) and int(m.group(2)) > 0))
+
+
 def scan_file(path, o, now):
     st = os.stat(path)
     if st.st_size < o['off']:
@@ -304,7 +320,8 @@ def scan_file(path, o, now):
                 ev('warning', nice(job) + ': usage limit or billing', l.strip()[:500])
         elif not o.get('ok') and (DONE.match(l) or (m and m.group(1) == m.group(2) and int(m.group(2)) > 0)):
             o['ok'] = 1  # one finish per log
-            ev('success', nice(job) + ' done', l.strip()[:500])
+            # The grouper's key: one finish logs once, whether the scanner or the grouper sees it first.
+            once('done:' + slugify(job), 'success', job, nice(job) + ' done', l.strip()[:500], path, ts)
         i += 1
     o['off'] = o['off'] + consumed
     return o
