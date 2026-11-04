@@ -88,9 +88,9 @@ def kind(l):
 
 def signature(l):
     """What counts as progress: the done/total numbers, else the line without elapsed-time fields."""
-    m = re.search(r'(\d+)/(\d+)', l)
+    m = re.findall(r'\d+/\d+|\d+ tools', l)  # an agent making tool calls is not stuck
     if m:
-        return m.group(0)
+        return ' '.join(m)
     return ' · '.join(p for p in l.split(' · ') if not ELAPSED.match(p.strip()))
 
 

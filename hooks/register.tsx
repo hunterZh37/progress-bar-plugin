@@ -86,6 +86,8 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number }
     if (!LIVE.has(a.status)) continue
     const s = seen.get(a.id) ?? { startedAt: now, tools: 0, lastTool: '' }
     seen.set(a.id, s)
+    // An agent that handed its report back is finished, even while the harness still lists it as waiting.
+    if (s.lastTool === 'SubagentHandback') continue
     const p = h ? await readP($, `${dir}/${slug(a.description)}.json`) : null
     rows.push({ id: a.id, description: a.description, status: a.status, startedAt: s.startedAt, tools: s.tools, lastTool: s.lastTool, done: p?.done ?? null, total: p?.total ?? null, step: p?.step ?? '' })
   }

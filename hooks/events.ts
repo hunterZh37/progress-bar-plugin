@@ -139,23 +139,38 @@ def sent():
     return _load(SENT, {})
 
 
+class _sent_lock:
+    """Several status lines refresh every second. The lock stops each one sending the same event."""
+    def __enter__(self):
+        os.makedirs(os.path.dirname(SENT), exist_ok=True)
+        self.f = open(SENT + '.lock', 'w')
+        if fcntl:
+            fcntl.flock(self.f, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *a):
+        self.f.close()
+
+
 def once(key, level, source, title, detail='', path='', ts=None):
     """emit() unless an event with this key was sent in the last 2 days. True when sent."""
-    s = sent()
-    now = time.time()
-    s = {k: v for k, v in s.items() if now - v < 2 * 86400}
-    if key in s:
-        return False
-    s[key] = now
-    _save(SENT, s)
+    with _sent_lock():
+        s = sent()
+        now = time.time()
+        s = {k: v for k, v in s.items() if now - v < 2 * 86400}
+        if key in s:
+            return False
+        s[key] = now
+        _save(SENT, s)
     emit(level, source, title, detail, path, ts)
     return True
 
 
 def forget(key):
-    s = sent()
-    if s.pop(key, None) is not None:
-        _save(SENT, s)
+    with _sent_lock():
+        s = sent()
+        if s.pop(key, None) is not None:
+            _save(SENT, s)
 
 
 def titles():
