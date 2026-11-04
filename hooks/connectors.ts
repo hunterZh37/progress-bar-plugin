@@ -157,9 +157,9 @@ export async function refreshConns($: EngineInterface, h: string, force = false)
   const lockAt = Number((await readText($, lock)).trim()) * 1000 || 0
   if (now - lockAt < LOCK_MS) return
   running = true
-  await update($, connsAtom, c => ({ ...c, checking: true }))
   let saved = false
   try {
+    await update($, connsAtom, c => ({ ...c, checking: true }))
     await $.fs.write(lock, `${Math.floor(now / 1000)}\n`)
     const opts = { cwd: h, timeoutMs: 90_000 }
     const mcp = await $.process.run(['claude', 'mcp', 'list'], opts)
@@ -170,10 +170,9 @@ export async function refreshConns($: EngineInterface, h: string, force = false)
       await $.fs.write(`${h}/${CONN_CACHE_REL}`, formatCache(list, login, await $.clock.now()))
       saved = true
     }
-  } catch { /* keep the old list */ }
+  } catch { /* keep the old list */ } finally { running = false }
   // After a failed check the lock stays, so the next try waits LOCK_MS instead of running every second.
   if (saved) await $.process.run(['rm', '-f', lock]).catch(() => undefined)
-  running = false
   await update($, connsAtom, c => ({ ...c, checking: false }))
   await readConns($, h)
 }

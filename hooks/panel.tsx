@@ -548,7 +548,8 @@ export async function pollPanel($: EngineInterface, h: string) {
     if (unseenErrors(l.events, l.seenAt, Math.floor((await $.clock.now()) / 1000))) await markSeen($, h)
   }
   await readConns($, h)
-  void refreshConns($, h)
+  // Runs on past this poll (claude mcp list can take a minute), so a reload or session end can cut it off: never an unhandled rejection.
+  void refreshConns($, h).catch(() => undefined)
 }
 
 async function flip($: EngineInterface, h: string, key: Key) {

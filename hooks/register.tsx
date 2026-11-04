@@ -489,12 +489,12 @@ export const register: Register = (on, options) => {
     const command = typeof b.command === 'string' ? b.command : ''
     let over = false
     let path = ''
-    void $.clock.sleep(LONG_BASH_MS).then(async () => { if (!over) { path = await startShell($, h, description, command); void poll($) } }).catch(() => undefined)
+    void $.clock.sleep(LONG_BASH_MS).then(async () => { if (!over) { path = await startShell($, h, description, command); void poll($).catch(() => undefined) } }).catch(() => undefined)
     let r
     try { r = await next(e) } finally { over = true }
     if (path) await endShell($, path)
     const taskId = !('deny' in r && r.deny) ? (r.result as { backgroundTaskId?: unknown } | undefined)?.backgroundTaskId : undefined
-    if (typeof taskId === 'string' && taskId) { await startShell($, h, description, command, taskId); void poll($) }
+    if (typeof taskId === 'string' && taskId) { await startShell($, h, description, command, taskId); void poll($).catch(() => undefined) }
     return r
   })
 
@@ -534,14 +534,14 @@ export const register: Register = (on, options) => {
         .then(async () => noteStatusLine($, await resolveHome($), hookApplied, await ownStatusLine($)))
         .catch(() => undefined)
     }
-    void poll($)
-    $.clock.every(5000, () => { void poll($); void tickAutonext($) })
+    void poll($).catch(() => undefined)
+    $.clock.every(5000, () => { void poll($).catch(() => undefined); void tickAutonext($).catch(() => undefined) })
     await startPanel($, await resolveHome($), autoPanel)
     const home = await resolveHome($)
     void backfillChat($, home).then(() => pollChannel($, home)).catch(() => undefined)
     $.clock.every(CHANNEL_EVERY, () => pollChannel($, home))
     // Action needed: checks every 30 s, and the in-app pane for actions not shown in the last 10 min.
-    void tickActions($, home)
+    void tickActions($, home).catch(() => undefined)
     $.clock.every(CHECK_EVERY, () => tickActions($, home))
     return next(e)
   })

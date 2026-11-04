@@ -661,7 +661,11 @@ test('the Connectors tab: checks claude mcp list, caches name and status only, n
   expect(await ui.find({ type: 'Button', text: /RUNNING/ })).toBe(undefined)
   expect((await ui.find({ type: 'Text', text: /CONNECTORS/ }))?.text).toBe('⚡ CONNECTORS  2 ok · 2 need sign-in · 1 failed')
   expect((await ui.find({ type: 'Text', text: /Claude:/ }))?.text).toBe('  Claude: me@x.test · Acme')
-  expect((await ui.find({ type: 'Text', text: /^Gmail$/ }))?.text).toBe('Gmail')
+  // Since 0.13.3 a connector with a known web page is a button that opens it as the connected account;
+  // one with no page (db, broken) stays plain text.
+  expect((await ui.find({ type: 'Button', text: /^Gmail/ }))?.text).toBe('Gmail  ↗')
+  expect((await ui.find({ type: 'Text', text: /^db$/ }))?.text).toBe('db')
+  expect(await ui.find({ type: 'Button', text: /^db/ })).toBe(undefined)
   expect((await ui.find({ type: 'Text', text: /me@gmail/ }))?.text).toBe('    me@gmail.test')
   expect((await ui.find({ type: 'Text', text: /needs sign-in/ }))?.text).toBe('  needs sign-in')
   expect((await ui.find({ type: 'Text', text: /^  failed$/ }))?.text).toBe('  failed')
@@ -672,6 +676,8 @@ test('the Connectors tab: checks claude mcp list, caches name and status only, n
   expect(text).not.toContain(SECRET)
   expect(text).not.toContain('postgres')
   expect(text).not.toContain('accessToken')
+  await ui.press({ key: 'c-open-Gmail' })
+  expect(ran.some(r => /open$/.test(r.argv[0]!) && r.argv[1] === 'https://mail.google.com/mail/?authuser=me%40gmail.test')).toBe(true)
 
   // Within 5 minutes nothing runs again; the refresh button forces a check.
   await ui.press({ key: 'tab-list' })
@@ -881,10 +887,14 @@ test('the panel: titles, ids with badges, unlocks, a nested child, waiting on an
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 60 } })
   const buttons = async () => (await ui.findAll({ type: 'Button' })).filter(b => /^open-/.test(b.key ?? '')).map(b => b.text ?? '')
   // Closed: one line per top job with the short title, the child hidden until its parent opens.
-  expect(await buttons()).toEqual([`▸ ${'Big batch'.padEnd(26)}`, `▸ ${'Train the model'.padEnd(26)}`, `▸ ${'other'.padEnd(26)}`])
+  // At 60 columns the label column is 22 (labelCol leaves 13 columns for the note); a child's 4-space indent takes 4.
+  expect(labelCol(60)).toBe(22)
+  expect(labelCol(60, 4)).toBe(18)
+  expect(await buttons()).toEqual([`▸ ${'Big batch'.padEnd(22)}`, `▸ ${'Train the model'.padEnd(22)}`, `▸ ${'other'.padEnd(22)}`])
   let texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   expect(texts.some(t => /⚠ stuck/.test(t))).toBe(false)
-  expect(texts).toContain('  waiting on Child step')
+  // The one-line note is cut to the 13 columns left after the bar (since 0.22.2); the open details carry it whole.
+  expect(texts.filter(t => t === '  waiting on C…').length).toBe(2)
   expect(texts).toContain('  12:50 running')
   expect(texts.some(t => /540/.test(t))).toBe(false)
   expect(texts.some(t => /unlocks/.test(t))).toBe(false)
@@ -895,8 +905,8 @@ test('the panel: titles, ids with badges, unlocks, a nested child, waiting on an
   expect(texts).toContain('    unlocks: the weekly report')
   expect(texts).toContain('    ▸ waiting on: Child step')
   // The child shows under its open parent, marked ↳, with its own one line.
-  expect(await buttons()).toContain(`▾ ${'Big batch'.padEnd(26)}`)
-  expect(await buttons()).toContain(`▸ ${'Child step'.padEnd(22)}`)
+  expect(await buttons()).toContain(`▾ ${'Big batch'.padEnd(22)}`)
+  expect(await buttons()).toContain(`▸ ${'Child step'.padEnd(18)}`)
   expect(texts).toContain('      ↳ ')
   // A busy process: no bar at 540%, cores and run time instead.
   expect(texts).toContain('    box: train.py   🖥  on box')
