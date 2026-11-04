@@ -45,9 +45,10 @@ def name_of(l):
 def kind(l):
     if l.startswith('✖') or l.startswith('■') or ' ✗ ' in l:
         return 'problem'
-    if l.startswith('✔') or re.search(r'\b100(\.0)?%', l) or '· done' in l:
+    # "· done" only at the end or as "· done:", so "· done in 1h" (a time left) stays running.
+    if l.startswith('✔') or re.search(r'\b100(\.0)?%', l) or re.search(r'· done(:|\s*$)', l):
         return 'done'
-    if re.search(r'\b(waiting|pending)\b', l):
+    if re.search(r'\b(waiting|pending)\b|\bwaits for\b', l):
         return 'waiting'
     return 'running'
 

@@ -18,7 +18,7 @@ Live progress bars and a to-do list in the Claude Code status line. One line per
 - **Real bars:** a subagent or shell job that writes `~/.claude-progress/<slug>.json` gets a bar with percent, count and step.
 - **Bars from logs:** a job that only writes a log (psql, a vendor tool, a remote job) gets a bar from a watch file: done/total read from the log by regex, an ETA, and `■ stopped` or `✖ error` when it dies or fails.
 - **Skill:** `progress-reporting` tells Claude to write those files for multi-step work and to ask subagents to do the same.
-- **Groups:** lines sort into **TO-DO**, **PROBLEMS**, **RUNNING**, **WAITING** and **DONE**. A job that ends shows as `finished 14:05` for 30 minutes. Duplicate rows of one job merge.
+- **Groups:** lines sort into **TO-DO**, **PROBLEMS**, **RUNNING**, **WAITING** and **DONE**. A job that ends shows as `finished 14:05` for 30 minutes, unless its progress file still exists. Duplicate rows of one job merge. A row is **DONE** only on `✔`, `100%`, or `· done` at the end (or `· done:`), so `done in 1h` stays RUNNING. `waiting`, `pending` and `waits for` go to **WAITING**.
 - **Spinner and stuck rows:** each RUNNING row gets a spinner (and `in progress` when it has no step). A row whose numbers have not moved for 10 minutes shows a yellow `⚠ stuck 14m` instead and sorts first. Change the 10 in `~/.claude-progress/.state/stuck-minutes`.
 - **To-dos:** `~/.claude-progress/todo.txt` shows first. Claude keeps it current.
 - **Links:** job names open their progress file, or a URL you set in `links.txt`.
@@ -179,9 +179,11 @@ Optional. Shows the full groups in a docked pane named **Status**, and shrinks t
     ○ Sign in to the dashboard
 
 ▾ ▶ RUNNING  2
-  ⚠ 14m nightly-import
-    ████████████████░░░░ 80.0%
-    4/5 · batch 4 · 31m
+  ⚠ nightly-import  ⚙ job
+    ████████████████░░░░ 80%  4 of 5 steps
+    no progress for 14m
+    ▸ batch 4
+    ⏱ 31m so far
 
 ▸ ✔ DONE  2
 ```
@@ -196,8 +198,34 @@ The status line then reads:
 - **Fold:** press a header, or its hotkey (`1` to-do, `2` running, `3` done, `4` waiting, `5` problems). It writes `~/.claude-progress/.state/folded.txt`, the same file `/progress-bar fold` uses.
 - **Off by default:** `panel on` writes `~/.claude-progress/.state/panel-on`. With that file the pane opens at session start and the status line prints the summary. `panel off` deletes it and closes the pane. `/progress-bar panel` opens it once without turning it on.
 - **To-do menu:** click a to-do for Mark as done, Move back to to-do or Delete. It edits `~/.claude-progress/todo.txt`, on the line that still holds that item's text, so a line added since the panel drew never hits the wrong item. TO-DO lists open items only. Checked-off ones move to DONE under **Checked-off to-dos**, after finished jobs, and count there.
-- **Rows:** to-dos one per line under each owner, running jobs as name, bar and details (stuck ones in yellow), done jobs dimmed with their finish time.
+- **Rows:** to-dos one per line under each owner, running jobs as cards (see **Running cards**), done jobs dimmed with their finish time.
 - **Tabs:** `▌List  │   Connectors  │   GitHub`, the shown one marked `▌`. **List** (the default) shows the sections above. **Connectors** shows your connectors, its label adding `!N` when N need attention. **GitHub** shows your repos.
+
+## Running cards
+
+Each RUNNING job in the Status panel is a card, so every kind of job reads the same way.
+
+```
+◐ healthcare-classify  🏷 labeling
+  ████████████░░░░░░░░ 64%  1,234 of 2,000 batches
+  ▸ scoring
+  ⏳ 1h19m left   ⏱ 42m so far   ⚡ 31/min
+
+◓ Build docs  🤖 Claude agent
+  ░░░░███░░░░░░░░░░░░░  steps not reported
+  ⏱ 3m so far   🔧 12 actions · last: Edit
+
+Claude Max this week  ▰▰▰▰▰▰▱▱▱▱  62% used
+```
+
+- **Kind badge:** 🏷 **labeling** for names ending `-classify`, `-verify`, `-judge` or `-candidates`. 🖥 **on host** for names starting `host:` (any `name:` prefix, such as `gpu-box:train`). 🤖 **Claude agent** when the row reports `N tools`. ⚙ **job** for the rest.
+- **Name:** a trailing status word (`working`, `running`, `pending`, `waiting`) is left out.
+- **Bar:** the percent, then `a of b steps` (or `batches` when the row says `a/b batches`).
+- **No percent:** a 3-block piece slides along the bar with `steps not reported`, so it still reads as working.
+- **Stuck:** the card turns yellow with `no progress for 14m`.
+- **Step line:** `▸ step`, from any detail that is not a number or time.
+- **Facts line:** `⏳ X left` (from `X left`, `ETA X` or `done in X`), `⏱ Y so far`, `⚡ N/min`, `🔧 N actions · last: Tool`.
+- **Claude Max meter:** one shared meter under RUNNING, from a row detail `7d N%` or `Max 7-day used N%` (the highest one). Green under 50%, yellow under 80%, red above.
 
 ## Connectors
 

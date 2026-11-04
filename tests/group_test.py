@@ -147,6 +147,25 @@ class Group(unittest.TestCase):
         self.assertIn('stuck 31m', self.run_('▶ j ██░░ 1/2\n', now=T0 + 31 * 60)[1])
 
 
+    def test_done_in_is_time_left_not_done(self):
+        self.assertEqual(self.g.kind('▶ import ██░░ 40.0% · 2/5 · done in 1h'), 'running')
+        self.assertEqual(self.g.kind('▶ import · done'), 'done')
+        self.assertEqual(self.g.kind('▶ import · done: 5 files'), 'done')
+        out = self.run_('▶ import ██░░ 40.0% · 2/5 · done in 1h\n')
+        self.assertEqual(out, ['▾ ▶ RUNNING', '  ◐ import ██░░ 40.0% · 2/5 · done in 1h'])
+
+    def test_waits_for_is_waiting(self):
+        out = self.run_('▶ deploy waits for build · 1m\n')
+        self.assertEqual(out, ['▾ ⏸ WAITING', '  deploy waits for build · 1m'])
+
+    def test_status_word_stripped_from_name(self):
+        self.assertEqual(self.g.name_of('▶ nightly-import running · 3m'), 'nightly-import')
+
+    def test_finished_memory_skips_jobs_whose_file_still_exists(self):
+        self.run_('▶ import ██░░ 50.0%\n', now=T0)
+        self.write('import.json', '{}')
+        self.assertEqual(self.run_('', now=T0 + 60), [])
+
     def test_summary_line_counts_every_group(self):
         self.write('todo.txt', '[you]\na\nb\nx done\n[mac]\nc\n')
         self.write('.state/folded.txt', 'running todo\n')

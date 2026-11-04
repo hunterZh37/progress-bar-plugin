@@ -12,6 +12,7 @@ import type { Conn, Todo } from '../types'
 // Section headers are buttons that fold or open the section through ~/.claude-progress/.state/folded.txt.
 // To-dos come straight from ~/.claude-progress/todo.txt: open ones under TO-DO, checked-off ones under DONE.
 // Pressing one opens a menu: mark as done (or move back to to-do) or delete.
+// RUNNING rows draw as cards (runCard): kind badge, bar or sliding piece, step, facts, and one Claude Max meter.
 // Three tabs: List (the sections), Connectors (see connectors.ts) and GitHub (see github.ts).
 // Connector checks run only while the pane is open; GitHub reads only while its tab shows.
 
@@ -72,15 +73,75 @@ export function todoItems(row: string): { who: string; items: string[] } {
   return { who, items: (m ? m[2]! : row).split(' · ').map(s => s.trim()).filter(Boolean) }
 }
 
-/** A running row: its mark, name, percent and the remaining details. */
-export function runningRow(row: string): { mark: string; stuck: boolean; name: string; pct: number | null; details: string } {
+export type RunCard = {
+  mark: string
+  stuck: string
+  name: string
+  pct: number | null
+  count: string
+  kind: { icon: string; text: string }
+  step: string
+  facts: string
+  maxUsed: number | null
+}
+
+/**
+ * A running row as a card: a kind badge, the bar's numbers, then labeled facts, so every kind of job reads the same way.
+ * Kinds: 🏷 labeling (names ending -classify, -verify, -judge or -candidates), 🖥 a remote job ("host:" before the name),
+ * 🤖 a Claude agent (it reports "N tools"), else ⚙ job. Claude Max weekly use ("7d N%", "Max 7-day used N%") is pulled out
+ * for one shared meter under RUNNING.
+ */
+export function runCard(row: string): RunCard {
   const stuck = /^⚠ stuck (\S+)\s*/.exec(row)
   const spin = /^([◐◓◑◒])\s*/.exec(row)
   const clean = row.slice((stuck ?? spin)?.[0].length ?? 0)
-  const name = clean.split(/\s+[█░]|\s+·\s+/)[0]!.trim()
-  const pctM = /(\d+(?:\.\d+)?)%/.exec(clean)
-  const details = clean.slice(name.length).replace(/^[\s█░]+/, '').split(' · ').map(p => p.trim()).filter(p => p && !/^\d+(\.\d+)?%$/.test(p)).join(' · ')
-  return { mark: stuck ? `⚠ ${stuck[1]}` : spin ? spin[1]! : '•', stuck: !!stuck, name, pct: pctM ? Number(pctM[1]) : null, details }
+  const rawName = clean.split(/\s+[█░]|\s+·\s+/)[0]!.trim()
+  const name = rawName.replace(/\s+(working|pending|waiting|running)$/, '')
+  const pctM = /(\d+(?:\.\d+)?)%/.exec(clean.replace(/·\s*(7d|Max 7-day used) \d+%/g, ''))
+  const parts = clean.slice(rawName.length).replace(/^[\s█░·]+/, '').split(' · ').map(x => x.trim()).filter(x => x && !/^\d+(\.\d+)?%$/.test(x))
+  const host = /^([A-Za-z0-9_.-]+):\S/.exec(name)?.[1]
+  const isAgent = parts.some(x => /^\d+ tools?$/.test(x))
+  const kind = /-(classify|verify|judge|candidates)$/.test(name) ? { icon: '🏷', text: 'labeling' }
+    : host ? { icon: '🖥', text: `on ${host}` }
+    : isAgent ? { icon: '🤖', text: 'Claude agent' }
+    : { icon: '⚙', text: 'job' }
+  let count = '', step = '', elapsed = '', left = '', speed = '', actions = '', last = ''
+  let maxUsed: number | null = null
+  for (const x of parts) {
+    let m: RegExpExecArray | null
+    if ((m = /^Max 7-day used (\d+)%$/.exec(x)) || (m = /^7d (\d+)%$/.exec(x))) maxUsed = Math.max(maxUsed ?? 0, Number(m[1]))
+    else if ((m = /^(\d+)\/(\d+)( batches)?$/.exec(x))) count = `${Number(m[1]).toLocaleString('en-US')} of ${Number(m[2]).toLocaleString('en-US')}${m[3] ? ' batches' : ' steps'}`
+    else if ((m = /^done in (.+)$/.exec(x)) || (m = /^ETA (.+)$/.exec(x)) || (m = /^(.+) left$/.exec(x))) left = m[1]!
+    else if (/\/min$/.test(x)) speed = x
+    else if ((m = /^(\d+) tools?$/.exec(x))) actions = `${m[1]} actions`
+    else if (/^(\d+h)?\d+m$|^\d+s$/.test(x)) elapsed = x
+    else if (isAgent && /^[A-Z][A-Za-z]+$/.test(x)) last = x
+    else step = step ? `${step} · ${x}` : x
+  }
+  if (last) actions = actions ? `${actions} · last: ${last}` : `last: ${last}`
+  const facts = [left && `⏳ ${left} left`, elapsed && `⏱ ${elapsed} so far`, speed && `⚡ ${speed}`, actions && `🔧 ${actions}`].filter(Boolean).join('   ')
+  return {
+    mark: stuck ? '⚠' : spin ? spin[1]! : '•',
+    stuck: stuck ? stuck[1]! : '',
+    name,
+    pct: pctM ? Number(pctM[1]) : null,
+    count,
+    kind,
+    step,
+    facts,
+    maxUsed,
+  }
+}
+
+/** The indeterminate bar for a job with no %: a 3-block piece that slides one cell a second. Returns [before, after] widths. */
+export function slide(nowMs: number, barW: number): [number, number] {
+  const at = Math.floor(nowMs / 1000) % (barW - 3)
+  return [at, barW - 3 - at]
+}
+
+/** The shared Claude Max meter: 10 cells, green under 50%, yellow under 80%, else red. */
+export function maxMeter(used: number): { filled: number; color: 'green' | 'yellow' | 'red' } {
+  return { filled: Math.round((Math.min(100, used) / 100) * 10), color: used >= 80 ? 'red' : used >= 50 ? 'yellow' : 'green' }
 }
 
 async function readFolded($: EngineInterface, h: string): Promise<string[]> {
@@ -258,25 +319,51 @@ export function registerPanel(on: On) {
       ...(doneTodos.length ? [<Text key="w-checked" bold color="magenta">{'  Checked-off to-dos'}</Text>, ...doneTodos.flatMap(todoItem)] : []),
     ]
 
-    const runRows = (rows: string[]) => rows.flatMap((row, i) => {
-      const r = runningRow(row)
-      const frac = r.pct === null ? null : Math.min(1, r.pct / 100)
-      const filled = frac === null ? 0 : Math.round(frac * barW)
+    // Running cards: name and kind badge, the bar (or a sliding piece when no % is reported), stuck note, step, facts.
+    const nowMs = await $.clock.now()
+    const runRows = (rows: string[]) => {
+      const cards = rows.map(runCard)
+      const used = cards.reduce<number | null>((a, c) => (c.maxUsed === null ? a : Math.max(a ?? 0, c.maxUsed)), null)
+      const out = cards.flatMap((r, i) => {
+        const frac = r.pct === null ? null : Math.min(1, r.pct / 100)
+        const filled = frac === null ? 0 : Math.round(frac * barW)
+        const [before, after] = slide(nowMs, barW)
+        return [
+          <Box key={`r${i}`} marginTop={i ? 1 : 0}>
+            <Text color={r.stuck ? 'yellow' : 'cyan'}>{`  ${r.mark} `}</Text>
+            <Text bold color={r.stuck ? 'yellow' : undefined}>{r.name}</Text>
+            <Text dimColor>{`  ${r.kind.icon} ${r.kind.text}`}</Text>
+          </Box>,
+          frac === null
+            ? <Box key={`b${i}`}>
+                <Text dimColor>{`    ${'░'.repeat(before)}`}</Text>
+                <Text color={r.stuck ? 'yellow' : 'cyan'}>{'███'}</Text>
+                <Text dimColor>{'░'.repeat(after)}</Text>
+                <Text dimColor>{'  steps not reported'}</Text>
+              </Box>
+            : <Box key={`b${i}`}>
+                <Text color={r.stuck ? 'yellow' : 'green'}>{`    ${'█'.repeat(filled)}`}</Text>
+                <Text dimColor>{'░'.repeat(barW - filled)}</Text>
+                <Text bold>{` ${r.pct}%`}</Text>
+                {r.count ? <Text dimColor>{`  ${r.count}`}</Text> : null}
+              </Box>,
+          r.stuck ? <Text key={`s${i}`} color="yellow">{`    no progress for ${r.stuck}`}</Text> : null,
+          r.step ? <Text key={`t${i}`}>{`    ▸ ${r.step}`}</Text> : null,
+          r.facts ? <Text key={`f${i}`} dimColor>{`    ${r.facts}`}</Text> : null,
+        ].filter(Boolean)
+      })
+      if (used === null) return out
+      const m = maxMeter(used)
       return [
-        <Box key={`r${i}`}>
-          <Text color={r.stuck ? 'yellow' : 'cyan'}>{`  ${r.mark} `}</Text>
-          <Text bold color={r.stuck ? 'yellow' : undefined}>{r.name}</Text>
+        ...out,
+        <Box key="maxmeter" marginTop={1}>
+          <Text dimColor>{'  Claude Max this week  '}</Text>
+          <Text color={m.color}>{'▰'.repeat(m.filled)}</Text>
+          <Text dimColor>{'▱'.repeat(10 - m.filled)}</Text>
+          <Text>{`  ${used}% used`}</Text>
         </Box>,
-        frac !== null
-          ? <Box key={`b${i}`}>
-              <Text color="green">{`    ${'█'.repeat(filled)}`}</Text>
-              <Text dimColor>{'░'.repeat(barW - filled)}</Text>
-              <Text bold>{` ${r.pct}%`}</Text>
-            </Box>
-          : null,
-        r.details ? <Text key={`d${i}`} dimColor>{`    ${r.details}`}</Text> : null,
-      ].filter(Boolean)
-    })
+      ]
+    }
 
     const plainRows = (rows: string[], key: Key) => rows.map((row, i) => {
       const fin = /^(.*?) · finished (\d\d:\d\d)$/.exec(row)

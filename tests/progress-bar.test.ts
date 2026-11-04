@@ -5,7 +5,7 @@ import type { On } from 'claude-code'
 import { CONN_CACHE_REL, connName, connSummary, formatCache, parseAccounts, parseCache, parseLogin, parseMcpList } from '../hooks/connectors'
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
-import { PANE, parseSections, runningRow, shortAge, stripAnsi } from '../hooks/panel'
+import { PANE, maxMeter, parseSections, runCard, shortAge, slide, stripAnsi } from '../hooks/panel'
 import { REPOS_REL, parseBranches, parseCommits, webUrl } from '../hooks/github'
 import { eta, expandHome, line, lines, parseProgress, parseWatch, prevOf, readLog, slug, statusScript, todoAdd, todoClear, todoDone, todoItems, todoList } from '../hooks/render'
 
@@ -335,8 +335,52 @@ test('the panel parser: sections, counts, folded headers and trailing lines', as
   const { sections, other } = parseSections(stripAnsi(FULL).split('\n'))
   expect(sections.map(s => [s.key, s.folded, s.count, s.rows.length])).toEqual([['todo', false, 3, 2], ['running', false, 2, 2], ['done', true, 2, 0]])
   expect(other).toEqual(['opus 4 · main'])
-  expect(runningRow(sections[1]!.rows[0]!)).toEqual({ mark: '⚠ 12m', stuck: true, name: 'nightly-import', pct: 80, details: '4/5 · batch 4 · 12m' })
-  expect(runningRow(sections[1]!.rows[1]!).mark).toBe('◐')
+  expect(runCard(sections[1]!.rows[0]!)).toEqual({
+    mark: '⚠', stuck: '12m', name: 'nightly-import', pct: 80, count: '4 of 5 steps', kind: { icon: '⚙', text: 'job' },
+    step: 'batch 4', facts: '⏱ 12m so far', maxUsed: null,
+  })
+  expect(runCard(sections[1]!.rows[1]!).mark).toBe('◐')
+})
+
+test('running cards: a kind badge per kind', async () => {
+  expect(runCard('◐ healthcare-classify ██░░ 40.0% · 2/5 batches').kind).toEqual({ icon: '🏷', text: 'labeling' })
+  expect(runCard('◐ orgs-verify ██░░ 40.0%').kind.icon).toBe('🏷')
+  expect(runCard('◐ hunty:embed ██░░ 40.0% · 2/5').kind).toEqual({ icon: '🖥', text: 'on hunty' })
+  expect(runCard('◐ gpu-box:train ██░░ 10.0%').kind).toEqual({ icon: '🖥', text: 'on gpu-box' })
+  expect(runCard('◐ Build docs working · 3m · 12 tools · Edit').kind).toEqual({ icon: '🤖', text: 'Claude agent' })
+  expect(runCard('◐ nightly-import ██░░ 40.0% · 2/5').kind).toEqual({ icon: '⚙', text: 'job' })
+})
+
+test('running cards: facts, step, count and the status word left out of the name', async () => {
+  const a = runCard('◐ healthcare-classify running ████░░ 64.0% · 1234/2000 batches · 1h19m left · 42m · 31/min · scoring')
+  expect(a.name).toBe('healthcare-classify')
+  expect(a.count).toBe('1,234 of 2,000 batches')
+  expect(a.step).toBe('scoring')
+  expect(a.facts).toBe('⏳ 1h19m left   ⏱ 42m so far   ⚡ 31/min')
+  expect(runCard('◐ import ██░░ 40.0% · 2/5 · done in 1h').facts).toBe('⏳ 1h left')
+  expect(runCard('◐ import ██░░ 40.0% · ETA 5m').facts).toBe('⏳ 5m left')
+  const b = runCard('◐ Build docs working · 3m · 12 tools · Edit')
+  expect(b.name).toBe('Build docs')
+  expect(b.pct).toBe(null)
+  expect(b.facts).toBe('⏱ 3m so far   🔧 12 actions · last: Edit')
+})
+
+test('running cards: Claude Max weekly use is pulled out, not the bar %', async () => {
+  const c = runCard('◐ orgs-judge ██░░ 30.0% · 3/10 · 7d 42%')
+  expect(c.pct).toBe(30)
+  expect(c.maxUsed).toBe(42)
+  expect(c.step).toBe('')
+  expect(runCard('◐ x-verify · Max 7-day used 81%').pct).toBe(null)
+  expect(runCard('◐ x-verify · Max 7-day used 81%').maxUsed).toBe(81)
+  expect(maxMeter(42)).toEqual({ filled: 4, color: 'green' })
+  expect(maxMeter(65)).toEqual({ filled: 7, color: 'yellow' })
+  expect(maxMeter(80)).toEqual({ filled: 8, color: 'red' })
+})
+
+test('the sliding piece moves one cell a second and wraps', async () => {
+  expect(slide(0, 10)).toEqual([0, 7])
+  expect(slide(3000, 10)).toEqual([3, 4])
+  expect(slide(7000, 10)).toEqual([0, 7])
 })
 
 /** A world for the panel: the status script answers `full`, files live in `files`. */
@@ -386,11 +430,30 @@ test('the panel draws sections and rows, and a header press writes folded.txt', 
   expect((await ui.find({ type: 'Button', text: /call Sam/ }))?.text).toBe('    ○ call Sam')
   expect((await ui.find({ type: 'Button', text: /TO-DO/ }))?.text).toBe('▾ ☐ TO-DO  3')
   expect((await ui.find({ type: 'Text', text: /^nightly-import$/ }))?.text).toBe('nightly-import')
-  expect((await ui.find({ type: 'Text', text: /4\/5 · batch 4/ }))?.text).toBe('    4/5 · batch 4 · 12m')
+  expect((await ui.find({ type: 'Text', text: /4 of 5 steps/ }))?.text).toBe('  4 of 5 steps')
+  expect((await ui.find({ type: 'Text', text: /no progress/ }))?.text).toBe('    no progress for 12m')
+  expect((await ui.find({ type: 'Text', text: /▸ batch 4/ }))?.text).toBe('    ▸ batch 4')
+  expect((await ui.find({ type: 'Text', text: /so far/ }))?.text).toBe('    ⏱ 12m so far')
+  expect((await ui.find({ type: 'Text', text: /🤖/ }))?.text).toBe('  🤖 Claude agent')
   await ui.press({ key: 'h-running' })
   expect(files[FOLDED]).toBe('running')
   await ui.press({ key: 'h-running' })
   expect(files[FOLDED]).toBe('')
+  await ui.unmount()
+})
+
+test('the panel draws an indeterminate bar without a %, and one Claude Max meter under RUNNING', async ($, on) => {
+  const full = ['▾ ▶ RUNNING', '  ◐ Build docs working · 3m · 12 tools · Edit', '  ◓ orgs-judge ███░░░░░░░ 30.0% · 3/10 · 7d 62%', '  ◑ orgs-verify ██░░ 20.0% · Max 7-day used 55%'].join('\n')
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n' }
+  panelWorld(on, files, full)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  expect((await ui.find({ type: 'Text', text: /steps not reported/ }))?.text).toBe('  steps not reported')
+  expect((await ui.find({ type: 'Text', text: /^███$/ }))?.text).toBe('███')
+  expect((await ui.find({ type: 'Text', text: /Claude Max/ }))?.text).toBe('  Claude Max this week  ')
+  expect((await ui.find({ type: 'Text', text: /% used/ }))?.text).toBe('  62% used')
+  expect((await ui.find({ type: 'Text', text: /^▰+$/ }))?.text).toBe('▰'.repeat(6))
+  expect((await ui.find({ type: 'Text', text: /3 of 10 steps/ }))?.text).toBe('  3 of 10 steps')
   await ui.unmount()
 })
 
