@@ -253,3 +253,13 @@ Everything stays on your machine. The plugin reads and writes only files under `
 ## License
 
 MIT
+
+## herdr Connectors pane
+
+Using [herdr](https://github.com/herdrdev/herdr)? The `herdr/` folder is a herdr plugin that shows your Claude connectors in a narrow side pane (green ✔ connected, yellow ! needs sign-in, red ✖ failed), checked every 5 minutes.
+
+```sh
+herdr plugin install hunterZh37/progress-bar-plugin/herdr
+```
+
+Details in [herdr/README.md](herdr/README.md).
