@@ -1,15 +1,17 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
+import { connSummary, readConns, refreshConns, resetConns } from './connectors'
 import { resolveHome } from './home'
 import { todoItems as parseTodo } from './render'
-import type { Todo } from '../types'
+import type { Conn, Todo } from '../types'
 
 // The Status panel: the grouped status line, drawn in a docked pane beside the chat.
 // It runs the plugin's own status line script with PB_FULL=1 every second while the pane is open.
 // Section headers are buttons that fold or open the section through ~/.claude-progress/.state/folded.txt.
 // To-dos come straight from ~/.claude-progress/todo.txt: open ones under TO-DO, checked-off ones under DONE.
 // Pressing one opens a menu: mark as done (or move back to to-do) or delete.
+// Two tabs: List (the sections) and Connectors (see connectors.ts). Connector checks run only while the pane is open.
 
 export const PANE = 'progress-bar-status'
 const TITLE = 'Status'
@@ -29,6 +31,9 @@ const foldedAtom = atom({ plugin: 'progress-bar', key: 'folded' } as const, [])
 const linesAtom = atom({ plugin: 'progress-bar', key: 'lines' } as const, [])
 const todosAtom = atom({ plugin: 'progress-bar', key: 'todos' } as const, [])
 const menuAtom = atom({ plugin: 'progress-bar', key: 'menuFor' } as const, -1)
+// The same state connectors.ts writes; the scan wants each atom declared in the file that reads it.
+const connsAtom = atom({ plugin: 'progress-bar', key: 'conns' } as const, { at: 0, checking: false, login: '', list: [] })
+const tabAtom = atom({ plugin: 'progress-bar', key: 'tab' } as const, 'list')
 
 /** Removes terminal colors and OSC 8 links. */
 export const stripAnsi = (s: string) =>
@@ -119,6 +124,8 @@ export async function pollPanel($: EngineInterface, h: string) {
   } catch { /* next tick */ }
   await readFolded($, h)
   await readTodos($, h)
+  await readConns($, h)
+  void refreshConns($, h)
 }
 
 async function flip($: EngineInterface, h: string, key: Key) {
@@ -162,6 +169,7 @@ export async function panelCommand($: EngineInterface, h: string, arg: string): 
 
 /** At session start: poll every second while the pane is open, and open it when the panel is on. */
 export async function startPanel($: EngineInterface, h: string) {
+  await resetConns($)
   $.clock.every(1000, async () => {
     const open = await $.ui.panes().then(ps => ps.some(p => p.id === PANE)).catch(() => false)
     if (open) await pollPanel($, h)
@@ -181,6 +189,8 @@ export function registerPanel(on: On) {
     const folded = new Set(await read($, foldedAtom))
     const todos = await read($, todosAtom)
     const menuFor = await read($, menuAtom)
+    const conns = await read($, connsAtom)
+    const tab = await read($, tabAtom)
     const openTodos = todos.filter(t => !t.done).length
     const width = Math.max(30, e.props.bodyColumns ?? 60)
     const barW = Math.min(20, Math.max(10, width - 30))
@@ -250,8 +260,52 @@ export function registerPanel(on: On) {
       return <Text key={`p${i}`} color={key === 'problems' ? 'red' : undefined} dimColor={key === 'done'}>{`  ${row}`}</Text>
     })
 
+    // The tab bar: List and Connectors, the latter with "!N" when N connectors need sign-in or failed.
+    const badN = conns.list.filter(c => c.kind !== 'ok').length
+    const connLabel = `Connectors${badN ? ` !${badN}` : ''}`
+    const tabBar = (
+      <Box key="tabs" marginBottom={1}>
+        <Button key="tab-list" hotkey="l" plain onPress={() => update($, tabAtom, () => 'list')}>
+          {tab === 'list' ? '[ List ]' : '  List  '}
+        </Button>
+        <Text>{' '}</Text>
+        <Button key="tab-connectors" hotkey="c" plain onPress={() => update($, tabAtom, () => 'connectors')}>
+          {tab === 'connectors' ? `[ ${connLabel} ]` : `  ${connLabel}  `}
+        </Button>
+      </Box>
+    )
+
+    if (tab === 'connectors') {
+      const hhmm = (ms: number) => { const t = new Date(ms); return `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}` }
+      const ordered = [...conns.list.filter(c => c.kind === 'ok'), ...conns.list.filter(c => c.kind !== 'ok')]
+      const COLOR = { ok: 'green', auth: 'yellow', fail: 'red' } as const
+      const MARK = { ok: '✔', auth: '!', fail: '✖' } as const
+      const connRow = (c: Conn) => [
+        <Box key={`c-${c.name}`}>
+          <Text color={COLOR[c.kind]}>{`  ${MARK[c.kind]} `}</Text>
+          <Text bold>{c.name}</Text>
+          {c.kind !== 'ok' ? <Text color={COLOR[c.kind]}>{c.kind === 'auth' ? '  needs sign-in' : '  failed'}</Text> : null}
+        </Box>,
+        c.account ? <Text key={`c-a-${c.name}`} dimColor>{`    ${c.account}`}</Text> : null,
+      ].filter(Boolean)
+      return (
+        <Box flexDirection="column">
+          {tabBar}
+          <Text bold color="cyan">{`⚡ CONNECTORS  ${connSummary(conns.list)}`}</Text>
+          {conns.login ? <Text dimColor>{`  Claude: ${conns.login}`}</Text> : null}
+          {conns.list.length === 0 && <Text dimColor>{conns.checking ? '  checking…' : '  No check yet.'}</Text>}
+          {ordered.flatMap(connRow)}
+          <Box key="c-foot">
+            <Text dimColor>{`  ${conns.checking ? 'checking…' : conns.at ? `checked ${hhmm(conns.at)}` : 'not checked'}  `}</Text>
+            <Button key="c-refresh" plain onPress={() => refreshConns($, homeDir, true)}>{'↻ refresh'}</Button>
+          </Box>
+        </Box>
+      )
+    }
+
     return (
       <Box flexDirection="column">
+        {tabBar}
         {sections.length === 0 && <Text dimColor>Nothing running.</Text>}
         {sections.map((sec, n) => {
           const isFolded = folded.has(sec.key) || sec.folded

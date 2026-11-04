@@ -2,6 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
+import { CONN_CACHE_REL, connName, connSummary, formatCache, parseAccounts, parseCache, parseLogin, parseMcpList } from '../hooks/connectors'
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
 import { PANE, parseSections, runningRow, stripAnsi } from '../hooks/panel'
@@ -338,7 +339,7 @@ test('the panel parser: sections, counts, folded headers and trailing lines', as
 })
 
 /** A world for the panel: the status script answers `full`, files live in `files`. */
-function panelWorld(on: On, files: Record<string, string>, full = FULL) {
+function panelWorld(on: On, files: Record<string, string>, full = FULL, answer: (argv: string[]) => string | undefined = () => undefined) {
   const ran: { argv: string[]; env?: Record<string, string>; stdin?: string }[] = []
   mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
@@ -357,7 +358,7 @@ function panelWorld(on: On, files: Record<string, string>, full = FULL) {
   on('process.run', (_, e) => {
     ran.push({ argv: [...e.argv], env: e.init?.env, stdin: e.init?.stdin })
     if (e.argv[0] === 'rm') for (const f of e.argv.slice(2)) delete files[f]
-    const stdout = e.argv[1]?.endsWith('statusline.sh') ? full : ''
+    const stdout = e.argv[1]?.endsWith('statusline.sh') ? full : (answer([...e.argv]) ?? '')
     return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   const opened: string[] = []
@@ -460,5 +461,101 @@ test('with every to-do done, TO-DO hides and DONE shows them, so one can be move
   expect(files[TODO_FILE]).toBe('[mac]\nrun import\n')
   expect((await ui.find({ type: 'Button', text: /TO-DO/ }))?.text).toBe('▾ ☐ TO-DO  1')
   expect(await ui.find({ type: 'Button', text: /DONE/ })).toBe(undefined)
+  await ui.unmount()
+})
+
+const SECRET = 'hunter2-s3cret'
+const MCP_LIST = [
+  'Checking MCP server health…',
+  '',
+  'claude.ai Gmail: https://gmail.mcp.claude.com/mcp - ✔ Connected',
+  'claude.ai Canva: https://mcp.canva.com/mcp - ! Needs authentication',
+  'claude.ai Adobe for creativity: https://adobe.example/mcp - ! Needs authentication',
+  `db: npx -y @modelcontextprotocol/server-postgres postgres://admin:${SECRET}@db.example.com:5432/prod - ✔ Connected`,
+  `broken: node /x/server.js --token ${SECRET} - ✗ Failed to connect`,
+].join('\n')
+const AUTH = JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', email: 'me@x.test', orgName: 'Acme', orgId: 'org-1', accessToken: SECRET })
+
+test('connector parsing keeps name and status only', async () => {
+  expect(parseMcpList(MCP_LIST)).toEqual([
+    { name: 'Gmail', kind: 'ok' },
+    { name: 'Canva', kind: 'auth' },
+    { name: 'Adobe', kind: 'auth' },
+    { name: 'db', kind: 'ok' },
+    { name: 'broken', kind: 'fail' },
+  ])
+  expect(JSON.stringify(parseMcpList(MCP_LIST))).not.toContain(SECRET)
+  expect(connName('https://x.test/a')).toBe('')
+  expect(parseLogin(AUTH)).toBe('me@x.test · Acme')
+  expect(parseLogin('{"loggedIn":false,"email":"a@b"}')).toBe('')
+  expect(parseLogin('not json')).toBe('')
+  const cache = formatCache(parseMcpList(MCP_LIST), 'me@x.test · Acme', 1_800_000_000_000)
+  expect(cache).toBe('Gmail\tok\nCanva\tauth\nAdobe\tauth\ndb\tok\nbroken\tfail\n#login\tme@x.test · Acme\n#checked\t1800000000\n')
+  expect(parseCache(cache)).toEqual({ at: 1_800_000_000_000, login: 'me@x.test · Acme', list: parseMcpList(MCP_LIST) })
+  expect(parseAccounts('# comment\nGmail\tme@gmail.test\nbad line\n')).toEqual(new Map([['Gmail', 'me@gmail.test']]))
+  expect(connSummary(parseMcpList(MCP_LIST))).toBe('2 ok · 2 need sign-in · 1 failed')
+})
+
+/** Every text the drawing holds, joined. */
+async function allText(ui: { findAll: (q: { type: 'Text' | 'Button' }) => Promise<{ text?: string }[]> }): Promise<string> {
+  const out: string[] = []
+  for (const type of ['Text', 'Button'] as const) for (const el of await ui.findAll({ type })) out.push(el.text ?? '')
+  return out.join('\n')
+}
+
+test('the Connectors tab: checks claude mcp list, caches name and status only, never a URL or secret', async ($, on) => {
+  const CACHE = `${HOME}/${CONN_CACHE_REL}`
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [`${DIR}/connector-accounts.txt`]: '# accounts\nGmail\tme@gmail.test\n' }
+  const { ran } = panelWorld(on, files, DONE_FULL, argv =>
+    argv[0] === 'claude' && argv[1] === 'mcp' ? MCP_LIST : argv[0] === 'claude' && argv[1] === 'auth' ? AUTH : undefined)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  expect(ran).toContainEqual({ argv: ['claude', 'mcp', 'list'], env: undefined, stdin: undefined })
+  expect(ran.filter(r => r.argv[0] === 'claude' && r.argv[1] === 'mcp').length).toBe(1)
+  expect(files[CACHE]).toContain('db\tok\n')
+  expect(files[CACHE]).not.toContain(SECRET)
+  expect(files[CACHE]).not.toContain('postgres')
+  expect(files[CACHE]).not.toContain('https')
+
+  expect((await ui.find({ type: 'Button', text: /List/ }))?.text).toBe('[ List ]')
+  expect((await ui.find({ type: 'Button', text: /Connectors/ }))?.text).toBe('  Connectors !3  ')
+  expect((await ui.find({ type: 'Button', text: /RUNNING/ }))?.text).toBe('▾ ▶ RUNNING  1')
+  expect(await ui.find({ type: 'Text', text: /CONNECTORS/ })).toBe(undefined)
+
+  await ui.press({ key: 'tab-connectors' })
+  expect((await ui.find({ type: 'Button', text: /Connectors/ }))?.text).toBe('[ Connectors !3 ]')
+  expect(await ui.find({ type: 'Button', text: /RUNNING/ })).toBe(undefined)
+  expect((await ui.find({ type: 'Text', text: /CONNECTORS/ }))?.text).toBe('⚡ CONNECTORS  2 ok · 2 need sign-in · 1 failed')
+  expect((await ui.find({ type: 'Text', text: /Claude:/ }))?.text).toBe('  Claude: me@x.test · Acme')
+  expect((await ui.find({ type: 'Text', text: /^Gmail$/ }))?.text).toBe('Gmail')
+  expect((await ui.find({ type: 'Text', text: /me@gmail/ }))?.text).toBe('    me@gmail.test')
+  expect((await ui.find({ type: 'Text', text: /needs sign-in/ }))?.text).toBe('  needs sign-in')
+  expect((await ui.find({ type: 'Text', text: /^  failed$/ }))?.text).toBe('  failed')
+  expect((await ui.find({ type: 'Text', text: /checked \d\d:\d\d/ }))?.text).toMatch(/^  checked \d\d:\d\d  $/)
+  const text = await allText(ui)
+  expect(text).toContain('Gmail')
+  expect(text).toContain('broken')
+  expect(text).not.toContain(SECRET)
+  expect(text).not.toContain('postgres')
+  expect(text).not.toContain('accessToken')
+
+  // Within 5 minutes nothing runs again; the refresh button forces a check.
+  await ui.press({ key: 'tab-list' })
+  await ui.press({ key: 'tab-connectors' })
+  expect(ran.filter(r => r.argv[0] === 'claude' && r.argv[1] === 'mcp').length).toBe(1)
+  await ui.press({ key: 'c-refresh' })
+  expect(ran.filter(r => r.argv[0] === 'claude' && r.argv[1] === 'mcp').length).toBe(2)
+  await ui.unmount()
+})
+
+test('a fresh shared cache is read, not refreshed', async ($, on) => {
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [`${HOME}/${CONN_CACHE_REL}`]: `Gmail\tok\nCanva\tauth\n#checked\t${Math.floor((NOW - 60_000) / 1000)}\n` }
+  const { ran } = panelWorld(on, files, DONE_FULL)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  expect(ran.some(r => r.argv[0] === 'claude')).toBe(false)
+  expect((await ui.find({ type: 'Button', text: /Connectors/ }))?.text).toBe('  Connectors !1  ')
+  await ui.press({ key: 'tab-connectors' })
+  expect((await ui.find({ type: 'Text', text: /CONNECTORS/ }))?.text).toBe('⚡ CONNECTORS  1 ok · 1 need sign-in')
   await ui.unmount()
 })

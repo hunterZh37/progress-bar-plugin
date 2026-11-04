@@ -24,6 +24,7 @@ Live progress bars and a to-do list in the Claude Code status line. One line per
 - **Links:** job names open their progress file, or a URL you set in `links.txt`.
 - **Status line:** a small script prints all this above your existing status line.
 - **Status panel:** an optional docked pane beside the chat with the same groups, foldable headers and a one-line status line.
+- **Connectors:** a second tab in the panel shows which MCP connectors are connected, need sign-in or failed.
 
 ## Install
 
@@ -195,6 +196,35 @@ The status line then reads:
 - **Off by default:** `panel on` writes `~/.claude-progress/.state/panel-on`. With that file the pane opens at session start and the status line prints the summary. `panel off` deletes it and closes the pane. `/progress-bar panel` opens it once without turning it on.
 - **To-do menu:** click a to-do for Mark as done, Move back to to-do or Delete. It edits `~/.claude-progress/todo.txt`. TO-DO lists open items only. Checked-off ones move to DONE under **Checked-off to-dos**, after finished jobs, and count there.
 - **Rows:** to-dos one per line under each owner, running jobs as name, bar and details (stuck ones in yellow), done jobs dimmed with their finish time.
+- **Tabs:** `[ List ]` (hotkey `l`, the default) shows the sections above. `Connectors` (hotkey `c`) shows your connectors. Its label adds `!N` when N need attention.
+
+## Connectors
+
+The **Connectors** tab of the Status panel lists each MCP connector with its status.
+
+```
+[ List ]   Connectors !2
+
+⚡ CONNECTORS  7 ok · 2 need sign-in
+  Claude: you@example.com · Your Org
+  ✔ Gmail
+    you@gmail.com
+  ✔ nombot-db
+  ! Canva  needs sign-in
+  checked 14:05  ↻ refresh
+```
+
+- **How it checks:** runs `claude mcp list` in your home folder (90 s timeout) and `claude auth status` for the login line. At most every 5 minutes, only while the panel is open, never two checks at once. `↻ refresh` checks now.
+- **Status:** `✔` connected, `!` needs sign-in, `✖` failed. A leading `claude.ai ` and a trailing ` for creativity` are dropped from names.
+- **Names and status only:** the URL or command of each connector is dropped as the output is read. It is never stored or shown, since it can hold passwords or tokens. From `claude auth status` only the email and organization name are kept.
+- **Shared cache:** `~/.cache/progress-bar/connectors.txt` holds `name<TAB>status` lines, the login and the check time. Every open session reads it, so one check serves all of them.
+- **Accounts (optional):** write `~/.claude-progress/connector-accounts.txt` to show which account each connector uses, on a dim line under it. One `name<TAB>account` per line, names as the tab shows them. Lines starting with `#` are comments.
+
+```
+# connector<TAB>account
+Gmail	you@gmail.com
+Google Drive	work@example.com
+```
 
 ## Fold sections
 
@@ -218,7 +248,7 @@ Optional. Makes each section header a link that folds or unfolds that section.
 
 ## Privacy
 
-Everything stays on your machine. The plugin reads and writes only files under `~/.claude-progress/` and `~/.claude/progress-bar/`, plus `~/Applications/ProgressBarToggle.app` if you run `setup mac-clicks`. No network calls.
+Everything stays on your machine. The plugin reads and writes only files under `~/.claude-progress/`, `~/.claude/progress-bar/` and `~/.cache/progress-bar/`, plus `~/Applications/ProgressBarToggle.app` if you run `setup mac-clicks`. The plugin makes no network calls itself. While the Status panel is open, the Connectors tab runs `claude mcp list`, which contacts your configured connectors to check them.
 
 ## License
 
