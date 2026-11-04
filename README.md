@@ -79,6 +79,7 @@ Already have a status line? Setup reads it and builds it into the script. The ba
 | `/progress-bar todo done <n\|text>` | Marks a to-do done by number or by text it contains |
 | `/progress-bar todo clear` | Removes done to-dos |
 | `/progress-bar autonext on\|off\|ask` | When a job finishes: start the next to-do (`on`), suggest it (`ask`, the default) or do nothing (`off`) |
+| `/progress-bar` | Shows the bars as text and opens the Status panel |
 | `/progress-bar panel` | Opens the Status panel. `panel on` opens it at every session start, `panel off` stops that |
 | `/progress-bar checkpoint [label]` | Saves the running jobs for the overnight recap. `away` does the same |
 | `/progress-bar inbox` | Lists what needs you from `~/.claude-progress/inbox.json`. `inbox setup` writes the example Gmail checker |

@@ -52,7 +52,7 @@ const DEMO = 'progress-bar-demo'
 const USAGE = [
   'Usage: /progress-bar [setup | demo | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | fold <section> | unfold <section> | toggle <section>]',
   '  autonext: when a job finishes, start (on), suggest (ask, the default) or skip (off) the top ready to-do of its machine',
-  '  panel: open the Status panel. panel on: open it at every session start, with a one-line status line',
+  '  (no argument): show the bars and open the Status panel\n  panel: open the Status panel. panel on: open it at every session start, with a one-line status line',
   '  checkpoint (or away): save the running jobs. The Status panel shows what happened since once you are back',
   '  inbox: emails that need you (~/.claude-progress/inbox.json). inbox setup: write the example Gmail checker',
   '  setup mac-clicks [off]: click a section header to fold it (macOS)',
@@ -177,6 +177,18 @@ async function statusLineCommand($: EngineInterface): Promise<string | undefined
 }
 
 const snippet = `"statusLine": { "type": "command", "command": "~/${SCRIPT_REL}", "refreshInterval": 1 }`
+
+/** Plain `/progress-bar`: the bars as text, and the Status panel opens beside the chat once the script is installed. */
+async function showAndOpen($: EngineInterface): Promise<string> {
+  const text = await show($)
+  const h = await resolveHome($)
+  if (h && (await $.fs.exists(`${h}/${SCRIPT_REL}`).catch(() => false))) {
+    let note = 'Status panel opened.'
+    try { note = await panelCommand($, h, '') } catch { /* the text still shows */ }
+    return `${text}\n${note}`
+  }
+  return text
+}
 
 async function show($: EngineInterface) {
   const { rows, now } = await collect($)
@@ -351,7 +363,7 @@ export const register: Register = on => {
     const raw = (e.args ?? '').trim()
     const arg = raw.toLowerCase()
     const text =
-      arg === '' ? await show($)
+      arg === '' ? await showAndOpen($)
       : arg === 'setup' ? await setup($)
       : arg.startsWith('setup ') && parseMacClicks(arg.slice(6)) ? await setupMacClicks($, parseMacClicks(arg.slice(6))!)
       : arg === 'demo' ? await demo($)
