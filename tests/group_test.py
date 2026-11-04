@@ -210,6 +210,15 @@ class Group(unittest.TestCase):
     def test_summary_line_leaves_out_empty_extras(self):
         self.assertEqual(self.run_summary(''), ['▶ 0 running · ☐ 0 to-do · full view in the Status panel'])
 
+    def test_channel_files_show_as_new_until_read(self):
+        os.makedirs(os.path.join(self.root, 'channel'))
+        self.write('channel/received.json', json.dumps([{'id': 'a1'}, {'id': 'b2'}, {'id': 'b2'}, 'x']))
+        self.write('.state/channel-read.txt', 'a1\n')
+        self.assertTrue(self.g.main(io.StringIO(''), T0, summary=True)[0].startswith('\033[36m📨 1 new\033[0m · '))
+        self.assertIn('📨 1 new', strip_links('\n'.join(self.g.main(io.StringIO(''), T0))))
+        self.write('.state/channel-read.txt', 'a1\nb2\n')
+        self.assertNotIn('📨', self.g.main(io.StringIO(''), T0, summary=True)[0])
+
     def test_summary_says_recap_ready_after_4_h_or_a_wake(self):
         self.write('.state/overnight.json', json.dumps({'since': T0, 'label': 'x', 'running': []}))
         self.assertNotIn('recap ready', self.g.main(io.StringIO(''), T0 + 3 * 3600, summary=True)[0])

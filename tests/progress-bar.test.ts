@@ -253,7 +253,7 @@ test('/progress-bar shows a watched log, and stopped when its process is gone', 
 test('/progress-bar with an unknown argument prints usage', async ($, on) => {
   world(on)
   const { text } = await run($, 'nope')
-  expect(text.split('\n')[0]).toBe('Usage: /progress-bar [setup | demo | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | fold <section> | unfold <section> | toggle <section>]')
+  expect(text.split('\n')[0]).toBe('Usage: /progress-bar [setup | demo | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | channel | send <file> to <name> | fold <section> | unfold <section> | toggle <section>]')
 })
 
 test('/progress-bar todo add, list, done and clear write todo.txt', async ($, on) => {

@@ -16,6 +16,7 @@ Folded sections (~/.claude-progress/.state/folded.txt) show as one line with a c
 With --summary it prints one count line instead (the status line does this while the Status panel is on).
 It starts with a yellow "✉ N need you" while ~/.claude-progress/inbox.json lists items not in .state/inbox-handled.txt
 (the full view, outside the Status panel, starts with that line too).
+Then a cyan "📨 N new" while ~/.claude-progress/channel/received.json lists files not in .state/channel-read.txt (secure channel).
 It ends with "☀ recap ready" while an overnight checkpoint (.state/overnight.json) is 4 h old or the panel saw a sleep.
 RUNNING rows get a spinner, or a yellow "stuck" mark when their numbers have not moved for
 ~/.claude-progress/.state/stuck-minutes (default 10) minutes. Stuck rows sort first.
@@ -401,12 +402,18 @@ def main(stdin, now, summary=False):
         if recap_ready(now):
             line += ' · \033[2m☀ recap ready\033[0m'
         n_mail = inbox_count()
+        n_chan = channel_count()
+        if n_chan:
+            line = '\033[36m📨 ' + str(n_chan) + ' new\033[0m · ' + line
         if n_mail:
             line = '\033[33m✉ ' + str(n_mail) + ' need you\033[0m · ' + line
         return [line] + other
     n_mail = inbox_count()
     if n_mail and os.environ.get('PB_FULL') != '1':
         out.append('\033[33m✉ ' + str(n_mail) + ' need you\033[0m')
+    n_chan = channel_count()
+    if n_chan and os.environ.get('PB_FULL') != '1':
+        out.append('\033[36m📨 ' + str(n_chan) + ' new\033[0m')
     if todo:
         n_items = sum(len(v) for v in todo.values())
         if 'todo' in folded:
@@ -482,6 +489,16 @@ def inbox_count():
         handled = set((read(os.path.join(ROOT, '.state', 'inbox-handled.txt')) or '').split())
         items = data.get('items') if isinstance(data, dict) else None
         return sum(1 for i in items if isinstance(i, dict) and i.get('id') and str(i['id']) not in handled) if isinstance(items, list) else 0
+    except Exception:
+        return 0
+
+
+def channel_count():
+    """Files received through the secure channel (channel/received.json) whose id is not in .state/channel-read.txt."""
+    try:
+        items = json.loads(read(os.path.join(ROOT, 'channel', 'received.json')) or 'null')
+        done = set((read(os.path.join(ROOT, '.state', 'channel-read.txt')) or '').split())
+        return len({str(i['id']) for i in items if isinstance(i, dict) and i.get('id') and str(i['id']) not in done}) if isinstance(items, list) else 0
     except Exception:
         return 0
 

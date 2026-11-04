@@ -52,8 +52,13 @@ export type Checkpoint = { since: number; label: string; running: Snap[]; woke?:
 /** Overnight recap: the checkpoint, the panel's last tick (epoch ms) and whether the full list is open. */
 export type Recap = { cp: Checkpoint | null; lastTick: number; open: boolean }
 
+/** Secure channel: one received file not marked read. `path` is inside ~/.claude-progress/channel; `ts` is epoch s. */
+export type ChanItem = { id: string; channel: string; from: string; filename: string; path: string; ts: number }
+/** Secure channel: the unread received files, newest first. */
+export type Channel = { items: ChanItem[] }
+
 declare module 'claude-code' {
   interface PluginState {
-    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; project: Project; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards; recap: Recap; inbox: Inbox }
+    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; project: Project; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards; recap: Recap; inbox: Inbox; channel: Channel }
   }
 }

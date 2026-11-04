@@ -6,12 +6,13 @@ import { connSummary, readConns, refreshConns, resetConns } from './connectors'
 import { EVENTS_REL, LOG_DIRS_REL, SEEN_REL, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from './events'
 import { GH_EVERY, openUrl, openWeb, readGh } from './github'
 import { resolveHome } from './home'
+import { markRead, openLocal, readChannel } from './channel'
 import { markHandled, readInbox } from './inbox'
 import { isDarwin } from './mac'
 import { moveItem, nextPrompt, rankTodos, todoRows as layoutTodos } from './priority'
 import { sessionProject } from './project'
 import { FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, slug } from './render'
-import type { Checkpoint, Conn, Ev, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
+import type { Channel, Checkpoint, Conn, Ev, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
 
 // The Status panel: the grouped status line, drawn in a docked pane beside the chat.
 // It runs the plugin's own status line script with PB_FULL=1 every second while the pane is open.
@@ -60,6 +61,7 @@ const metaAtom = atom({ plugin: 'progress-bar', key: 'meta' } as const, {} as Re
 const logAtom = atom({ plugin: 'progress-bar', key: 'log' } as const, { events: [], filter: 'all', open: '', seenAt: 0, dirs: [] } as { events: Ev[]; filter: LogFilter; open: string; seenAt: number; dirs: string[] })
 const recapAtom = atom({ plugin: 'progress-bar', key: 'recap' } as const, { cp: null, lastTick: 0, open: false } as Recap)
 const inboxAtom = atom({ plugin: 'progress-bar', key: 'inbox' } as const, { checked: 0, items: [] } as Inbox)
+const channelAtom = atom({ plugin: 'progress-bar', key: 'channel' } as const, { items: [] } as Channel)
 const DIR_REL = '.claude-progress'
 const META_MS = 24 * 60 * 60_000
 
@@ -433,6 +435,7 @@ export async function pollPanel($: EngineInterface, h: string) {
   await readMeta($, h)
   await readEvents($, h)
   await readInbox($, h)
+  await readChannel($, h)
   if ((await read($, tabAtom)) === 'log') {
     const l = await read($, logAtom)
     if (unseenErrors(l.events, l.seenAt, Math.floor((await $.clock.now()) / 1000))) await markSeen($, h)
@@ -996,10 +999,26 @@ export function registerPanel(on: On) {
       </Box>,
     ]
 
+    // Channel: files a collaborator sent (channel.ts). A press opens the local copy with the default app, "✓ read" hides it.
+    const chan = await read($, channelAtom)
+    const chanBlock: RenderChildren[] = chan.items.length === 0 ? [] : [
+      <Box key="chan" flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1} marginBottom={1}>
+        <Text key="ch-h" bold color="cyan">{`✉ Channel  ${chan.items.length} new`}</Text>
+        {chan.items.flatMap(it => [
+          <Box key={`ch-r-${it.id}`}>
+            <Button key={`ch-o-${it.id}`} plain onPress={() => openLocal($, homeDir, it.path)}>{cutI(`${it.channel} · ${it.filename}`, Math.max(16, width - 18))}</Button>
+            <Text dimColor>{'  '}</Text>
+            <Button key={`ch-x-${it.id}`} plain onPress={() => markRead($, homeDir, it.id)}>{'✓ read'}</Button>
+          </Box>,
+        ])}
+      </Box>,
+    ]
+
     return (
       <Box flexDirection="column">
         {tabBar}
         {inboxBlock}
+        {chanBlock}
         {banner}
         {openTodos === 0 && <Text key="no-todos" dimColor>{`No to-dos for ${project || 'this project'}. Add one with /progress-bar todo add`}</Text>}
         {sections.length === 0 && <Text dimColor>Nothing running.</Text>}

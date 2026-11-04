@@ -4,6 +4,7 @@ import { autonextCommand, ownJobs, tickAutonext } from './autonext'
 import { CHECKPOINT_PY } from './checkpoint'
 import { EVENTS_PY } from './events'
 import { GROUP_PY } from './group'
+import { CHANNEL_EVERY, SEND_TOOL, channelCommand, pollChannel, sendCommand, sendFile } from './channel'
 import { inboxCommand } from './inbox'
 import { resolveHome } from './home'
 import { macClicks, parseMacClicks } from './mac'
@@ -51,11 +52,12 @@ const EVENTS_PY_REL = '.claude/progress-bar/events.py'
 const CHECKPOINT_PY_REL = '.claude/progress-bar/checkpoint.py'
 const DEMO = 'progress-bar-demo'
 const USAGE = [
-  'Usage: /progress-bar [setup | demo | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | fold <section> | unfold <section> | toggle <section>]',
+  'Usage: /progress-bar [setup | demo | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | channel | send <file> to <name> | fold <section> | unfold <section> | toggle <section>]',
   '  autonext: when a job finishes, start (on), suggest (ask, the default) or skip (off) the top ready to-do of its machine',
   '  (no argument): show the bars and open the Status panel\n  panel: open the Status panel. panel on: open it at every session start, with a one-line status line',
   '  checkpoint (or away): save the running jobs. The Status panel shows what happened since once you are back',
   '  inbox: emails that need you (~/.claude-progress/inbox.json). inbox setup: write the example Gmail checker',
+  '  channel: an encrypted channel to a collaborator (invite, join, list, read, leave). send <file> to <name>: send them a file',
   '  setup mac-clicks [off]: click a section header to fold it (macOS)',
   '  sections: todo, running, waiting, done, problems, all',
   '  todo: todo | todo add [name] <text> | todo done <n|text> | todo clear',
@@ -347,7 +349,11 @@ async function clear($: EngineInterface) {
 export const register: Register = on => {
   registerPanel(on)
 
+  // The channel's private keys never reach the model: a Read, Grep or Bash call naming that folder is refused.
   on('tool.call', async ($, e, next) => {
+    const i = e as unknown as { file_path?: unknown; path?: unknown; command?: unknown }
+    const text = [i.file_path, i.path, i.command].filter(x => typeof x === 'string').join(' ')
+    if (/(^|[\s/"'])\.claude-progress\/channel\/keys(\/|\b)|channel\/keys\/(enc|sign)\.pem/.test(text)) return { deny: 'progress-bar: the secure channel private keys stay private. Nothing may read them.' }
     if (e.agentId) {
       const s = seen.get(e.agentId) ?? { startedAt: await $.clock.now(), tools: 0, lastTool: '' }
       s.tools += 1
@@ -358,13 +364,24 @@ export const register: Register = on => {
   })
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup [mac-clicks [off]] | demo | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | fold <section>]' })
+    await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup [mac-clicks [off]] | demo | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | channel | send <file> to <name> | fold <section>]' })
+    await $.tool.register(SEND_TOOL).catch(() => undefined)
     // An installed status line script and group.py follow the plugin version (per-project to-dos, session filter).
     await refreshInstalled($).catch(() => undefined)
     void poll($)
     $.clock.every(5000, () => { void poll($); void tickAutonext($) })
     await startPanel($, await resolveHome($))
+    const home = await resolveHome($)
+    void pollChannel($, home)
+    $.clock.every(CHANNEL_EVERY, () => pollChannel($, home))
     return next(e)
+  })
+
+  // "send this to <name>": the model calls channel_send. The engine's permission prompt asks the person first.
+  on('tool.call', { tool: 'mcp__progress-bar__channel_send' }, async ($, e) => {
+    const input = e as unknown as { file?: unknown; to?: unknown }
+    const text = await sendFile($, await resolveHome($), String(input.file ?? ''), String(input.to ?? '').toLowerCase())
+    return { result: text }
   })
 
   on('command.run', { command: 'progress-bar' }, async ($, e) => {
@@ -381,6 +398,8 @@ export const register: Register = on => {
       : /^todo\b/.test(arg) ? await todo($, raw.slice(4).trim())
       : /^(checkpoint|away)\b/.test(arg) ? await checkpointCommand($, await resolveHome($), raw.replace(/^\S+\s*/, ''))
       : /^inbox\b/.test(arg) ? await inboxCommand($, await resolveHome($), arg.slice(5))
+      : /^channel\b/.test(arg) ? await channelCommand($, await resolveHome($), raw.slice(7))
+      : /^send\b/.test(arg) ? await sendCommand($, await resolveHome($), raw.slice(4))
       : /^(fold|unfold|toggle)\b/.test(arg) ? await fold($, arg)
       : USAGE
     return { text }

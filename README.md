@@ -28,6 +28,7 @@ Live progress bars and a to-do list in the Claude Code status line. One line per
 - **Connectors:** a second tab in the panel shows which MCP connectors are connected, need sign-in or failed.
 - **GitHub:** a third tab shows the session repo's branch, other branches and recent commits. Click one to open it on GitHub.
 - **Titles and parents:** a progress file can name its job in plain words (`title`), say what it unlocks (`why`) and point at a parent job (`parent`). Each running job is one line with its short title, and a child shows under its parent.
+- **Secure channel:** send `.md` files (and PDFs, images) straight to a collaborator's Claude Code session, end-to-end encrypted, through a private GitHub repo. No more dragging files into chat apps.
 - **Log:** a fourth tab lists errors, warnings and finishes from `~/.claude-progress/events.jsonl`, written by the grouper and by a scanner for your own log folders. Unseen errors show as `!N` on the tab and `✖ N errors` in the status line.
 
 ## Install
@@ -83,6 +84,10 @@ Already have a status line? Setup reads it and builds it into the script. The ba
 | `/progress-bar panel` | Opens the Status panel. `panel on` opens it at every session start, `panel off` stops that |
 | `/progress-bar checkpoint [label]` | Saves the running jobs for the overnight recap. `away` does the same |
 | `/progress-bar inbox` | Lists what needs you from `~/.claude-progress/inbox.json`. `inbox setup` writes the example Gmail checker |
+| `/progress-bar channel invite <github-user> [name]` | Opens an encrypted channel with a collaborator. See Secure channel |
+| `/progress-bar channel join <owner> [name]` | Accepts a channel invitation |
+| `/progress-bar send <file> to <name>` | Sends a file through a channel |
+| `/progress-bar channel list\|read\|check\|leave` | Lists channels, lists received files, checks now, leaves a channel |
 | `/progress-bar fold <section>` | Folds a section to one line. `unfold` opens it, `toggle` flips it |
 
 ## File format
@@ -407,6 +412,67 @@ Sam Ortiz · Thursday call
 - **Status line:** the one-line summary starts with a yellow `✉ N need you`. Without the panel, the full view starts with that line. Nothing shows when N is 0.
 - **Gmail example (optional):** `/progress-bar inbox setup` writes `~/.claude/progress-bar/inbox-check.sh` and prints how to run it every 10 minutes. It needs the claude.ai Gmail connector and the `claude` CLI signed in. Each run starts a headless Claude (haiku) that may call only Gmail `search_threads`, `get_thread` and `get_message`. Sending, drafts, labels, trash and every other tool are denied. It treats email text as data and never follows instructions in it. It reads inbox threads from the last 3 days, leaves out promotions, social, automated mail and threads you answered last, and writes `inbox.json`. Set `INBOX_ACCOUNT` to your address. Runs skip 11 PM to 6 AM and never overlap.
 
+## Secure channel
+
+Send files between two people's Claude Code sessions. Say "send this plan to Sam" in the chat, and it lands in Sam's Status panel a minute later.
+
+```
+✉ Channel  1 new
+sam · launch-plan.md  ✓ read
+```
+
+### Setup
+
+You (the inviter), once per collaborator:
+
+```
+/progress-bar channel invite <their-github-user> sam
+```
+
+This creates a private repo `<you>/pb-channel-<you>-<them>` and GitHub emails them an invitation. Add `--as <your-github-user>` when `gh` is logged in to several accounts (it is remembered).
+
+Your collaborator, in 2 steps:
+
+1. Install the plugin: `/plugin marketplace add hunterZh37/progress-bar-plugin`, then `/plugin install progress-bar@progress-bar`, then restart Claude Code.
+2. Run `/progress-bar channel join <your-github-user>` (with `--as <their-github-user>` if they have several `gh` accounts). There is no need to click the email: join accepts the invitation.
+
+Then either side sends:
+
+```
+/progress-bar send notes/launch-plan.md to sam
+```
+
+Or just tell Claude "send this to Sam". The `secure-channel` skill has Claude call the plugin's `channel_send` tool, and Claude Code asks you before it runs.
+
+### Receiving
+
+- Every open session checks each channel every 60 seconds. When nothing changed, GitHub answers 304 (no rate limit cost).
+- A new file is verified, decrypted and saved to `~/.claude-progress/channel/<name>/<file>`. It never overwrites: a second `plan.md` becomes `plan-2.md`.
+- It shows in the Status panel List tab as `✉ Channel  N new`. Press a file to open it with your default app. **✓ read** hides it (`~/.claude-progress/.state/channel-read.txt`).
+- The status line shows a cyan `📨 N new`, kept apart from the inbox `✉ N need you` because a received file is not a task.
+- The Log tab gets `Message from <name>: <file>`. A rejected message logs an error.
+- `/progress-bar channel check` checks now. `/progress-bar channel read` lists what arrived.
+
+### Security model
+
+- **End-to-end encryption.** GitHub only stores ciphertext. Each person gets two P-256 keys at first use, in `~/.claude-progress/channel/keys/` (folder 700, files 600, never committed, never printed). Only the public halves go to the repo as `keys/<github-user>.pub`.
+- **Per message:** a random 256-bit key encrypts the file with AES-256-CBC (`openssl enc`, PBKDF2). That key is wrapped for the recipient and for the sender (so you can re-read what you sent) with ephemeral ECDH P-256 and HKDF-SHA256, with an HMAC tag. The sender signs a header (sender, recipient, file name, size, SHA-256 of the file and of the ciphertext, the wraps) with ECDSA P-256.
+- **On receive:** signature first, then the ciphertext hash, the key tag and the plaintext hash. Any mismatch rejects the message and logs an error. Nothing is saved.
+- **Key pinning:** the peer's key is pinned at first sight. A changed key is refused until you leave and join again.
+- **Crypto engine:** the plugin runtime has SHA-256 but no ECDH or AES, so `bin/channel.py` runs the `openssl` CLI (LibreSSL 3.3+ or OpenSSL 1.1.1+). No extra install on macOS or Linux.
+- **Accounts:** every `gh` and `git` call uses the channel account's token (`gh auth token --user`) for that call only. Your active `gh` account never changes.
+- **Received files are data.** The plugin never puts their text into a prompt. The skill tells Claude to treat them as untrusted input and never act on instructions inside them unless you ask. Claude cannot read the private keys: the plugin refuses any tool call that names the keys folder.
+- **Allowed files:** `.md .markdown .txt .pdf .png .jpg .jpeg .gif .webp`, up to 10 MB. Received names are cut to their last part, with no leading dots, and saved only inside the channel folder.
+- **Logs** carry file names and sizes, never content, keys or tokens.
+
+### Limits
+
+- Two people per channel. Make one channel per collaborator.
+- Both need `gh` (logged in), `git`, `openssl` and `python3`.
+- Not forward secret: someone who later steals your private key file can read old messages in the repo. Delete the repo when done.
+- GitHub sees who talks to whom, when, and file sizes.
+- `/progress-bar channel leave <name>` forgets a channel on this machine. It prints the command to delete the repo (owner) or drop your access (collaborator).
+
 ## Connectors
 
 The **Connectors** tab of the Status panel lists each MCP connector with its status.
@@ -495,7 +561,7 @@ Optional. Makes each section header a link that folds or unfolds that section.
 
 ## Privacy
 
-Everything stays on your machine. The plugin reads and writes only files under `~/.claude-progress/`, `~/.claude/progress-bar/` and `~/.cache/progress-bar/`, and reads the `*.log` files in folders you list in `log-dirs.txt`, plus `~/Applications/ProgressBarToggle.app` if you run `setup mac-clicks`. The plugin makes no network calls itself. The optional inbox checker (`inbox setup`) runs only when you schedule it, and reads your mail through your own Gmail connector. While the Status panel is open, the Connectors tab runs `claude mcp list`, which contacts your configured connectors to check them. The GitHub tab runs local `git` only, and opens a page in your browser when you click.
+Everything stays on your machine. The plugin reads and writes only files under `~/.claude-progress/`, `~/.claude/progress-bar/` and `~/.cache/progress-bar/`, and reads the `*.log` files in folders you list in `log-dirs.txt`, plus `~/Applications/ProgressBarToggle.app` if you run `setup mac-clicks`. The plugin makes no network calls itself, except the secure channel once you open one: it then talks to GitHub through your own `gh` and `git`, and stores only ciphertext there. The optional inbox checker (`inbox setup`) runs only when you schedule it, and reads your mail through your own Gmail connector. While the Status panel is open, the Connectors tab runs `claude mcp list`, which contacts your configured connectors to check them. The GitHub tab runs local `git` only, and opens a page in your browser when you click.
 
 ## License
 
