@@ -18,6 +18,8 @@ export type Tab = 'list' | 'connectors' | 'github' | 'log'
 
 /** Status panel: a job's plain-language title, what it unlocks and its parent job's slug, from its progress file or titles.txt. */
 export type Meta = { title?: string; why?: string; parent?: string }
+/** Status panel: slugs of the running jobs whose line is open to show its details. */
+export type OpenCards = string[]
 /** Log tab: an event's level. */
 export type Level = 'error' | 'warning' | 'success' | 'info'
 /** Log tab: one line of ~/.claude-progress/events.jsonl. `ts` is epoch seconds. */
@@ -38,6 +40,6 @@ export type Gh = { repos: Repo[]; sel: number; at: number }
 
 declare module 'claude-code' {
   interface PluginState {
-    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log }
+    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards }
   }
 }

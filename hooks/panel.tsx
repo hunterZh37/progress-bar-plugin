@@ -14,9 +14,9 @@ import type { Conn, Ev, LogFilter, Meta, Todo } from '../types'
 // Section headers are buttons that fold or open the section through ~/.claude-progress/.state/folded.txt.
 // To-dos come straight from ~/.claude-progress/todo.txt: open ones under TO-DO, checked-off ones under DONE.
 // Pressing one opens a menu: mark as done (or move back to to-do) or delete.
-// RUNNING rows draw as cards (runCard): kind badge, bar or sliding piece, step, facts, and one Claude Max meter.
-// A card shows the job's title, id and badge, and what it unlocks, from `title`, `why` and `parent` in its progress
-// file or ~/.claude-progress/titles.txt. A running child draws inside its running parent's card (one level).
+// RUNNING rows draw as one line per job (short title, a 10-cell bar, %, time left), the bars in one column.
+// Pressing a line opens its card (runCard): id and badge, count, step, facts and what it unlocks, from `title`, `why`
+// and `parent` in its progress file or ~/.claude-progress/titles.txt. A running child shows under its open parent.
 // Four tabs: List (the sections), Connectors (see connectors.ts), GitHub (see github.ts) and Log (events.ts).
 // Connector checks run only while the pane is open; GitHub reads only while its tab shows.
 
@@ -42,6 +42,8 @@ const menuAtom = atom({ plugin: 'progress-bar', key: 'menuFor' } as const, -1)
 const connsAtom = atom({ plugin: 'progress-bar', key: 'conns' } as const, { at: 0, checking: false, login: '', list: [] })
 const tabAtom = atom({ plugin: 'progress-bar', key: 'tab' } as const, 'list')
 const ghAtom = atom({ plugin: 'progress-bar', key: 'gh' } as const, { repos: [], sel: 0, at: 0 })
+// Running jobs whose line is open to show its details, by slug.
+const openAtom = atom({ plugin: 'progress-bar', key: 'openCards' } as const, [] as string[])
 const metaAtom = atom({ plugin: 'progress-bar', key: 'meta' } as const, {} as Record<string, Meta>)
 const logAtom = atom({ plugin: 'progress-bar', key: 'log' } as const, { events: [], filter: 'all', open: '', seenAt: 0, dirs: [] } as { events: Ev[]; filter: LogFilter; open: string; seenAt: number; dirs: string[] })
 const DIR_REL = '.claude-progress'
@@ -93,6 +95,10 @@ export type RunCard = {
   maxUsed: number | null
   /** "waiting on: X" from the grouper: the child job a quiet parent waits on. */
   waitOn: string
+  /** Time left (from "X left", "ETA X" or "done in X"), ps run time and time so far, for the one-line view. */
+  left: string
+  ran: string
+  elapsed: string
 }
 
 /**
@@ -133,7 +139,8 @@ export function runCard(row: string): RunCard {
     else step = step ? `${step} · ${x}` : x
   }
   if (last) actions = actions ? `${actions} · last: ${last}` : `last: ${last}`
-  const facts = [cores && `⚙ ${cores}`, ran && `⏱ ${ran} running`, left && `⏳ ${left} left`, elapsed && `⏱ ${elapsed} so far`, speed && `⚡ ${speed}`, actions && `🔧 ${actions}`].filter(Boolean).join('   ')
+  // Time left shows on the job's line, so the facts leave it out.
+  const facts = [cores && `⚙ ${cores}`, ran && `⏱ ${ran} running`, elapsed && `⏱ ${elapsed} so far`, speed && `⚡ ${speed}`, actions && `🔧 ${actions}`].filter(Boolean).join('   ')
   return {
     mark: stuck ? '⚠' : spin ? spin[1]! : '•',
     stuck: stuck ? stuck[1]! : '',
@@ -145,26 +152,56 @@ export function runCard(row: string): RunCard {
     facts,
     maxUsed,
     waitOn,
+    left,
+    ran,
+    elapsed,
   }
 }
+
+/** A job's short title: cut at " · " or ": ", keeping "<host>: name" whole for a remote job. */
+export function shortTitle(t: string): string {
+  const s = t.split(' · ')[0]!
+  const remote = /^[A-Za-z0-9_.-]+:\s?\S/.test(s)
+  return s.split(': ').slice(0, remote ? 2 : 1).join(': ')
+}
+
+/** The label column on a job's line: 14 to 26 characters by pane width, less a child's indent, so every bar lines up. */
+export const labelCol = (width: number, ind = 0) => Math.max(10, Math.max(14, Math.min(26, width - 30)) - ind)
+
+/** A label cut or padded to its column. */
+export const fitLabel = (s: string, col: number) => (s.length > col ? `${s.slice(0, col - 1)}…` : s.padEnd(col))
 
 /** The badge after a card's name or id: icon, two spaces, text. */
 export const badge = (k: RunCard['kind']) => `${k.icon}  ${k.text}`
 
 /**
  * Which rows nest: a row whose job names a running parent draws inside that parent's card, one level deep.
+ * A remote "<host>: name" row without a parent of its own nests under the one running job whose slug starts
+ * with "<host>-" (none or several: it keeps its own card).
  * A parent that itself has a running parent keeps its own card, so a loop never hides both.
  * Returns the top rows in order, each with its children.
  */
 export function nestRows(names: string[], meta: Record<string, Meta>): { i: number; kids: number[] }[] {
   const slugs = names.map(slug)
   const at = new Map(slugs.map((s, i) => [s, i]))
+  const hostOf = (n: string) => /^([A-Za-z0-9_.-]+):\s?\S/.exec(n)?.[1] ?? ''
   const parentOf = (i: number) => {
     const p = slug(meta[slugs[i]!]?.parent ?? '')
-    return p && p !== slugs[i] && at.has(p) ? at.get(p)! : -1
+    if (p) return p !== slugs[i] && at.has(p) ? at.get(p)! : -1
+    const host = slug(hostOf(names[i]!))
+    if (!host) return -1
+    const owners = names.map((_, j) => j).filter(j => j !== i && !hostOf(names[j]!) && slugs[j]!.startsWith(`${host}-`))
+    return owners.length === 1 ? owners[0]! : -1
   }
   const nests = (i: number) => { const p = parentOf(i); return p >= 0 && parentOf(p) < 0 }
   return names.map((_, i) => i).filter(i => !nests(i)).map(i => ({ i, kids: names.map((_, j) => j).filter(j => nests(j) && parentOf(j) === i) }))
+}
+
+/** The RUNNING header count: top-level job lines, nested ones noted, as "4 (+3 sub-jobs)". */
+export function runCount(names: string[], meta: Record<string, Meta>): string {
+  const top = nestRows(names, meta)
+  const kids = names.length - top.length
+  return `${top.length}${kids ? ` (+${kids} sub-job${kids === 1 ? '' : 's'})` : ''}`
 }
 
 /** The indeterminate bar for a job with no %: a 3-block piece that slides one cell a second. Returns [before, after] widths. */
@@ -408,57 +445,70 @@ export function registerPanel(on: On) {
       ...(doneTodos.length ? [<Text key="w-checked" bold color="magenta">{'  Checked-off to-dos'}</Text>, ...doneTodos.flatMap(todoItem)] : []),
     ]
 
-    // Running cards: title (or name) and kind badge, the bar (or a sliding piece when no % is reported), stuck note,
-    // step or what it waits on, facts, and what it unlocks. A running child draws inside its parent's card, marked ↳.
+    // Running jobs: one line each by default (mark, "▸ <short title>" padded to one column, a 10-cell bar, %, then time
+    // left, run time, what it waits on or how long it has not moved). Pressing the title opens the card's details below
+    // it: id and badge, count, step, facts and what it unlocks. A running child shows under its parent only while the
+    // parent is open, marked ↳.
     const nowMs = await $.clock.now()
     const meta = await read($, metaAtom)
+    const openCards = new Set(await read($, openAtom))
     const metaOf = (name: string): Meta => meta[slug(name)] ?? {}
     const short = (t: string) => t.split(' · ')[0]!
-    const card = (r: RunCard, k: string, ind: string, child: boolean, first: boolean, kid: string) => {
+    const MINI = 10
+    const card = (r: RunCard, k: string, ind: string, child: boolean, kid: string) => {
       const m0 = metaOf(r.name)
+      const key = slug(r.name)
+      const isOpen = openCards.has(key)
       const stuck = kid ? '' : r.stuck // a parent with a busy child is waiting, not stuck
       const waitOn = kid || r.waitOn
-      const bw = Math.max(8, barW - ind.length)
       const frac = r.pct === null ? null : Math.min(1, r.pct / 100)
-      const filled = frac === null ? 0 : Math.round(frac * bw)
-      const [before, after] = slide(nowMs, bw)
+      const filled = frac === null ? 0 : Math.round(frac * MINI)
+      const [before, after] = slide(nowMs, MINI)
       const mark = stuck ? '⚠' : child ? '↳' : r.mark === '⚠' ? '•' : r.mark
       const pad = `${ind}    `
       const why = m0.why ? `unlocks: ${m0.why.replace(/^unlocks:?\s*/i, '')}` : ''
+      const label = fitLabel(shortTitle(m0.title || r.name), labelCol(width, ind.length))
+      const tail = stuck ? `⚠ no progress ${stuck}` : waitOn ? `waiting on ${short(waitOn)}` : r.left ? `${r.left} left` : r.ran ? `${r.ran} running` : r.elapsed
       return [
-        <Box key={`r${k}`} marginTop={child || first ? 0 : 1}>
+        <Box key={`r${k}`}>
           <Text color={stuck ? 'yellow' : 'cyan'}>{`${ind}  ${mark} `}</Text>
-          <Text bold color={stuck ? 'yellow' : undefined}>{m0.title || r.name}</Text>
-          {m0.title ? null : <Text dimColor>{`   ${badge(r.kind)}`}</Text>}
+          <Button key={`open-${key}`} plain onPress={() => update($, openAtom, l => (l.includes(key) ? l.filter(x => x !== key) : [...l, key]))}>
+            {`${isOpen ? '▾' : '▸'} ${label}`}
+          </Button>
+          {frac === null
+            ? [
+                <Text key="a" dimColor>{`  ${'░'.repeat(before)}`}</Text>,
+                <Text key="b" color={stuck ? 'yellow' : 'cyan'}>{'███'}</Text>,
+                <Text key="c" dimColor>{'░'.repeat(after)}</Text>,
+                <Text key="d">{'     '}</Text>,
+              ]
+            : [
+                <Text key="a" color={stuck ? 'yellow' : 'green'}>{`  ${'█'.repeat(filled)}`}</Text>,
+                <Text key="b" dimColor>{'░'.repeat(MINI - filled)}</Text>,
+                <Text key="c" bold>{` ${String(Math.round(r.pct!)).padStart(3)}%`}</Text>,
+              ]}
+          {tail ? <Text color={stuck ? 'yellow' : undefined} dimColor={!stuck}>{`  ${tail}`}</Text> : null}
         </Box>,
-        m0.title ? <Text key={`id${k}`} dimColor>{`${pad}${r.name}   ${badge(r.kind)}`}</Text> : null,
-        frac === null
-          ? <Box key={`b${k}`}>
-              <Text dimColor>{`${pad}${'░'.repeat(before)}`}</Text>
-              <Text color={stuck ? 'yellow' : 'cyan'}>{'███'}</Text>
-              <Text dimColor>{'░'.repeat(after)}</Text>
-              <Text dimColor>{'  steps not reported'}</Text>
-            </Box>
-          : <Box key={`b${k}`}>
-              <Text color={stuck ? 'yellow' : 'green'}>{`${pad}${'█'.repeat(filled)}`}</Text>
-              <Text dimColor>{'░'.repeat(bw - filled)}</Text>
-              <Text bold>{` ${r.pct}%`}</Text>
-              {r.count ? <Text dimColor>{`  ${r.count}`}</Text> : null}
-            </Box>,
-        stuck ? <Text key={`s${k}`} color="yellow">{`${pad}no progress for ${stuck}`}</Text> : null,
-        waitOn ? <Text key={`t${k}`}>{`${pad}▸ waiting on: ${waitOn}`}</Text> : r.step ? <Text key={`t${k}`}>{`${pad}▸ ${r.step}`}</Text> : null,
-        r.facts ? <Text key={`f${k}`} dimColor>{`${pad}${r.facts}`}</Text> : null,
-        why ? <Text key={`w${k}`} dimColor>{`${pad}${why}`}</Text> : null,
+        ...(isOpen
+          ? [
+              <Text key={`id${k}`} dimColor>{`${pad}${r.name}   ${badge(r.kind)}`}</Text>,
+              r.count || frac === null ? <Text key={`c${k}`} dimColor>{`${pad}${r.count || 'steps not reported'}`}</Text> : null,
+              waitOn ? <Text key={`t${k}`}>{`${pad}▸ waiting on: ${waitOn}`}</Text> : r.step ? <Text key={`t${k}`}>{`${pad}▸ ${r.step}`}</Text> : null,
+              r.facts ? <Text key={`f${k}`} dimColor>{`${pad}${r.facts}`}</Text> : null,
+              why ? <Text key={`w${k}`} dimColor>{`${pad}${why}`}</Text> : null,
+            ].filter(Boolean)
+          : []),
       ].filter(Boolean)
     }
     const runRows = (rows: string[]) => {
       const cards = rows.map(runCard)
       const used = cards.reduce<number | null>((a, c) => (c.maxUsed === null ? a : Math.max(a ?? 0, c.maxUsed)), null)
-      const out = nestRows(cards.map(c => c.name), meta).flatMap(({ i, kids }, n) => {
+      const out = nestRows(cards.map(c => c.name), meta).flatMap(({ i, kids }) => {
         const c = cards[i]!
         const k0 = kids.length ? cards[kids[0]!]! : undefined
         const kid = k0 && c.stuck ? short(metaOf(k0.name).title || k0.name) : ''
-        return [...card(c, `${i}`, '', false, n === 0, kid), ...kids.flatMap(j => card(cards[j]!, `${i}c${j}`, '    ', true, false, ''))]
+        const open = openCards.has(slug(c.name))
+        return [...card(c, `${i}`, '', false, kid), ...(open ? kids.flatMap(j => card(cards[j]!, `${i}c${j}`, '    ', true, '')) : [])]
       })
       if (used === null) return out
       const m = maxMeter(used)
@@ -639,7 +689,7 @@ export function registerPanel(on: On) {
           return (
             <Box key={`s-${sec.key}`} flexDirection="column" marginBottom={n < sections.length - 1 || other.length ? 1 : 0}>
               <Button key={`h-${sec.key}`} hotkey={HOTKEYS[sec.key]} plain onPress={() => flip($, homeDir, sec.key)}>
-                {`${isFolded ? '▸' : '▾'} ${ICON[sec.key]} ${sec.title}  ${sec.key === 'todo' ? openTodos : sec.key === 'done' ? sec.count + doneTodos.length : sec.count}`}
+                {`${isFolded ? '▸' : '▾'} ${ICON[sec.key]} ${sec.title}  ${sec.key === 'todo' ? openTodos : sec.key === 'done' ? sec.count + doneTodos.length : sec.key === 'running' && sec.rows.length ? runCount(sec.rows.map(r => runCard(r).name), meta) : sec.count}`}
               </Button>
               {!isFolded && (sec.key === 'todo' ? todoRows() : sec.key === 'running' ? runRows(sec.rows) : sec.key === 'done' ? doneRows(sec.rows) : plainRows(sec.rows, sec.key))}
             </Box>

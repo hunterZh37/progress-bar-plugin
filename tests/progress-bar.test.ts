@@ -5,7 +5,7 @@ import type { On } from 'claude-code'
 import { CONN_CACHE_REL, connName, connSummary, formatCache, parseAccounts, parseCache, parseLogin, parseMcpList } from '../hooks/connectors'
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
-import { PANE, badge, evId, maxMeter, nestRows, parseSections, runCard, shortAge, slide, stripAnsi } from '../hooks/panel'
+import { PANE, badge, evId, fitLabel, labelCol, maxMeter, nestRows, runCount, shortTitle, parseSections, runCard, shortAge, slide, stripAnsi } from '../hooks/panel'
 import { EVENTS_PY, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from '../hooks/events'
 import { REPOS_REL, parseBranches, parseCommits, webUrl } from '../hooks/github'
 import { eta, expandHome, line, lines, parseProgress, parseTitles, pickMeta, parseWatch, prevOf, readLog, slug, statusScript, todoAdd, todoClear, todoDone, todoItems, todoList } from '../hooks/render'
@@ -338,7 +338,7 @@ test('the panel parser: sections, counts, folded headers and trailing lines', as
   expect(other).toEqual(['opus 4 · main'])
   expect(runCard(sections[1]!.rows[0]!)).toEqual({
     mark: '⚠', stuck: '12m', name: 'nightly-import', pct: 80, count: '4 of 5 steps', kind: { icon: '⚙', text: 'job' },
-    step: 'batch 4', facts: '⏱ 12m so far', maxUsed: null, waitOn: '',
+    step: 'batch 4', facts: '⏱ 12m so far', maxUsed: null, waitOn: '', left: '', ran: '', elapsed: '12m',
   })
   expect(runCard(sections[1]!.rows[1]!).mark).toBe('◐')
 })
@@ -357,9 +357,12 @@ test('running cards: facts, step, count and the status word left out of the name
   expect(a.name).toBe('healthcare-classify')
   expect(a.count).toBe('1,234 of 2,000 batches')
   expect(a.step).toBe('scoring')
-  expect(a.facts).toBe('⏳ 1h19m left   ⏱ 42m so far   ⚡ 31/min')
-  expect(runCard('◐ import ██░░ 40.0% · 2/5 · done in 1h').facts).toBe('⏳ 1h left')
-  expect(runCard('◐ import ██░░ 40.0% · ETA 5m').facts).toBe('⏳ 5m left')
+  // Time left shows on the job's line, never again in the facts.
+  expect(a.facts).toBe('⏱ 42m so far   ⚡ 31/min')
+  expect(a.left).toBe('1h19m')
+  expect(runCard('◐ import ██░░ 40.0% · 2/5 · done in 1h').left).toBe('1h')
+  expect(runCard('◐ import ██░░ 40.0% · 2/5 · done in 1h').facts).toBe('')
+  expect(runCard('◐ import ██░░ 40.0% · ETA 5m').left).toBe('5m')
   const b = runCard('◐ Build docs working · 3m · 12 tools · Edit')
   expect(b.name).toBe('Build docs')
   expect(b.pct).toBe(null)
@@ -431,12 +434,20 @@ test('the panel draws sections and rows, and a header press writes folded.txt', 
   expect((await ui.find({ type: 'Text', text: /^  You$/ }))?.text).toBe('  You')
   expect((await ui.find({ type: 'Button', text: /call Sam/ }))?.text).toBe('    ○ call Sam')
   expect((await ui.find({ type: 'Button', text: /TO-DO/ }))?.text).toBe('▾ ☐ TO-DO  3')
-  expect((await ui.find({ type: 'Text', text: /^nightly-import$/ }))?.text).toBe('nightly-import')
-  expect((await ui.find({ type: 'Text', text: /4 of 5 steps/ }))?.text).toBe('  4 of 5 steps')
-  expect((await ui.find({ type: 'Text', text: /no progress/ }))?.text).toBe('    no progress for 12m')
+  // One line per job by default: the title button, the bar, %, and a yellow no-progress note. No details yet.
+  expect((await ui.find({ type: 'Button', key: 'open-nightly-import' }))?.text).toBe(`▸ ${'nightly-import'.padEnd(22)}`)
+  expect((await ui.find({ type: 'Text', text: /no progress/ }))?.text).toBe('  ⚠ no progress 12m')
+  expect(await ui.find({ type: 'Text', text: /4 of 5 steps/ })).toBe(undefined)
+  expect(await ui.find({ type: 'Text', text: /🤖/ })).toBe(undefined)
+  await ui.press({ key: 'open-nightly-import' })
+  expect((await ui.find({ type: 'Button', key: 'open-nightly-import' }))?.text).toMatch(/^▾ nightly-import/)
+  expect((await ui.find({ type: 'Text', text: /4 of 5 steps/ }))?.text).toBe('    4 of 5 steps')
   expect((await ui.find({ type: 'Text', text: /▸ batch 4/ }))?.text).toBe('    ▸ batch 4')
   expect((await ui.find({ type: 'Text', text: /so far/ }))?.text).toBe('    ⏱ 12m so far')
-  expect((await ui.find({ type: 'Text', text: /🤖/ }))?.text).toBe('   🤖  Claude agent')
+  expect((await ui.find({ type: 'Text', text: /⚙  job/ }))?.text).toBe('    nightly-import   ⚙  job')
+  expect(await ui.find({ type: 'Text', text: /🤖/ })).toBe(undefined)
+  await ui.press({ key: 'open-nightly-import' })
+  expect(await ui.find({ type: 'Text', text: /4 of 5 steps/ })).toBe(undefined)
   await ui.press({ key: 'h-running' })
   expect(files[FOLDED]).toBe('running')
   await ui.press({ key: 'h-running' })
@@ -450,12 +461,15 @@ test('the panel draws an indeterminate bar without a %, and one Claude Max meter
   panelWorld(on, files, full)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
-  expect((await ui.find({ type: 'Text', text: /steps not reported/ }))?.text).toBe('  steps not reported')
   expect((await ui.find({ type: 'Text', text: /^███$/ }))?.text).toBe('███')
+  expect(await ui.find({ type: 'Text', text: /steps not reported/ })).toBe(undefined)
+  await ui.press({ key: 'open-build-docs' })
+  expect((await ui.find({ type: 'Text', text: /steps not reported/ }))?.text).toBe('    steps not reported')
   expect((await ui.find({ type: 'Text', text: /Claude Max/ }))?.text).toBe('  Claude Max this week  ')
   expect((await ui.find({ type: 'Text', text: /% used/ }))?.text).toBe('  62% used')
   expect((await ui.find({ type: 'Text', text: /^█{6}$/ }))?.text).toBe('█'.repeat(6))
-  expect((await ui.find({ type: 'Text', text: /3 of 10 steps/ }))?.text).toBe('  3 of 10 steps')
+  await ui.press({ key: 'open-orgs-judge' })
+  expect((await ui.find({ type: 'Text', text: /3 of 10 steps/ }))?.text).toBe('    3 of 10 steps')
   await ui.unmount()
 })
 
@@ -799,24 +813,34 @@ test('the panel: titles, ids with badges, unlocks, a nested child, waiting on an
   panelWorld(on, files, TITLED_FULL)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 60 } })
-  const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  expect(texts).toContain('Big batch · six parts')
+  const buttons = async () => (await ui.findAll({ type: 'Button' })).filter(b => /^open-/.test(b.key ?? '')).map(b => b.text ?? '')
+  // Closed: one line per top job with the short title, the child hidden until its parent opens.
+  expect(await buttons()).toEqual([`▸ ${'Big batch'.padEnd(26)}`, `▸ ${'Train the model'.padEnd(26)}`, `▸ ${'other'.padEnd(26)}`])
+  let texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(texts.some(t => /no progress/.test(t))).toBe(false)
+  expect(texts).toContain('  waiting on Child step')
+  expect(texts).toContain('  12:50 running')
+  expect(texts.some(t => /540/.test(t))).toBe(false)
+  expect(texts.some(t => /unlocks/.test(t))).toBe(false)
+  for (const k of ['open-big-batch', 'open-box-train-py', 'open-other']) await ui.press({ key: k })
+  texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   expect(texts).toContain('    big-batch   🤖  Claude agent')
+  expect(texts).toContain('    6 of 8 steps')
   expect(texts).toContain('    unlocks: the weekly report')
-  // The stuck parent with a running child: no stuck note, waiting on the child's title. The child nests under it.
-  expect(texts.some(t => /no progress for/.test(t))).toBe(false)
   expect(texts).toContain('    ▸ waiting on: Child step')
+  // The child shows under its open parent, marked ↳, with its own one line.
+  expect(await buttons()).toContain(`▾ ${'Big batch'.padEnd(26)}`)
+  expect(await buttons()).toContain(`▸ ${'Child step'.padEnd(22)}`)
   expect(texts).toContain('      ↳ ')
-  expect(texts.indexOf('Child step')).toBeGreaterThan(texts.indexOf('Big batch · six parts'))
-  expect(texts).toContain('        child-step   ⚙  job')
   // A busy process: no bar at 540%, cores and run time instead.
-  expect(texts).toContain('Train the model')
   expect(texts).toContain('    box: train.py   🖥  on box')
   expect(texts.some(t => /540/.test(t))).toBe(false)
   expect(texts).toContain('    ⚙ 5.4 cores busy   ⏱ 12:50 running')
   expect(texts).toContain('    unlocks: better search')
   // The grouper already said what it waits on.
   expect(texts).toContain('    ▸ waiting on: Child job')
+  // The open details never repeat the % or the time left.
+  expect(texts.filter(t => /%/.test(t)).every(t => /^\s*\d+%$/.test(t))).toBe(true)
   // DONE: one dim line for a row at 100%, titles for finished jobs.
   expect(texts).toContain('  ✓ Finisher  finishing · 7/7')
   expect(texts).toContain('  ✓ Nightly import  10:12')
@@ -865,4 +889,58 @@ test('the Log tab: !N unseen errors, counts, filters, detail, open log only insi
   expect(shown.length).toBe(1)
   expect(shown[0]!.text).toContain('Nightly stuck')
   await ui.unmount()
+})
+
+test('short titles and the label column', async () => {
+  expect(shortTitle('Big batch · six parts')).toBe('Big batch')
+  expect(shortTitle('Health care: classify orgs')).toBe('Health care')
+  expect(shortTitle('hunty: embed · 148K orgs')).toBe('hunty: embed')
+  expect(shortTitle('gpu-box: train: epoch 3')).toBe('gpu-box: train')
+  expect(labelCol(30)).toBe(14)
+  expect(labelCol(52)).toBe(22)
+  expect(labelCol(80)).toBe(26)
+  expect(labelCol(52, 4)).toBe(18)
+  expect(fitLabel('abc', 5)).toBe('abc  ')
+  expect(fitLabel('abcdefgh', 5)).toBe('abcd…')
+})
+
+test('remote nesting: a "<host>: name" job goes under the one running "<host>-" job', async () => {
+  expect(nestRows(['hunty-rebuild', 'hunty: embed.py', 'other'], {})).toEqual([{ i: 0, kids: [1] }, { i: 2, kids: [] }])
+  expect(nestRows(['gpu-box-train', 'gpu-box: train.py'], {})).toEqual([{ i: 0, kids: [1] }])
+  // Two owners: ambiguous, so it keeps its own card. Its own parent wins over the host rule.
+  expect(nestRows(['box-a', 'box-b', 'box: x'], {})).toEqual([{ i: 0, kids: [] }, { i: 1, kids: [] }, { i: 2, kids: [] }])
+  expect(nestRows(['box-a', 'other', 'box: x'], { 'box-x': { parent: 'other' } })).toEqual([{ i: 0, kids: [] }, { i: 1, kids: [2] }])
+  // Another remote job never owns one.
+  expect(nestRows(['box: a', 'box: b'], {})).toEqual([{ i: 0, kids: [] }, { i: 1, kids: [] }])
+})
+
+test('running jobs: one aligned line each, a press opens the details', async ($, on) => {
+  const full = ['▾ ▶ RUNNING', '  ◐ hunty-rebuild ██░░ 40.0% · 2/5 · 1h left', '  ◐ hunty: embed.py · 540% CPU · 3:10', '  ◓ a-much-longer-job-name-than-fits ███░ 75.0% · 3/4 · 5m left'].join('\n')
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n' }
+  panelWorld(on, files, full)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  const lines = async () => (await ui.findAll({ type: 'Button' })).filter(b => /^open-/.test(b.key ?? '')).map(b => b.text ?? '')
+  // The remote job nests under hunty-rebuild, hidden while it is closed. Labels share one width, so bars line up.
+  expect((await ui.find({ type: 'Button', key: 'h-running' }))?.text).toBe('▾ ▶ RUNNING  2 (+1 sub-job)')
+  expect(await lines()).toEqual([`▸ ${'hunty-rebuild'.padEnd(22)}`, '▸ a-much-longer-job-nam…'])
+  expect(new Set((await lines()).map(l => l.length)).size).toBe(1)
+  let texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(texts).toContain('  40%')
+  expect(texts).toContain('  1h left')
+  expect(texts.some(t => /2 of 5/.test(t))).toBe(false)
+  await ui.press({ key: 'open-hunty-rebuild' })
+  expect(await lines()).toEqual([`▾ ${'hunty-rebuild'.padEnd(22)}`, `▸ ${'hunty: embed.py'.padEnd(18)}`, '▸ a-much-longer-job-nam…'])
+  texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(texts).toContain('    2 of 5 steps')
+  expect(texts.filter(t => /1h left/.test(t))).toEqual(['  1h left'])
+  expect(texts.filter(t => /40%/.test(t))).toEqual(['  40%'])
+  expect(texts).toContain('  3:10 running')
+  await ui.unmount()
+})
+
+test('the RUNNING count: top-level lines, nested ones noted', async () => {
+  expect(runCount(['a', 'b'], {})).toBe('2')
+  expect(runCount(['big', 'kid', 'box-x', 'box: y'], { kid: { parent: 'big' } })).toBe('2 (+2 sub-jobs)')
+  expect(runCount(['big', 'kid'], { kid: { parent: 'big' } })).toBe('1 (+1 sub-job)')
 })

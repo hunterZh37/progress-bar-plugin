@@ -26,7 +26,7 @@ Live progress bars and a to-do list in the Claude Code status line. One line per
 - **Status panel:** an optional docked pane beside the chat with the same groups, foldable headers and a one-line status line.
 - **Connectors:** a second tab in the panel shows which MCP connectors are connected, need sign-in or failed.
 - **GitHub:** a third tab shows the session repo's branch, other branches and recent commits. Click one to open it on GitHub.
-- **Titles and parents:** a progress file can name its job in plain words (`title`), say what it unlocks (`why`) and point at a parent job (`parent`). Cards show the title, and a child draws inside its parent's card.
+- **Titles and parents:** a progress file can name its job in plain words (`title`), say what it unlocks (`why`) and point at a parent job (`parent`). Each running job is one line with its short title, and a child shows under its parent.
 - **Log:** a fourth tab lists errors, warnings and finishes from `~/.claude-progress/events.jsonl`, written by the grouper and by a scanner for your own log folders. Unseen errors show as `!N` on the tab and `✖ N errors` in the status line.
 
 ## Install
@@ -94,9 +94,9 @@ Already have a status line? Setup reads it and builds it into the script. The ba
 | `done`, `total` | Draw the bar. Leave them out and the line says `working` |
 | `step` | A few words on the current step |
 | `startedAt` | Optional, ms. The file's time otherwise |
-| `title` | Optional plain-language name. The card shows it in bold, with the id and badge dim below. The part before ` · ` names the job in the Log tab and in `waiting on:` |
+| `title` | Optional plain-language name. The job's line shows the part before ` · ` or `: `, and the open card shows the id and badge. The part before ` · ` names the job in the Log tab and in `waiting on:` |
 | `why` | Optional. What the job unlocks, shown dim as `unlocks: …` |
-| `parent` | Optional slug of the job this one is part of. While both run, this card draws inside the parent's, marked `↳` |
+| `parent` | Optional slug of the job this one is part of. While both run, this job shows under the parent's line when the parent is open, marked `↳` |
 
 - **Slug:** the job or subagent description, lowercased, each run of other characters turned into `-`. `Build docs!` becomes `build-docs`.
 - **Delete the file when done.** Files older than 10 minutes are hidden.
@@ -218,46 +218,43 @@ The status line then reads:
 - **Fold:** press a header, or its hotkey (`1` to-do, `2` running, `3` done, `4` waiting, `5` problems). It writes `~/.claude-progress/.state/folded.txt`, the same file `/progress-bar fold` uses.
 - **Off by default:** `panel on` writes `~/.claude-progress/.state/panel-on`. With that file the pane opens at session start and the status line prints the summary. `panel off` deletes it and closes the pane. `/progress-bar panel` opens it once without turning it on.
 - **To-do menu:** click a to-do for Mark as done, Move back to to-do or Delete. It edits `~/.claude-progress/todo.txt`, on the line that still holds that item's text, so a line added since the panel drew never hits the wrong item. TO-DO lists open items only. Checked-off ones move to DONE under **Checked-off to-dos**, after finished jobs, and count there.
-- **Rows:** to-dos one per line under each owner, running jobs as cards (see **Running cards**), done jobs dimmed with their finish time.
+- **Rows:** to-dos one per line under each owner, running jobs one line each, a press opening the details (see **Running cards**), done jobs dimmed with their finish time.
 - **Tabs:** `▌List  │   Connectors  │   GitHub  │   Log`, the shown one marked `▌`. **List** (the default) shows the sections above. **Connectors** shows your connectors, its label adding `!N` when N need attention. **GitHub** shows your repos. **Log** shows the events log, its label adding `!N` for unseen errors.
 
 ## Running cards
 
-Each RUNNING job in the Status panel is a card, so every kind of job reads the same way.
+Each RUNNING job in the Status panel is one line: title, bar, percent and time left. The bars line up in one column. Press a title to open its card with the details, press it again to close it.
 
 ```
-◐ Health care labels · 148K orgs
-  healthcare-classify   🏷  labeling
-  ████████████░░░░░░░░ 64%  1,234 of 2,000 batches
-  ▸ scoring
-  ⏳ 1h19m left   ⏱ 42m so far   ⚡ 31/min
-  unlocks: the health care filter
-
-◓ Release prep
-  release-prep   🤖  Claude agent
-  ████████████████░░░░ 75%  6 of 8 steps
-  ▸ waiting on: Train the model
-  ⏱ 22m so far   🔧 52 actions
-    ↳ Train the model
-      gpu-box: train.py   🖥  on gpu-box
-      ░░░░███░░░░░░░░░  steps not reported
-      ⚙ 5.4 cores busy   ⏱ 12:50 running
+◐ ▾ Health care labels       ████████░░  64%  1h19m left
+    healthcare-classify   🏷  labeling
+    1,234 of 2,000 batches
+    ▸ scoring
+    ⏱ 42m so far   ⚡ 31/min
+    unlocks: the health care filter
+◓ ▾ Release prep             ████████░░  75%  waiting on Train the model
+    release-prep   🤖  Claude agent
+    6 of 8 steps
+    ⏱ 22m so far   🔧 52 actions
+      ↳ ▸ Train the model    ░░███░░░░░       12:50 running
+⚠ ▸ Nightly import           ████████░░  80%  ⚠ no progress 14m
 
 Claude Max this week  ██████░░░░  62% used
 ```
 
-- **Title:** from `title` in the progress file or `titles.txt`. The card shows it in bold, then the job id and badge dim on the next line. Without a title the id is the heading, badge beside it.
-- **Unlocks:** `why` shows dim at the bottom as `unlocks: …`.
-- **Children:** a job whose `parent` is also running draws inside the parent's card, indented and marked `↳`. One level only: a parent that has a running parent of its own keeps its own card.
-- **Waiting on:** a parent whose numbers have not moved is not stuck while a child runs or changed in the last 10 minutes. Its step line reads `▸ waiting on: <child title>` instead of `no progress for`. The grouper does the same in the status line.
+- **Count:** the RUNNING header counts top-level lines and notes nested ones, as `RUNNING  4 (+3 sub-jobs)`.
+- **Line:** a mark, `▸ <short title>`, a 10-cell bar, the percent, then one dim note: `N left`, the run time, `waiting on X`, or a yellow `⚠ no progress Nm`.
+- **Short title:** `title` from the progress file or `titles.txt`, cut at ` · ` or `: `. A remote job keeps `<host>: name` whole. Without a title the job id is used.
+- **Aligned bars:** the title column is 14 to 26 characters wide by pane width. Longer titles end in `…`.
+- **Open card:** the job id and kind badge, `a of b steps` (or `batches`, or `steps not reported`), `▸ step`, the facts and `unlocks: …`. It never repeats the percent or the time left. Open cards stay open while the session runs.
+- **Children:** a job whose `parent` is also running shows under the parent's line, marked `↳`, only while the parent is open. One level only: a parent that has a running parent of its own keeps its own line.
+- **Remote jobs:** a `<host>: name` job without a `parent` nests under the one running job whose id starts with `<host>-` (such as `gpu-box: train.py` under `gpu-box-train`). With none or several such jobs it keeps its own line.
+- **Waiting on:** a parent whose numbers have not moved is not stuck while a child runs or changed in the last 10 minutes. Its line reads `waiting on <child title>` instead of `no progress`. The grouper does the same in the status line.
 - **Kind badge:** 🏷  **labeling** for names ending `-classify`, `-verify`, `-judge` or `-candidates`. 🖥  **on host** for names starting `host:` or `host: ` (any `name:` prefix, such as `gpu-box: train.py`). 🤖  **Claude agent** when the row reports `N tools`. ⚙  **job** for the rest.
-- **Busy processes:** a row detail `N% CPU` is never progress. The card shows the sliding piece and `⚙ N cores busy`, and a ps run time (`12:50`) as `⏱ 12:50 running`. A busy process that ends never shows as finished.
+- **Busy processes:** a row detail `N% CPU` is never progress. The line shows the sliding piece and the run time, the card `⚙ N cores busy` and `⏱ 12:50 running`. A busy process that ends never shows as finished.
 - **Name:** a trailing status word (`working`, `running`, `pending`, `waiting`) is left out.
-- **Bar:** the percent, then `a of b steps` (or `batches` when the row says `a/b batches`).
-- **No percent:** a 3-block piece slides along the bar with `steps not reported`, so it still reads as working.
-- **Stuck:** the card turns yellow with `no progress for 14m`.
-- **Step line:** `▸ step`, from any detail that is not a number or time.
-- **Facts line:** `⏳ X left` (from `X left`, `ETA X` or `done in X`), `⏱ Y so far`, `⚡ N/min`, `🔧 N actions · last: Tool`.
+- **No percent:** a 3-block piece slides along the bar, so it still reads as working.
+- **Facts:** `⚙ N cores busy`, `⏱ 12:50 running`, `⏱ Y so far`, `⚡ N/min`, `🔧 N actions · last: Tool`.
 - **Claude Max meter:** one shared meter under RUNNING, from a row detail `7d N%` or `Max 7-day used N%` (the highest one). Green under 50%, yellow under 80%, red above.
 - **Done at 100%:** a row that reached 100% but still reports shows under DONE as one dim line, `✓ <title>  finishing · 7/7`, without a bar.
 
