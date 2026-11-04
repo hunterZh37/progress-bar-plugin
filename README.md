@@ -297,7 +297,7 @@ WAITING jobs use the same one-line card, with a dim yellow `⏸` in place of the
     6 of 8 steps
     ⏱ 22m so far   🔧 52 actions
       ↳ ▸ Train the model    ░░███░░░░░       12:50 running
-⚠ ▸ Nightly import           ████████░░  80%  ⚠ no progress 14m
+⚠ ▸ Nightly import           ████████░░  80%  ⚠ stuck 14m
 
 Claude Max this week  ██████░░░░  62% used
 ```
@@ -305,13 +305,13 @@ Claude Max this week  ██████░░░░  62% used
 - **Max meter:** `Claude Max this week` reads `Max 7-day used N%` (or `7d N%`) from running lines. With no job reporting it, the last reading stays for up to 7 days with its time, like `22% used · as of 12:39` (saved in `~/.claude-progress/.state/max-usage.json`).
 - **Count:** the RUNNING header counts top-level lines and notes nested ones, as `RUNNING  4 (+3 sub-jobs)`.
 - **Machine:** each line starts with its machine, like `Hunty: Similar orgs` or `Mac: Health care`. Remote machines come from `<host>: name` rows and the to-do headings. The local one is the `[mac]` or `[local]` heading. With no remote machine, lines show the plain title.
-- **Line:** a mark, `▸ <short title>`, a 10-cell bar, the percent, then one dim note: `N left`, the run time, `Nm so far`, `waiting on X`, or a yellow `⚠ no progress Nm`. A job that reports steps but no time left (an agent) shows an estimate, `~Nm left`, from its time so far per step done.
+- **Line:** a mark, `▸ <short title>`, a 10-cell bar, the percent, then one dim note: `N left`, the run time, `Nm so far`, `waiting on X`, or a yellow `⚠ stuck Nm`. The note is cut with `…` to fit; the bar never wraps. A job that reports steps but no time left (an agent) shows an estimate, `~Nm left`, from its time so far per step done.
 - **Short title:** `title` from the progress file or `titles.txt`, cut at ` · ` or `: `. A remote job keeps `<host>: name` whole. Without a title the job id is used.
-- **Aligned bars:** the title column is 14 to 26 characters wide by pane width. Longer titles end in `…`.
+- **Aligned bars:** the title column is 14 to 34 characters wide by pane width, keeping 13 columns for the note (fewer in a pane under 37). Longer titles end in `…`.
 - **Open card:** the job id and kind badge, `a of b steps` (or `batches`, or `steps not reported`), `▸ step`, the facts and `unlocks: …`. It never repeats the percent or the time left. Open cards stay open while the session runs.
 - **Children:** a job whose `parent` is also running shows under the parent's line, marked `↳`, only while the parent is open. One level only: a parent that has a running parent of its own keeps its own line.
 - **Remote jobs:** a `<host>: name` job without a `parent` nests under the one running job whose id starts with `<host>-` (such as `gpu-box: train.py` under `gpu-box-train`). With none or several such jobs it keeps its own line.
-- **Waiting on:** a parent whose numbers have not moved is not stuck while a child runs or changed in the last 10 minutes. Its line reads `waiting on <child title>` instead of `no progress`. The grouper does the same in the status line.
+- **Waiting on:** a parent whose numbers have not moved is not stuck while a child runs or changed in the last 10 minutes. Its line reads `waiting on <child title>` instead of `⚠ stuck`. The grouper does the same in the status line.
 - **Kind badge:** 🏷  **labeling** for names ending `-classify`, `-verify`, `-judge` or `-candidates`. 🖥  **on host** for names starting `host:` or `host: ` (any `name:` prefix, such as `gpu-box: train.py`). 🤖  **Claude agent** when the row reports `N tools`. ⚙  **job** for the rest.
 - **Busy processes:** a row detail `N% CPU` is never progress. The line shows the sliding piece and the run time, the card `⚙ N cores busy` and `⏱ 12:50 running`. A busy process that ends never shows as finished.
 - **Name:** a trailing status word (`working`, `running`, `pending`, `waiting`, `starting`) is left out.

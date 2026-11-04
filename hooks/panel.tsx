@@ -324,8 +324,18 @@ export function machineTitle(name: string, title: string, m: { local: string; re
   return `${cap(h)}: ${cap(rest || t)}`
 }
 
-/** The label column on a job's line: 14 to 26 characters by pane width, less a child's indent, so every bar lines up. */
-export const labelCol = (width: number, ind = 0) => Math.max(10, Math.max(14, Math.min(34, width - 30)) - ind)
+/**
+ * The label column on a job's line: 14 to 34 characters by pane width (fewer in a pane under 37), less a child's
+ * indent, so every bar lines up.
+ * It leaves 13 columns after the bar for the note ("  3:10 running", "  ⚠ stuck 12m"): a row wider than the pane makes every part shrink,
+ * and the bar's Texts then wrap onto two lines.
+ */
+export const labelCol = (width: number, ind = 0) => {
+  // The row is 23 columns plus the parent's label (a child's indent comes out of its own label), so a pane too narrow
+  // for 14 shrinks the label to fit; below 37 columns the note is dropped (fit() returns '').
+  const base = Math.max(14, Math.min(34, width - 38))
+  return Math.max(3, Math.min(base, width - 23) - ind)
+}
 
 /** A label cut or padded to its column. */
 export const fitLabel = (s: string, col: number) => (s.length > col ? `${s.slice(0, col - 1)}…` : s.padEnd(col))
@@ -907,9 +917,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const room = width - ind.length - col - 25
       const fit = (x: string) => (x.length > room ? (room > 1 ? `${x.slice(0, room - 1)}…` : '') : x)
       const tail = isWait ? fit(room >= 14 ? (wait ? `waiting: ${wait}` : 'waiting') : wait || 'waiting')
-        : stuck ? `⚠ no progress ${stuck}` : waitOn ? `waiting on ${short(waitOn)}` : timeTail(r)
+        : fit(stuck ? `⚠ stuck ${stuck}` : waitOn ? `waiting on ${short(waitOn)}` : timeTail(r))
       return [
         <Box key={`r${k}`}>
+          <Box flexShrink={0}>
           {isWait
             ? <Text color="yellow" dimColor>{`${ind}  ${mark} `}</Text>
             : <Text color={stuck ? 'yellow' : 'cyan'}>{`${ind}  ${mark} `}</Text>}
@@ -928,6 +939,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 <Text key="b" dimColor>{'░'.repeat(MINI - filled)}</Text>,
                 <Text key="c" bold>{` ${String(Math.round(r.pct!)).padStart(3)}%`}</Text>,
               ]}
+          </Box>
           {tail ? <Text color={stuck ? 'yellow' : undefined} dimColor={!stuck} wrap="truncate-end">{`  ${tail}`}</Text> : null}
         </Box>,
         ...(isOpen
