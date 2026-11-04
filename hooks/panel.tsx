@@ -8,7 +8,8 @@ import type { Todo } from '../types'
 // The Status panel: the grouped status line, drawn in a docked pane beside the chat.
 // It runs the plugin's own status line script with PB_FULL=1 every second while the pane is open.
 // Section headers are buttons that fold or open the section through ~/.claude-progress/.state/folded.txt.
-// To-dos come straight from ~/.claude-progress/todo.txt. Pressing one opens a menu: mark as done, mark as to-do or delete.
+// To-dos come straight from ~/.claude-progress/todo.txt: open ones under TO-DO, checked-off ones under DONE.
+// Pressing one opens a menu: mark as done (or move back to to-do) or delete.
 
 export const PANE = 'progress-bar-status'
 const TITLE = 'Status'
@@ -183,32 +184,45 @@ export function registerPanel(on: On) {
     const openTodos = todos.filter(t => !t.done).length
     const width = Math.max(30, e.props.bodyColumns ?? 60)
     const barW = Math.min(20, Math.max(10, width - 30))
-    const { sections, other } = parseSections(lines)
-    // TO-DO shows whenever todo.txt has items, all done included, so a done item can be reopened.
-    if (todos.length && !sections.some(s => s.key === 'todo')) sections.unshift({ key: 'todo', title: 'TO-DO', folded: false, count: 0, rows: [] })
+    const { sections: parsed, other } = parseSections(lines)
+    // TO-DO shows only while something is open. Checked-off to-dos go under DONE, so DONE shows if they exist.
+    const doneTodos = todos.filter(t => t.done)
+    const sections = parsed.filter(s => s.key !== 'todo' || openTodos > 0)
+    if (openTodos > 0 && !sections.some(s => s.key === 'todo')) sections.unshift({ key: 'todo', title: 'TO-DO', folded: false, count: 0, rows: [] })
+    if (doneTodos.length && !sections.some(s => s.key === 'done')) sections.push({ key: 'done', title: 'DONE', folded: false, count: 0, rows: [] })
 
-    // Each owner, then its open items before its done ones. Pressing an item opens its menu below it.
+    // One to-do as a button. Pressing it opens its menu below it.
+    const todoItem = (t: Todo) => [
+      <Button key={`t-${t.line}`} plain onPress={() => update($, menuAtom, v => (v === t.line ? -1 : t.line))}>
+        {`    ${t.done ? '✓' : '○'} ${t.text}`}
+      </Button>,
+      menuFor === t.line
+        ? <Box key={`m-${t.line}`}>
+            <Text dimColor>{'      '}</Text>
+            {t.done
+              ? <Button key={`a-todo-${t.line}`} plain onPress={() => todoAction($, homeDir, t.line, 'todo')}>{'○ Move back to to-do  '}</Button>
+              : <Button key={`a-done-${t.line}`} plain onPress={() => todoAction($, homeDir, t.line, 'done')}>{'✓ Mark as done  '}</Button>}
+            <Button key={`a-del-${t.line}`} plain onPress={() => todoAction($, homeDir, t.line, 'delete')}>{'✕ Delete  '}</Button>
+            <Button key={`a-x-${t.line}`} plain onPress={() => update($, menuAtom, () => -1)}>{'Cancel'}</Button>
+          </Box>
+        : null,
+    ].filter(Boolean)
+
+    // Each owner with open items, then those items.
     const todoRows = () => [...new Set(todos.map(t => t.owner))].flatMap(owner => {
-      const items = todos.filter(t => t.owner === owner).sort((a, b) => Number(a.done) - Number(b.done))
+      const items = todos.filter(t => t.owner === owner && !t.done)
+      if (!items.length) return []
       return [
         <Text key={`w-${owner}`} bold color="magenta">{`  ${owner.charAt(0).toUpperCase()}${owner.slice(1).toLowerCase()}`}</Text>,
-        ...items.flatMap(t => [
-          <Button key={`t-${t.line}`} plain onPress={() => update($, menuAtom, v => (v === t.line ? -1 : t.line))}>
-            {`    ${t.done ? '✓' : '○'} ${t.text}`}
-          </Button>,
-          menuFor === t.line
-            ? <Box key={`m-${t.line}`}>
-                <Text dimColor>{'      '}</Text>
-                {t.done
-                  ? <Button key={`a-todo-${t.line}`} plain onPress={() => todoAction($, homeDir, t.line, 'todo')}>{'○ Mark as to-do  '}</Button>
-                  : <Button key={`a-done-${t.line}`} plain onPress={() => todoAction($, homeDir, t.line, 'done')}>{'✓ Mark as done  '}</Button>}
-                <Button key={`a-del-${t.line}`} plain onPress={() => todoAction($, homeDir, t.line, 'delete')}>{'✕ Delete  '}</Button>
-                <Button key={`a-x-${t.line}`} plain onPress={() => update($, menuAtom, () => -1)}>{'Cancel'}</Button>
-              </Box>
-            : null,
-        ]).filter(Boolean),
+        ...items.flatMap(todoItem),
       ]
     })
+
+    // Finished jobs, then the checked-off to-dos.
+    const doneRows = (rows: string[]) => [
+      ...plainRows(rows, 'done'),
+      ...(doneTodos.length ? [<Text key="w-checked" bold color="magenta">{'  Checked-off to-dos'}</Text>, ...doneTodos.flatMap(todoItem)] : []),
+    ]
 
     const runRows = (rows: string[]) => rows.flatMap((row, i) => {
       const r = runningRow(row)
@@ -244,9 +258,9 @@ export function registerPanel(on: On) {
           return (
             <Box key={`s-${sec.key}`} flexDirection="column" marginBottom={n < sections.length - 1 || other.length ? 1 : 0}>
               <Button key={`h-${sec.key}`} hotkey={HOTKEYS[sec.key]} plain onPress={() => flip($, homeDir, sec.key)}>
-                {`${isFolded ? '▸' : '▾'} ${ICON[sec.key]} ${sec.title}  ${sec.key === 'todo' ? openTodos : sec.count}`}
+                {`${isFolded ? '▸' : '▾'} ${ICON[sec.key]} ${sec.title}  ${sec.key === 'todo' ? openTodos : sec.key === 'done' ? sec.count + doneTodos.length : sec.count}`}
               </Button>
-              {!isFolded && (sec.key === 'todo' ? todoRows() : sec.key === 'running' ? runRows(sec.rows) : plainRows(sec.rows, sec.key))}
+              {!isFolded && (sec.key === 'todo' ? todoRows() : sec.key === 'running' ? runRows(sec.rows) : sec.key === 'done' ? doneRows(sec.rows) : plainRows(sec.rows, sec.key))}
             </Box>
           )
         })}

@@ -409,31 +409,38 @@ test('/progress-bar panel on and off: the flag file, and setup first', async ($,
   expect((await run($, 'panel')).text).toContain('`/progress-bar panel on` opens it at every session start.')
 })
 
-test('a to-do press opens its menu; mark as done, mark as to-do and delete edit todo.txt', async ($, on) => {
-  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [TODO_FILE]: '# note\n[you]\nreview PR | https://x.test/1\nx old thing\ncall Sam\n' }
-  panelWorld(on, files)
+const DONE_FULL = '▾ ▶ RUNNING\n  ◐ job ██░░ 50.0% · 1/2\n▾ ✔ DONE\n  nightly · finished 10:12\n'
+
+test('open to-dos under TO-DO, checked-off ones under DONE; the menu marks done, moves back and deletes', async ($, on) => {
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [TODO_FILE]: '# note\n[you]\nreview PR | https://x.test/1\nx old thing\ncall Sam\n[mac]\nx all done here\n' }
+  panelWorld(on, files, DONE_FULL)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
-  expect((await ui.find({ type: 'Button', text: /review PR/ }))?.text).toBe('    ○ review PR')
-  expect((await ui.find({ type: 'Button', text: /old thing/ }))?.text).toBe('    ✓ old thing')
   expect((await ui.find({ type: 'Button', text: /TO-DO/ }))?.text).toBe('▾ ☐ TO-DO  2')
+  expect((await ui.find({ type: 'Button', text: /review PR/ }))?.text).toBe('    ○ review PR')
+  expect(await ui.find({ type: 'Text', text: /^  Mac$/ })).toBe(undefined)
+  expect((await ui.find({ type: 'Button', text: /DONE/ }))?.text).toBe('▾ ✔ DONE  3')
+  expect((await ui.find({ type: 'Text', text: /Checked-off to-dos/ }))?.text).toBe('  Checked-off to-dos')
+  expect((await ui.find({ type: 'Button', text: /old thing/ }))?.text).toBe('    ✓ old thing')
   expect(await ui.find({ type: 'Button', text: /Mark as done/ })).toBe(undefined)
 
   await ui.press({ key: 't-2' })
   expect((await ui.find({ type: 'Button', text: /Mark as done/ }))?.text).toBe('✓ Mark as done  ')
-  expect(await ui.find({ type: 'Button', text: /Mark as to-do/ })).toBe(undefined)
+  expect(await ui.find({ type: 'Button', text: /Move back/ })).toBe(undefined)
   await ui.press({ key: 'a-done-2' })
-  expect(files[TODO_FILE]).toBe('# note\n[you]\nx review PR | https://x.test/1\nx old thing\ncall Sam\n')
-  expect(await ui.find({ type: 'Button', text: /Mark as done/ })).toBe(undefined)
+  expect(files[TODO_FILE]).toBe('# note\n[you]\nx review PR | https://x.test/1\nx old thing\ncall Sam\n[mac]\nx all done here\n')
+  expect((await ui.find({ type: 'Button', text: /TO-DO/ }))?.text).toBe('▾ ☐ TO-DO  1')
+  expect((await ui.find({ type: 'Button', text: /review PR/ }))?.text).toBe('    ✓ review PR')
 
   await ui.press({ key: 't-3' })
-  expect((await ui.find({ type: 'Button', text: /Mark as to-do/ }))?.text).toBe('○ Mark as to-do  ')
+  expect((await ui.find({ type: 'Button', text: /Move back/ }))?.text).toBe('○ Move back to to-do  ')
   await ui.press({ key: 'a-todo-3' })
-  expect(files[TODO_FILE]).toBe('# note\n[you]\nx review PR | https://x.test/1\nold thing\ncall Sam\n')
+  expect(files[TODO_FILE]).toBe('# note\n[you]\nx review PR | https://x.test/1\nold thing\ncall Sam\n[mac]\nx all done here\n')
+  expect((await ui.find({ type: 'Button', text: /old thing/ }))?.text).toBe('    ○ old thing')
 
   await ui.press({ key: 't-4' })
   await ui.press({ key: 'a-del-4' })
-  expect(files[TODO_FILE]).toBe('# note\n[you]\nx review PR | https://x.test/1\nold thing\n')
+  expect(files[TODO_FILE]).toBe('# note\n[you]\nx review PR | https://x.test/1\nold thing\n[mac]\nx all done here\n')
 
   await ui.press({ key: 't-3' })
   await ui.press({ key: 'a-x-3' })
@@ -441,15 +448,17 @@ test('a to-do press opens its menu; mark as done, mark as to-do and delete edit 
   await ui.unmount()
 })
 
-test('TO-DO stays visible when every item is done, so one can be reopened', async ($, on) => {
+test('with every to-do done, TO-DO hides and DONE shows them, so one can be moved back', async ($, on) => {
   const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [TODO_FILE]: '[mac]\nx run import\n' }
   panelWorld(on, files, '▾ ▶ RUNNING\n  ◐ job ██░░ 50.0% · 1/2\n')
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
-  expect((await ui.find({ type: 'Button', text: /TO-DO/ }))?.text).toBe('▾ ☐ TO-DO  0')
-  expect((await ui.find({ type: 'Text', text: /^  Mac$/ }))?.text).toBe('  Mac')
+  expect(await ui.find({ type: 'Button', text: /TO-DO/ })).toBe(undefined)
+  expect((await ui.find({ type: 'Button', text: /DONE/ }))?.text).toBe('▾ ✔ DONE  1')
   await ui.press({ key: 't-1' })
   await ui.press({ key: 'a-todo-1' })
   expect(files[TODO_FILE]).toBe('[mac]\nrun import\n')
+  expect((await ui.find({ type: 'Button', text: /TO-DO/ }))?.text).toBe('▾ ☐ TO-DO  1')
+  expect(await ui.find({ type: 'Button', text: /DONE/ })).toBe(undefined)
   await ui.unmount()
 })

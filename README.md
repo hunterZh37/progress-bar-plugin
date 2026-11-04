@@ -140,7 +140,7 @@ Load the 2026 batch
 ```
 
 - **Headings:** any `[name]`, for a person or a machine. Each shows as one row: `YOU: item · item`.
-- **Done:** prefix `x `. Done items are hidden in the status line and shown with `✓` in the Status panel. `/progress-bar todo clear` removes them.
+- **Done:** prefix `x `. Done items are hidden in the status line and shown with `✓` under DONE in the Status panel. `/progress-bar todo clear` removes them.
 - **Links:** `text | url` makes the text clickable in terminals that support links.
 - **Claude keeps it current:** the skill tells Claude to add items when work is queued or handed to you and to mark them done when finished.
 
@@ -193,7 +193,7 @@ The status line then reads:
 - **Needs setup:** the panel runs `~/.claude/progress-bar/statusline.sh` with `PB_FULL=1` every second while it is open. `panel on` refreshes that script and `group.py` and keeps your chained status line.
 - **Fold:** press a header, or its hotkey (`1` to-do, `2` running, `3` done, `4` waiting, `5` problems). It writes `~/.claude-progress/.state/folded.txt`, the same file `/progress-bar fold` uses.
 - **Off by default:** `panel on` writes `~/.claude-progress/.state/panel-on`. With that file the pane opens at session start and the status line prints the summary. `panel off` deletes it and closes the pane. `/progress-bar panel` opens it once without turning it on.
-- **To-do menu:** click a to-do for Mark as done, Mark as to-do or Delete. It edits `~/.claude-progress/todo.txt`. Done items stay in the panel with `✓` under the open ones, so you can reopen them. The TO-DO count is open items.
+- **To-do menu:** click a to-do for Mark as done, Move back to to-do or Delete. It edits `~/.claude-progress/todo.txt`. TO-DO lists open items only. Checked-off ones move to DONE under **Checked-off to-dos**, after finished jobs, and count there.
 - **Rows:** to-dos one per line under each owner, running jobs as name, bar and details (stuck ones in yellow), done jobs dimmed with their finish time.
 
 ## Fold sections
