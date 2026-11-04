@@ -59,7 +59,7 @@ This writes `~/.claude/progress-bar/statusline.sh`. It never edits your settings
 ```
 
 - **`refreshInterval: 1`** redraws the status line every second, so bars move while Claude is idle.
-- **Grouping** runs through `~/.claude/progress-bar/group.py`, which setup writes beside the script with `events.py` (the events log). Both need only the system `python3`. Without it the lines print ungrouped.
+- **Grouping** runs through `~/.claude/progress-bar/group.py`, which setup writes beside the script with `events.py` (the events log) and `checkpoint.py` (the overnight recap). Both need only the system `python3`. Without it the lines print ungrouped.
 - **Updating the plugin?** Run setup again to get the new scripts.
 
 Already have a status line? Setup reads it and builds it into the script. The bars print first, then your old status line, which still gets the session JSON on stdin. Its lines print as is, below the groups. Run setup before you change the setting.
@@ -78,6 +78,7 @@ Already have a status line? Setup reads it and builds it into the script. The ba
 | `/progress-bar todo done <n\|text>` | Marks a to-do done by number or by text it contains |
 | `/progress-bar todo clear` | Removes done to-dos |
 | `/progress-bar panel` | Opens the Status panel. `panel on` opens it at every session start, `panel off` stops that |
+| `/progress-bar checkpoint [label]` | Saves the running jobs for the overnight recap. `away` does the same |
 | `/progress-bar fold <section>` | Folds a section to one line. `unfold` opens it, `toggle` flips it |
 
 ## File format
@@ -300,6 +301,29 @@ The **Log** tab of the Status panel lists what happened to your jobs, newest fir
 | `title` | A few plain words |
 | `detail` | Optional. More lines, shown when the row is pressed |
 | `path` | Optional. The log file, for `↗ open log` |
+
+## Overnight recap
+
+Save a checkpoint when you stop for the day. When you come back, the List tab of the Status panel opens with what happened while you were away.
+
+```
+☀ While you were away · since 6:40 PM (14h)
+✓ 2 done  ✖ 1 error  ⚠ 2 warnings  ▶ 2 still running
+✖ Nightly import crashed
+  Traceback (most recent call last):
+⚠ Train batch stuck
+  no progress for 12m
+⚠ Labels hit the usage limit
+  resumed in 2h10m
+
+▸ Show all 8   ✕ Dismiss
+```
+
+- **Save a checkpoint:** `/progress-bar checkpoint [label]` (or `/progress-bar away`). From any end-of-day script: `python3 ~/.claude/progress-bar/checkpoint.py [label]`. Either one writes `~/.claude-progress/.state/overnight.json` with the time and every RUNNING row (name, %, done and total), folded or not.
+- **When it shows:** once the checkpoint is 4 hours old, or sooner when the panel sees a gap over 30 minutes between its ticks (the computer slept). The panel then marks the file `woke`.
+- **What it counts:** finishes, errors and warnings from the Log tab since the checkpoint, plus jobs running then that sit in DONE now. The top 3 lines show, errors first. **Show all** adds every running job with its % then and now (`16% → 62%  · 6h left`), waiting jobs and finishes with their times.
+- **Status line:** the one-line summary ends with `☀ recap ready` while the recap shows.
+- **Dismiss** moves the file to `~/.claude-progress/.state/overnight-YYYY-MM-DD.json` (the checkpoint's day) and hides the recap until the next checkpoint.
 
 ## Connectors
 

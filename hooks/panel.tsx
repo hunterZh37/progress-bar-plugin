@@ -1,13 +1,14 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, On } from 'claude-code'
+import type { EngineInterface, On, RenderChildren } from 'claude-code'
 
+import { AWAY_S, GAP_MS, OVERNIGHT_REL, dayOf, snapOf } from './checkpoint'
 import { connSummary, readConns, refreshConns, resetConns } from './connectors'
 import { EVENTS_REL, LOG_DIRS_REL, SEEN_REL, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from './events'
 import { GH_EVERY, openUrl, readGh } from './github'
 import { resolveHome } from './home'
 import { isDarwin } from './mac'
 import { FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, slug } from './render'
-import type { Conn, Ev, LogFilter, Meta, Todo } from '../types'
+import type { Checkpoint, Conn, Ev, LogFilter, Meta, Recap, Snap, Todo } from '../types'
 
 // The Status panel: the grouped status line, drawn in a docked pane beside the chat.
 // It runs the plugin's own status line script with PB_FULL=1 every second while the pane is open.
@@ -19,6 +20,9 @@ import type { Conn, Ev, LogFilter, Meta, Todo } from '../types'
 // and `parent` in its progress file or ~/.claude-progress/titles.txt. A running child shows under its open parent.
 // Four tabs: List (the sections), Connectors (see connectors.ts), GitHub (see github.ts) and Log (events.ts).
 // Connector checks run only while the pane is open; GitHub reads only while its tab shows.
+// Overnight recap: `/progress-bar checkpoint` (or checkpoint.py) saves the running jobs. Once you are back (4 h later, or
+// a tick gap over 30 min shows the computer slept) the List tab opens with "While you were away": what finished, failed
+// or moved since. Dismiss archives the checkpoint to .state/overnight-YYYY-MM-DD.json.
 
 export const PANE = 'progress-bar-status'
 const TITLE = 'Status'
@@ -46,6 +50,7 @@ const ghAtom = atom({ plugin: 'progress-bar', key: 'gh' } as const, { repos: [],
 const openAtom = atom({ plugin: 'progress-bar', key: 'openCards' } as const, [] as string[])
 const metaAtom = atom({ plugin: 'progress-bar', key: 'meta' } as const, {} as Record<string, Meta>)
 const logAtom = atom({ plugin: 'progress-bar', key: 'log' } as const, { events: [], filter: 'all', open: '', seenAt: 0, dirs: [] } as { events: Ev[]; filter: LogFilter; open: string; seenAt: number; dirs: string[] })
+const recapAtom = atom({ plugin: 'progress-bar', key: 'recap' } as const, { cp: null, lastTick: 0, open: false } as Recap)
 const DIR_REL = '.claude-progress'
 const META_MS = 24 * 60 * 60_000
 
@@ -368,6 +373,111 @@ async function flip($: EngineInterface, h: string, key: Key) {
   await pollPanel($, h)
 }
 
+/** overnight.json as a checkpoint, or null when it is missing or has no `since`. */
+export function toCheckpoint(raw: unknown): Checkpoint | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  const since = Number(r.since)
+  if (!since) return null
+  const running = (Array.isArray(r.running) ? r.running : [])
+    .map(x => (typeof x === 'string' ? snapOf(x) : x))
+    .filter((x): x is Snap => !!x && typeof x === 'object' && typeof (x as Snap).name === 'string' && !!(x as Snap).name)
+  return { since, label: String(r.label ?? 'checkpoint'), running, ...(Number(r.woke) ? { woke: Number(r.woke) } : {}) }
+}
+
+/** Reads the checkpoint each tick. A tick that comes over 30 min after the last one, after the checkpoint, means the computer slept: it marks the file woke. */
+export async function tickRecap($: EngineInterface, h: string) {
+  if (!h) return
+  const now = await $.clock.now()
+  const file = `${h}/${OVERNIGHT_REL}`
+  let raw: Record<string, unknown> | null = null
+  try { raw = JSON.parse(String(await $.fs.read(file))) as Record<string, unknown> } catch { raw = null }
+  let cp = toCheckpoint(raw)
+  const prev = await read($, recapAtom)
+  if (raw && cp && !cp.woke && prev.lastTick && now - prev.lastTick > GAP_MS && prev.lastTick >= cp.since * 1000) {
+    cp = { ...cp, woke: Math.floor(now / 1000) }
+    try { await $.fs.write(file, JSON.stringify({ ...raw, woke: cp.woke })) } catch { /* shown anyway this session */ }
+  }
+  await update($, recapAtom, r => ({ ...r, cp, lastTick: now, open: cp ? r.open : false }))
+}
+
+/** Dismiss: moves overnight.json to .state/overnight-YYYY-MM-DD.json (the checkpoint's day) and hides the banner. */
+async function dismissRecap($: EngineInterface, h: string) {
+  const cp = (await read($, recapAtom)).cp
+  if (cp && h) {
+    const file = `${h}/${OVERNIGHT_REL}`
+    try { await $.process.run(['mv', '-f', file, file.replace(/overnight\.json$/, `overnight-${dayOf(cp.since)}.json`)], { timeoutMs: 5000 }) } catch { /* next press */ }
+  }
+  await update($, recapAtom, r => ({ ...r, cp: null, open: false }))
+}
+
+/** `/progress-bar checkpoint [label]` (or `away`): saves the RUNNING rows the status line shows now, folded or not. */
+export async function checkpointCommand($: EngineInterface, h: string, label: string): Promise<string> {
+  if (!h) return 'Could not find your home folder ($HOME is unset).'
+  if (!(await $.fs.exists(`${h}/${SCRIPT_REL}`).catch(() => false))) return 'The checkpoint reads the status line script. Run `/progress-bar setup` first.'
+  let out = ''
+  try { out = (await $.process.run(['/bin/sh', `${h}/${SCRIPT_REL}`], { stdin: '{}', env: { PB_FULL: '1', PB_UNFOLD: '1' }, timeoutMs: 8000 })).stdout } catch { out = '' }
+  const rows = parseSections(stripAnsi(out).split('\n').filter(l => l.trim())).sections.find(x => x.key === 'running')?.rows ?? []
+  const running = rows.map(snapOf).filter(x => x.name)
+  const since = Math.floor((await $.clock.now()) / 1000)
+  await $.fs.write(`${h}/${OVERNIGHT_REL}`, JSON.stringify({ since, label: label || 'checkpoint', running }))
+  await update($, recapAtom, r => ({ ...r, cp: { since, label: label || 'checkpoint', running }, open: false }))
+  return `Checkpoint saved: ${running.length} running. The Status panel shows what happened since once you are back (4 h on, or after the computer sleeps).`
+}
+
+const clock12 = (ts: number) => { const d = new Date(ts * 1000); const h = d.getHours(); return `${h % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}` }
+const span = (s: number) => (s >= 3600 ? `${Math.floor(s / 3600)}h` : `${Math.max(1, Math.floor(s / 60))}m`)
+export type RecapLine = { kind: 'done' | 'error' | 'warning' | 'running' | 'waiting'; text: string; sub?: string }
+export type RecapList = { done: RecapLine[]; errors: RecapLine[]; warnings: RecapLine[]; running: RecapLine[]; waiting: RecapLine[] }
+
+/** Whether the banner shows: a checkpoint 4 h old, or one the panel saw the computer wake from. */
+export const recapDue = (cp: Checkpoint | null, nowS: number) => !!cp && (!!cp.woke || nowS - cp.since >= AWAY_S)
+
+/**
+ * What happened since the checkpoint: done, error and warning events since `since` (errors and warnings newest first),
+ * jobs running then that sit in DONE now, every running job with its % then and now, and waiting jobs.
+ */
+export function buildRecap(cp: Checkpoint, events: Ev[], lines: string[], meta: Record<string, Meta>): RecapList {
+  const titleOf = (name: string) => (meta[slug(name)]?.title || name).split(' · ')[0]!
+  const evs = events.filter(e => e.ts >= cp.since).sort((a, b) => a.ts - b.ts)
+  const firstLine = (s?: string) => (s ?? '').split('\n').map(x => x.trim()).find(Boolean)
+  const done: RecapLine[] = []
+  const seen = new Set<string>()
+  for (const e of evs.filter(x => x.level === 'success')) {
+    const k = slug(e.source || e.title)
+    if (seen.has(k)) continue
+    seen.add(k)
+    const t = e.source && meta[slug(e.source)]?.title ? titleOf(e.source) : e.title.replace(/\s+done$/i, '')
+    done.push({ kind: 'done', text: t, sub: clock12(e.ts) })
+  }
+  const secs = parseSections(lines).sections
+  const rowsOf = (k: string) => secs.find(x => x.key === k)?.rows ?? []
+  // A job running at checkpoint time that sits in DONE now finished, even with no event for it.
+  const before = new Set(cp.running.map(r => slug(r.name)))
+  for (const row of rowsOf('done')) {
+    const name = runCard(row.replace(/^[✔✓]\s*/, '')).name
+    const k = slug(name)
+    if (!before.has(k) || seen.has(k)) continue
+    seen.add(k)
+    const at = / · finished (\d\d:\d\d)$/.exec(row)?.[1]
+    done.push({ kind: 'done', text: titleOf(name), ...(at ? { sub: at } : {}) })
+  }
+  const issue = (kind: 'error' | 'warning') => evs.filter(e => e.level === kind).reverse()
+    .map(e => { const sub = firstLine(e.detail); return { kind, text: e.title, ...(sub ? { sub } : {}) } })
+  const then = new Map(cp.running.map(r => [slug(r.name), r]))
+  const pct = (n: number) => `${Math.round(n)}%`
+  const running: RecapLine[] = rowsOf('running').map(row => {
+    const c = runCard(row)
+    const was = then.get(slug(c.name))?.pct
+    const moved = c.pct === null ? 'still going' : was === undefined ? `new · ${pct(c.pct)}` : `${pct(was)} → ${pct(c.pct)}`
+    const lm = /^(?:(\d+)h)?(\d+)m$/.exec(c.left)
+    const left = lm ? (Number(lm[1] ?? 0) > 0 ? `${Number(lm[1])}h left` : `${Number(lm[2])}m left`) : c.left ? `${c.left} left` : ''
+    return { kind: 'running' as const, text: titleOf(c.name), sub: left ? `${moved}  · ${left}` : moved }
+  })
+  const waiting = rowsOf('waiting').map(row => ({ kind: 'waiting' as const, text: titleOf(runCard(row).name) }))
+  return { done, errors: issue('error'), warnings: issue('warning'), running, waiting }
+}
+
 export async function openPanel($: EngineInterface) {
   return $.ui.open({ id: PANE, title: TITLE, columns: COLUMNS })
 }
@@ -401,6 +511,9 @@ export async function panelCommand($: EngineInterface, h: string, arg: string): 
 /** At session start: poll every second while the pane is open, and open it when the panel is on. */
 export async function startPanel($: EngineInterface, h: string) {
   await resetConns($)
+  // The recap ticks whether the pane is open or not, so a sleep shows as a gap between two ticks.
+  await tickRecap($, h)
+  $.clock.every(2000, () => tickRecap($, h))
   $.clock.every(1000, async () => {
     const open = await $.ui.panes().then(ps => ps.some(p => p.id === PANE)).catch(() => false)
     if (open) await pollPanel($, h)
@@ -705,9 +818,53 @@ export function registerPanel(on: On) {
       )
     }
 
+    // "While you were away": a checkpoint 4 h old, or one the computer slept through.
+    const recap = await read($, recapAtom)
+    const cp = recap.cp
+    let banner: RenderChildren[] = []
+    if (cp && recapDue(cp, nowS)) {
+      const r = buildRecap(cp, log.events, lines, meta)
+      const LOOK: Record<string, [string, string]> = { error: ['✖', 'red'], warning: ['⚠', 'yellow'], running: ['▶', 'green'], waiting: ['⏸', 'yellow'], done: ['✓', 'green'] }
+      const all = [...r.errors, ...r.warnings, ...r.running, ...r.waiting, ...r.done]
+      const shown = recap.open ? all : all.slice(0, 3)
+      const cut = (t: string, n: number) => (t.length > n ? `${t.slice(0, n - 1)}…` : t)
+      const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
+      const issue = (l: RecapLine) => l.kind === 'error' || l.kind === 'warning'
+      banner = [
+        <Box key="recap" flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} marginBottom={1}>
+          <Text key="rc-h" bold color="yellow">{`☀ While you were away · since ${clock12(cp.since)} (${span(nowS - cp.since)})`}</Text>
+          <Box key="rc-n">
+            <Text color="green">{`✓ ${r.done.length} done  `}</Text>
+            <Text color={r.errors.length ? 'red' : undefined} dimColor={!r.errors.length}>{`✖ ${plural(r.errors.length, 'error')}  `}</Text>
+            <Text color={r.warnings.length ? 'yellow' : undefined} dimColor={!r.warnings.length}>{`⚠ ${plural(r.warnings.length, 'warning')}  `}</Text>
+            <Text color="green">{`▶ ${r.running.length} still running`}</Text>
+            {r.waiting.length ? <Text color="yellow">{`  ⏸ ${r.waiting.length} waiting`}</Text> : null}
+          </Box>
+          {all.length === 0 ? <Text key="rc-none" dimColor>{'  Nothing happened.'}</Text> : null}
+          {shown.flatMap((l, k) => {
+            const [icon, color] = LOOK[l.kind]!
+            return [
+              <Box key={`rc-${k}`}>
+                <Text color={color}>{`${icon} `}</Text>
+                <Text>{cut(l.text, Math.max(16, width - 22))}</Text>
+                {l.sub && !issue(l) ? <Text dimColor>{`  ${l.sub}`}</Text> : null}
+              </Box>,
+              l.sub && issue(l) ? <Text key={`rc-${k}-d`} dimColor>{`  ${cut(l.sub, Math.max(16, width - 8))}`}</Text> : null,
+            ].filter(Boolean)
+          })}
+          <Box key="rc-b" marginTop={1}>
+            {all.length > 3 ? <Button key="recap-more" plain onPress={() => update($, recapAtom, x => ({ ...x, open: !x.open }))}>{recap.open ? '▾ Show less' : `▸ Show all ${all.length}`}</Button> : null}
+            {all.length > 3 ? <Text dimColor>{'   '}</Text> : null}
+            <Button key="recap-dismiss" plain onPress={() => dismissRecap($, homeDir)}>{'✕ Dismiss'}</Button>
+          </Box>
+        </Box>,
+      ]
+    }
+
     return (
       <Box flexDirection="column">
         {tabBar}
+        {banner}
         {sections.length === 0 && <Text dimColor>Nothing running.</Text>}
         {sections.map((sec, n) => {
           const isFolded = folded.has(sec.key) || sec.folded

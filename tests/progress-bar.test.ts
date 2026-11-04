@@ -3,6 +3,7 @@ import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { CONN_CACHE_REL, connName, connSummary, formatCache, parseAccounts, parseCache, parseLogin, parseMcpList } from '../hooks/connectors'
+import { CHECKPOINT_PY } from '../hooks/checkpoint'
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
 import { PANE, badge, evId, fitLabel, labelCol, maxMeter, nestRows, runCount, shortTitle, parseSections, runCard, shortAge, timeTail, slide, stripAnsi } from '../hooks/panel'
@@ -250,7 +251,7 @@ test('/progress-bar shows a watched log, and stopped when its process is gone', 
 test('/progress-bar with an unknown argument prints usage', async ($, on) => {
   world(on)
   const { text } = await run($, 'nope')
-  expect(text.split('\n')[0]).toBe('Usage: /progress-bar [setup | demo | clear | todo | panel [on|off] | fold <section> | unfold <section> | toggle <section>]')
+  expect(text.split('\n')[0]).toBe('Usage: /progress-bar [setup | demo | clear | todo | panel [on|off] | checkpoint [label] | fold <section> | unfold <section> | toggle <section>]')
 })
 
 test('/progress-bar todo add, list, done and clear write todo.txt', async ($, on) => {
@@ -811,7 +812,8 @@ test('/progress-bar setup writes events.py beside group.py', async ($, on) => {
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const { text } = await run($, 'setup')
   expect(written[`${HOME}/.claude/progress-bar/events.py`]).toBe(EVENTS_PY)
-  expect(text).toContain('group.py and events.py')
+  expect(written[`${HOME}/.claude/progress-bar/checkpoint.py`]).toBe(CHECKPOINT_PY)
+  expect(text).toContain('group.py, events.py and checkpoint.py')
 })
 
 const TITLED_FULL = [

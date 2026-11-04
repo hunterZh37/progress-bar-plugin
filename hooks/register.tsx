@@ -1,10 +1,11 @@
 import type { EngineInterface, Register } from 'claude-code'
 
+import { CHECKPOINT_PY } from './checkpoint'
 import { EVENTS_PY } from './events'
 import { GROUP_PY } from './group'
 import { resolveHome } from './home'
 import { macClicks, parseMacClicks } from './mac'
-import { panelCommand, registerPanel, startPanel } from './panel'
+import { checkpointCommand, panelCommand, registerPanel, startPanel } from './panel'
 import { FRESH_MS, eta, expandHome, lines, parseProgress, parseWatch, prevOf, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList } from './render'
 import type { Progress, Row } from './render'
 
@@ -44,10 +45,12 @@ const LIVE = new Set(['pending', 'running', 'waiting'])
 const SCRIPT_REL = '.claude/progress-bar/statusline.sh'
 const GROUP_REL = '.claude/progress-bar/group.py'
 const EVENTS_PY_REL = '.claude/progress-bar/events.py'
+const CHECKPOINT_PY_REL = '.claude/progress-bar/checkpoint.py'
 const DEMO = 'progress-bar-demo'
 const USAGE = [
-  'Usage: /progress-bar [setup | demo | clear | todo | panel [on|off] | fold <section> | unfold <section> | toggle <section>]',
+  'Usage: /progress-bar [setup | demo | clear | todo | panel [on|off] | checkpoint [label] | fold <section> | unfold <section> | toggle <section>]',
   '  panel: open the Status panel. panel on: open it at every session start, with a one-line status line',
+  '  checkpoint (or away): save the running jobs. The Status panel shows what happened since once you are back',
   '  setup mac-clicks [off]: click a section header to fold it (macOS)',
   '  sections: todo, running, waiting, done, problems, all',
   '  todo: todo | todo add [name] <text> | todo done <n|text> | todo clear',
@@ -195,13 +198,14 @@ async function setup($: EngineInterface) {
   const done = current?.includes(SCRIPT_REL)
     ? 'Your settings already point at it.'
     : `Add this to ~/.claude/settings.json (replacing any "statusLine" there):\n  ${snippet}`
-  return `Wrote ${path}, with group.py and events.py beside it.${chain}\n${done}\n"refreshInterval": 1 redraws the status line every second.`
+  return `Wrote ${path}, with group.py, events.py and checkpoint.py beside it.${chain}\n${done}\n"refreshInterval": 1 redraws the status line every second.`
 }
 
-/** Writes group.py and events.py (the Log tab's events log) beside the status line script. */
+/** Writes group.py, events.py (the Log tab's events log) and checkpoint.py (the overnight recap) beside the status line script. */
 async function writeLib($: EngineInterface, h: string) {
   await $.fs.write(`${h}/${GROUP_REL}`, GROUP_PY)
   await $.fs.write(`${h}/${EVENTS_PY_REL}`, EVENTS_PY)
+  await $.fs.write(`${h}/${CHECKPOINT_PY_REL}`, CHECKPOINT_PY)
 }
 
 /** The command an installed script chains, so running setup again keeps it. */
@@ -328,7 +332,7 @@ export const register: Register = on => {
   })
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup [mac-clicks [off]] | demo | clear | todo | panel [on|off] | fold <section>]' })
+    await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup [mac-clicks [off]] | demo | clear | todo | panel [on|off] | checkpoint [label] | fold <section>]' })
     void poll($)
     $.clock.every(5000, () => { void poll($) })
     await startPanel($, await resolveHome($))
@@ -346,6 +350,7 @@ export const register: Register = on => {
       : arg === 'clear' ? await clear($)
       : /^panel\b/.test(arg) ? await panel($, arg.slice(5).trim())
       : /^todo\b/.test(arg) ? await todo($, raw.slice(4).trim())
+      : /^(checkpoint|away)\b/.test(arg) ? await checkpointCommand($, await resolveHome($), raw.replace(/^\S+\s*/, ''))
       : /^(fold|unfold|toggle)\b/.test(arg) ? await fold($, arg)
       : USAGE
     return { text }

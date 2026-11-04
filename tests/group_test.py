@@ -9,6 +9,8 @@ SRC = open(os.path.join(os.path.dirname(__file__), '..', 'hooks', 'group.ts'), e
 PY = re.search(r'String\.raw`(.*)`', SRC, re.S).group(1)
 EV_SRC = open(os.path.join(os.path.dirname(__file__), '..', 'hooks', 'events.ts'), encoding='utf-8').read()
 EV_PY = re.search(r'EVENTS_PY = String\.raw`(.*)`', EV_SRC, re.S).group(1)
+CP_SRC = open(os.path.join(os.path.dirname(__file__), '..', 'hooks', 'checkpoint.ts'), encoding='utf-8').read()
+CP_PY = re.search(r'CHECKPOINT_PY = String\.raw`(.*)`', CP_SRC, re.S).group(1)
 
 
 def load(root, lib=None):
@@ -192,6 +194,24 @@ class Group(unittest.TestCase):
     def test_summary_line_leaves_out_empty_extras(self):
         self.assertEqual(self.run_summary(''), ['▶ 0 running · ☐ 0 to-do · full view in the Status panel'])
 
+    def test_summary_says_recap_ready_after_4_h_or_a_wake(self):
+        self.write('.state/overnight.json', json.dumps({'since': T0, 'label': 'x', 'running': []}))
+        self.assertNotIn('recap ready', self.g.main(io.StringIO(''), T0 + 3 * 3600, summary=True)[0])
+        self.assertTrue(self.g.main(io.StringIO(''), T0 + 4 * 3600, summary=True)[0].endswith(' · \033[2m☀ recap ready\033[0m'))
+        self.write('.state/overnight.json', json.dumps({'since': T0, 'label': 'x', 'running': [], 'woke': T0 + 60}))
+        self.assertIn('recap ready', self.g.main(io.StringIO(''), T0 + 60, summary=True)[0])
+        os.remove(os.path.join(self.root, '.state', 'overnight.json'))
+        self.assertNotIn('recap ready', self.g.main(io.StringIO(''), T0 + 9 * 3600, summary=True)[0])
+
+    def test_pb_unfold_ignores_folded_sections(self):
+        self.write('.state/folded.txt', 'running\n')
+        os.environ['PB_UNFOLD'] = '1'
+        try:
+            out = self.run_('▶ build ████░░░░ 40.0% · 2/5\n')
+        finally:
+            del os.environ['PB_UNFOLD']
+        self.assertEqual(out[0], '▾ ▶ RUNNING')
+
     def run_summary(self, text):
         return self.g.main(io.StringIO(text), T0, summary=True)
 
@@ -366,6 +386,46 @@ class Events(unittest.TestCase):
                 break
             time.sleep(0.1)
         self.assertEqual(self.events()[0]['title'], 'x: error')
+
+
+class Checkpoint(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.lib = tempfile.mkdtemp()
+        with open(os.path.join(self.lib, 'checkpoint.py'), 'w') as f:
+            f.write(CP_PY)
+
+    def tearDown(self):
+        shutil.rmtree(self.root)
+        shutil.rmtree(self.lib)
+
+    def test_writes_overnight_json_from_the_running_rows(self):
+        status = ('▾ ☐ TO-DO\n  YOU: x\n▾ ▶ RUNNING\n'
+                  '  ⚠ stuck 12m \033]8;;file:///a\007arts-classify\033]8;;\007 ███░ 15.7% · 1420/9034 batches · 13h35m left\n'
+                  '  ◐ agent working · 3m · 4 tools\n  ◐ box: train.py · 540% CPU · 12:50\n'
+                  '▾ ✔ DONE\n  docs ████ 100.0% · 5/5\n')
+        with open(os.path.join(self.lib, 'statusline.sh'), 'w') as f:
+            f.write('#!/bin/sh\n[ "$PB_FULL" = 1 ] && [ "$PB_UNFOLD" = 1 ] || exit 1\ncat > /dev/null\nprintf %s "$ROWS"\n')
+        env = dict(os.environ, PROGRESS_DIR=self.root, ROWS=status)
+        before = int(time.time())
+        r = subprocess.run([sys.executable, os.path.join(self.lib, 'checkpoint.py'), 'end', 'today'], env=env, capture_output=True, text=True, check=True)
+        self.assertEqual(r.stdout.strip(), 'overnight checkpoint: 3 running')
+        with open(os.path.join(self.root, '.state', 'overnight.json')) as f:
+            data = json.load(f)
+        self.assertGreaterEqual(data['since'], before)
+        self.assertEqual(data['label'], 'end today')
+        self.assertEqual(data['running'], [
+            {'name': 'arts-classify', 'pct': 15.7, 'done': 1420, 'total': 9034},
+            {'name': 'agent'},
+            {'name': 'box: train.py'},
+        ])
+
+    def test_no_status_script_writes_an_empty_checkpoint(self):
+        env = dict(os.environ, PROGRESS_DIR=self.root)
+        subprocess.run([sys.executable, os.path.join(self.lib, 'checkpoint.py')], env=env, capture_output=True, check=True)
+        with open(os.path.join(self.root, '.state', 'overnight.json')) as f:
+            data = json.load(f)
+        self.assertEqual((data['label'], data['running']), ('checkpoint', []))
 
 
 if __name__ == '__main__':

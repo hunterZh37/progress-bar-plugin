@@ -11,8 +11,9 @@ Reads status lines on stdin and prints:
 Jobs that vanish show as "finished HH:MM" for 30 min, unless their last row said starting with no progress.
 Duplicate rows of one job are merged. A trailing status word (working, starting…) is not part of a job's name.
 A stopped row (■) whose job log ends with a finish line counts as done, not a problem.
-Folded sections (~/.claude-progress/.state/folded.txt) show as one line with a count.
+Folded sections (~/.claude-progress/.state/folded.txt) show as one line with a count, unless PB_UNFOLD=1.
 With --summary it prints one count line instead (the status line does this while the Status panel is on).
+It ends with "☀ recap ready" while an overnight checkpoint (.state/overnight.json) is 4 h old or the panel saw a sleep.
 RUNNING rows get a spinner, or a yellow "stuck" mark when their numbers have not moved for
 ~/.claude-progress/.state/stuck-minutes (default 10) minutes. Stuck rows sort first.
 Job names link to their progress file, or to a URL from ~/.claude-progress/links.txt ("<regex> | <url>").
@@ -34,6 +35,7 @@ SPIN = '◐◓◑◒'  # 4 frames: a full turn every 4 s at refreshInterval 1
 ELAPSED = re.compile(r'^(\d+h)?\d+m$|^\d+s$|^ETA ')
 CPU = re.compile(r'\d+(\.\d+)?% CPU')
 LIVE_CHILD = 10 * 60
+AWAY = 4 * 3600
 
 
 def load_events():
@@ -223,7 +225,7 @@ def main(stdin, now, summary=False):
         f = os.path.join(ROOT, slugify(n) + '.json')
         return l.replace(n, link(n, 'file://' + f), 1) if os.path.exists(f) else l
 
-    folded = set((read(os.path.join(ROOT, '.state', 'folded.txt')) or '').split())
+    folded = set() if os.environ.get('PB_UNFOLD') == '1' else set((read(os.path.join(ROOT, '.state', 'folded.txt')) or '').split())
     out = []
 
     try:
@@ -289,7 +291,10 @@ def main(stdin, now, summary=False):
     todo = parse_todo(read(os.path.join(ROOT, 'todo.txt')) or '')
     if summary:
         n_err = ev.unseen(now) if ev else 0
-        return [summary_line(groups, sum(len(v) for v in todo.values()), sum(1 for l in groups['running'] if stuck_for(l) is not None), n_err)] + other
+        line = summary_line(groups, sum(len(v) for v in todo.values()), sum(1 for l in groups['running'] if stuck_for(l) is not None), n_err)
+        if recap_ready(now):
+            line += ' · \033[2m☀ recap ready\033[0m'
+        return [line] + other
     if todo:
         n_items = sum(len(v) for v in todo.values())
         if 'todo' in folded:
@@ -356,6 +361,15 @@ def log_events(ev, groups, seen, now, stuck_for):
                 ev.once('problem:' + k, 'error', n, ev.nice(n) + ': problem', l, ev.log_of(n))
     except Exception:
         pass
+
+
+def recap_ready(now):
+    """An overnight checkpoint (from checkpoint.py or /progress-bar checkpoint) that is 4 h old, or marked woke by the panel."""
+    try:
+        cp = json.loads(read(os.path.join(ROOT, '.state', 'overnight.json')) or 'null')
+        return isinstance(cp, dict) and bool(cp.get('since')) and (bool(cp.get('woke')) or now - float(cp['since']) >= AWAY)
+    except Exception:
+        return False
 
 
 def summary_line(groups, n_todo, n_stuck, n_err=0):
