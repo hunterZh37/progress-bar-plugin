@@ -9,6 +9,7 @@ import { resolveHome } from './home'
 import { markHandled, readInbox } from './inbox'
 import { isDarwin } from './mac'
 import { moveItem, nextPrompt, rankTodos, todoRows as layoutTodos } from './priority'
+import { sessionProject } from './project'
 import { FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, slug } from './render'
 import type { Checkpoint, Conn, Ev, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
 
@@ -36,7 +37,6 @@ const COLUMNS = 52
 const SCRIPT_REL = '.claude/progress-bar/statusline.sh'
 export const PANEL_FLAG_REL = '.claude-progress/.state/panel-on'
 const FOLDED_REL = '.claude-progress/.state/folded.txt'
-const TODO_REL = '.claude-progress/todo.txt'
 
 export const SECTION_KEYS = ['todo', 'running', 'done', 'waiting', 'problems'] as const
 type Key = (typeof SECTION_KEYS)[number]
@@ -47,6 +47,8 @@ const ICON: Record<Key, string> = { todo: '☐', running: '▶', waiting: '⏸',
 const foldedAtom = atom({ plugin: 'progress-bar', key: 'folded' } as const, [])
 const linesAtom = atom({ plugin: 'progress-bar', key: 'lines' } as const, [])
 const todosAtom = atom({ plugin: 'progress-bar', key: 'todos' } as const, [])
+// This session's project (its to-do list's name), from project.ts.
+const projectAtom = atom({ plugin: 'progress-bar', key: 'project' } as const, '')
 const menuAtom = atom({ plugin: 'progress-bar', key: 'menuFor' } as const, -1)
 // The same state connectors.ts writes; the scan wants each atom declared in the file that reads it.
 const connsAtom = atom({ plugin: 'progress-bar', key: 'conns' } as const, { at: 0, checking: false, login: '', list: [] })
@@ -340,10 +342,12 @@ async function readFolded($: EngineInterface, h: string): Promise<string[]> {
   return keys
 }
 
-/** Reads todo.txt into the to-dos atom, done ones included. */
+/** Reads this project's to-do list (project.ts) into the to-dos atom, done ones included. */
 async function readTodos($: EngineInterface, h: string) {
+  const p = await sessionProject($, h)
+  if ((await read($, projectAtom)) !== p.slug) await update($, projectAtom, () => p.slug)
   let raw = ''
-  try { raw = String(await $.fs.read(`${h}/${TODO_REL}`)) } catch { raw = '' }
+  try { raw = String(await $.fs.read(p.path)) } catch { raw = '' }
   const out: Todo[] = parseTodo(raw).map(t => ({ owner: t.heading, text: t.text.split(' | ')[0]!.trim(), done: t.done, line: t.line }))
   const prev = await read($, todosAtom)
   if (JSON.stringify(prev) !== JSON.stringify(out)) await update($, todosAtom, () => out)
@@ -365,7 +369,7 @@ const itemText = (l: string) => l.trim().replace(/^x\s+/i, '').split(' | ')[0]!.
  * (another session adds a line), so the line number alone could hit the wrong item.
  */
 export async function todoAction($: EngineInterface, h: string, line: number, action: 'done' | 'todo' | 'delete', text = '') {
-  const file = `${h}/${TODO_REL}`
+  const file = (await sessionProject($, h)).path
   try {
     const lines = String(await $.fs.read(file)).split('\n')
     const same = (l: string) => itemText(l) === text.trim()
@@ -383,7 +387,7 @@ export async function todoAction($: EngineInterface, h: string, line: number, ac
 
 /** Move up or Move down: renumbers the item's heading in todo.txt. Matches the item by its text. */
 export async function todoMove($: EngineInterface, h: string, text: string, dir: 'up' | 'down') {
-  const file = `${h}/${TODO_REL}`
+  const file = (await sessionProject($, h)).path
   try {
     const out = moveItem(String(await $.fs.read(file)), text, dir)
     if (out !== null) await $.fs.write(file, out)
@@ -391,11 +395,22 @@ export async function todoMove($: EngineInterface, h: string, text: string, dir:
   await pollPanel($, h)
 }
 
-/** Runs the status line script in full and keeps its lines. */
+/**
+ * The status line's stdin for this session: its id and folder, so the script shows this session's bars
+ * (agents-<session>.txt, and shared files todos/lines.txt gives its project) and group.py its project's to-dos.
+ */
+export async function sessionInput($: EngineInterface, h: string): Promise<string> {
+  let session_id = ''
+  try { session_id = await $.session.id() } catch { session_id = '' }
+  const { cwd } = await sessionProject($, h)
+  return JSON.stringify({ session_id, cwd, workspace: { current_dir: cwd } })
+}
+
+/** Runs the status line script in full, as this session, and keeps its lines. */
 export async function pollPanel($: EngineInterface, h: string) {
   if (!h) return
   try {
-    const { stdout } = await $.process.run(['/bin/sh', `${h}/${SCRIPT_REL}`], { stdin: '{}', env: { PB_FULL: '1' }, timeoutMs: 8000 })
+    const { stdout } = await $.process.run(['/bin/sh', `${h}/${SCRIPT_REL}`], { stdin: await sessionInput($, h), env: { PB_FULL: '1' }, timeoutMs: 8000 })
     const lines = stripAnsi(stdout).split('\n').filter(l => l.trim())
     const prev = await read($, linesAtom)
     if (prev.join('\n') !== lines.join('\n')) await update($, linesAtom, () => lines)
@@ -586,6 +601,7 @@ export function registerPanel(on: On) {
     const lines = await read($, linesAtom)
     const folded = new Set(await read($, foldedAtom))
     const todos = await read($, todosAtom)
+    const project = await read($, projectAtom)
     const menuFor = await read($, menuAtom)
     const conns = await read($, connsAtom)
     const tab = await read($, tabAtom)
@@ -965,6 +981,7 @@ export function registerPanel(on: On) {
         {tabBar}
         {inboxBlock}
         {banner}
+        {openTodos === 0 && <Text key="no-todos" dimColor>{`No to-dos for ${project || 'this project'}. Add one with /progress-bar todo add`}</Text>}
         {sections.length === 0 && <Text dimColor>Nothing running.</Text>}
         {sections.map((sec, n) => {
           const isFolded = folded.has(sec.key) || sec.folded

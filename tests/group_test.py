@@ -458,5 +458,135 @@ class Checkpoint(unittest.TestCase):
         self.assertEqual((data['label'], data['running']), ('checkpoint', []))
 
 
+RENDER_SRC = open(os.path.join(os.path.dirname(__file__), '..', 'hooks', 'render.ts'), encoding='utf-8').read()
+
+
+def status_script():
+    """statusScript() from hooks/render.ts with no chained command: its single-quoted lines, JS escapes undone."""
+    body = re.search(r'export function statusScript\(prev\?: string\): string \{\n  return \[\n(.*?)\n  \]\.join', RENDER_SRC, re.S).group(1)
+    out = []
+    for l in body.split('\n'):
+        l = l.strip()
+        if l.startswith('`prev='):
+            out.append("prev=''")
+            continue
+        m = re.match(r"^'(.*)',$", l)
+        if m:
+            out.append(re.sub(r"\\(.)", r'\1', m.group(1)))
+    return '\n'.join(out) + '\n'
+
+
+class Projects(unittest.TestCase):
+    """Per-project to-dos: todos/projects.txt, then the git root under home, else todo.txt with no folder."""
+    def setUp(self):
+        self.home = tempfile.mkdtemp()
+        self.root = os.path.join(self.home, '.claude-progress')
+        os.makedirs(os.path.join(self.root, '.state'))
+        os.makedirs(os.path.join(self.root, 'todos'))
+        self.g = load(self.root)
+        self.g.HOME = self.home
+        os.makedirs(os.path.join(self.home, 'Desktop', 'NomBot', '.git'))
+        os.makedirs(os.path.join(self.home, 'Desktop', 'NomBot', 'web', 'src'))
+        os.makedirs(os.path.join(self.home, 'work', 'Cyber Portal', '.git'))
+        os.makedirs(os.path.join(self.home, 'loose', 'dir'))
+        os.environ.pop('PB_CWD', None)
+
+    def tearDown(self):
+        os.environ.pop('PB_CWD', None)
+        shutil.rmtree(self.home)
+
+    def write(self, rel, text):
+        with open(os.path.join(self.root, rel), 'w') as f:
+            f.write(text)
+
+    def rel(self, cwd):
+        return os.path.relpath(self.g.todo_file(cwd), self.root)
+
+    def test_git_root_slug_from_any_subfolder(self):
+        self.assertEqual(self.rel(os.path.join(self.home, 'Desktop', 'NomBot', 'web', 'src')), 'todos/desktop-nombot.txt')
+        self.assertEqual(self.rel(os.path.join(self.home, 'work', 'Cyber Portal')), 'todos/work-cyber-portal.txt')
+
+    def test_no_repo_uses_the_folder_and_no_folder_the_old_list(self):
+        self.assertEqual(self.rel(os.path.join(self.home, 'loose', 'dir')), 'todos/loose-dir.txt')
+        self.assertEqual(self.rel(''), 'todo.txt')
+
+    def test_map_longest_prefix_and_legacy_file(self):
+        self.write('todos/projects.txt', '# prefix<TAB>project\n~/Desktop/NomBot\ttodo.txt\n~/.claude-progress\ttodo.txt\n~/Desktop/NomBot/web  web-app\n')
+        self.assertEqual(self.rel(os.path.join(self.home, 'Desktop', 'NomBot')), 'todo.txt')
+        self.assertEqual(self.rel(self.root), 'todo.txt')
+        self.assertEqual(self.rel(os.path.join(self.home, 'Desktop', 'NomBot', 'web', 'src')), 'todos/web-app.txt')
+        self.assertEqual(self.rel(os.path.join(self.home, 'Desktop', 'NomBotX')), 'todos/desktop-nombotx.txt')
+
+    def test_each_project_shows_its_own_list(self):
+        self.write('todos/projects.txt', '~/Desktop/NomBot\ttodo.txt\n')
+        self.write('todo.txt', '[mac]\nnombot thing\n')
+        self.write('todos/work-cyber-portal.txt', '[you]\npatch the portal\n')
+        os.environ['PB_CWD'] = os.path.join(self.home, 'Desktop', 'NomBot')
+        self.assertEqual([strip_links(l) for l in self.g.main(io.StringIO(''), T0)], ['▾ ☐ TO-DO', '  MAC: nombot thing'])
+        os.environ['PB_CWD'] = os.path.join(self.home, 'work', 'Cyber Portal')
+        self.assertEqual([strip_links(l) for l in self.g.main(io.StringIO(''), T0)], ['▾ ☐ TO-DO', '  YOU: patch the portal'])
+        os.environ['PB_CWD'] = os.path.join(self.home, 'loose', 'dir')
+        self.assertEqual(self.g.main(io.StringIO(''), T0), [])
+
+    def test_a_job_another_session_sees_never_finishes_here(self):
+        os.environ['PB_SID'] = 'aaaa'
+        try:
+            self.g.main(io.StringIO('▶ hunty load ████░░░░ 40.0% · 2/5\n'), T0)
+            os.environ['PB_SID'] = 'bbbb'
+            self.assertEqual(self.g.main(io.StringIO(''), T0 + 5), [])
+            os.environ['PB_SID'] = 'aaaa'
+            self.assertIn('  hunty load · finished', [strip_links(l)[:23] for l in self.g.main(io.StringIO(''), T0 + 5)])
+            self.assertTrue(os.path.exists(os.path.join(self.root, '.state', 'group-seen-aaaa.json')))
+        finally:
+            os.environ.pop('PB_SID', None)
+
+
+class StatusScript(unittest.TestCase):
+    """The installed status line script: each session sees its own line files, plus shared ones todos/lines.txt gives its project."""
+    def setUp(self):
+        self.home = tempfile.mkdtemp()
+        self.lines = os.path.join(self.home, '.claude-progress', '.lines')
+        os.makedirs(self.lines)
+        os.makedirs(os.path.join(self.home, '.claude-progress', 'todos'))
+        os.makedirs(os.path.join(self.home, 'Desktop', 'NomBot'))
+        os.makedirs(os.path.join(self.home, 'cyber'))
+        self.script = os.path.join(self.home, 'statusline.sh')
+        with open(self.script, 'w') as f:
+            f.write(status_script())
+        for name, text in [('agents-aaaa.txt', '▶ nombot-agent working'), ('agents-bbbb.txt', '▶ cyber-agent working'),
+                           ('linux.txt', '▶ hunty gpu job'), ('jobs.txt', '▶ shared job')]:
+            with open(os.path.join(self.lines, name), 'w') as f:
+                f.write(text)
+        with open(os.path.join(self.home, '.claude-progress', 'todos', 'projects.txt'), 'w') as f:
+            f.write('~/Desktop/NomBot\ttodo.txt\n')
+        with open(os.path.join(self.home, '.claude-progress', 'todos', 'lines.txt'), 'w') as f:
+            f.write('linux.txt\ttodo.txt\njobs.txt  todo.txt\n')
+
+    def tearDown(self):
+        shutil.rmtree(self.home)
+
+    def run_(self, stdin, scope=None):
+        if scope:
+            os.makedirs(os.path.join(self.home, '.claude-progress', '.state'), exist_ok=True)
+            with open(os.path.join(self.home, '.claude-progress', '.state', 'scope'), 'w') as f:
+                f.write(scope)
+        env = dict(os.environ, HOME=self.home, PB_FULL='1')
+        out = subprocess.run(['/bin/sh', self.script], input=json.dumps(stdin), capture_output=True, text=True, env=env).stdout
+        return sorted(l for l in out.split('\n') if l.strip())
+
+    def test_nombot_session_sees_its_agents_and_its_shared_files(self):
+        out = self.run_({'session_id': 'aaaa', 'workspace': {'current_dir': os.path.join(self.home, 'Desktop', 'NomBot')}})
+        self.assertEqual(out, ['▶ hunty gpu job', '▶ nombot-agent working', '▶ shared job'])
+
+    def test_other_project_session_sees_only_its_own(self):
+        out = self.run_({'session_id': 'bbbb', 'cwd': os.path.join(self.home, 'cyber')})
+        self.assertEqual(out, ['▶ cyber-agent working'])
+
+    def test_scope_all_and_no_session_see_everything(self):
+        every = ['▶ cyber-agent working', '▶ hunty gpu job', '▶ nombot-agent working', '▶ shared job']
+        self.assertEqual(self.run_({}), every)
+        self.assertEqual(self.run_({'session_id': 'bbbb', 'cwd': os.path.join(self.home, 'cyber')}, scope='all'), every)
+
+
 if __name__ == '__main__':
     unittest.main()

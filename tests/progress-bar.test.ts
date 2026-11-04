@@ -10,6 +10,7 @@ import { PANE, badge, evId, fitLabel, labelCol, machineTitle, machines, maxMeter
 import { EVENTS_PY, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from '../hooks/events'
 import { REPOS_REL, parseBranches, parseCommits, webUrl } from '../hooks/github'
 import { blocker, clip, doneEvents, isRunningRow, jobMachine, keyWords, moveItem, nextPrompt, nextReady, parseCaps, parseItem, parseMode, rankTodos, ranked, rowName, shortJob, todoRows } from '../hooks/priority'
+import { fileOf, parseProjects, projectSlug, resolveProject } from '../hooks/project'
 import { eta, expandHome, line, lines, parseProgress, parseTitles, pickMeta, parseWatch, prevOf, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoItems, todoList } from '../hooks/render'
 
 const NOW = 1_800_000_000_000
@@ -146,7 +147,7 @@ const run = async ($: Engine, args: string) => {
 }
 
 /** The world beneath the plugin: a home folder with one subagent and one job file. */
-function world(on: On, opts: { statusLine?: { type: string; command: string }; scriptExists?: boolean; os?: string } = {}) {
+function world(on: On, opts: { statusLine?: { type: string; command: string }; scriptExists?: boolean; os?: string; gitDir?: string } = {}) {
   const written: Record<string, string> = {}
   const ran: string[][] = []
   mock.clock(on, { now: NOW })
@@ -168,12 +169,12 @@ function world(on: On, opts: { statusLine?: { type: string; command: string }; s
       [`${DIR}/build-docs.json`]: '{"done":1,"total":4,"step":"render"}',
       [`${DIR}/nightly-import.json`]: `{"done":4,"total":5,"step":"batch 4","startedAt":${NOW - 12 * 60_000}}`,
     }
-    const text = files[e.path] ?? (e.path.endsWith('/todo.txt') ? written[e.path] : undefined)
+    const text = files[e.path] ?? (e.path.endsWith('/todo.txt') || e.path.includes('/todos/') ? written[e.path] : undefined)
     if (text === undefined) throw new Error('ENOENT')
     return { value: text }
   })
   on('fs.write', (_, e) => { written[e.path] = e.text; return { value: undefined } })
-  on('fs.exists', () => ({ value: !!opts.scriptExists }))
+  on('fs.exists', (_, e) => ({ value: opts.gitDir ? e.path === opts.gitDir : !!opts.scriptExists }))
   on('settings.read', () => ({ value: (opts.statusLine ? { statusLine: opts.statusLine } : {}) as never }))
   on('process.run', (_, e) => {
     ran.push([...e.argv])
@@ -259,7 +260,7 @@ test('/progress-bar todo add, list, done and clear write todo.txt', async ($, on
   const { written } = world(on)
   const file = `${DIR}/todo.txt`
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  expect((await run($, 'todo')).text).toContain('No to-dos.')
+  expect((await run($, 'todo')).text).toBe('No to-dos for todo.txt. Add one with /progress-bar todo add [name] <text>')
   expect((await run($, 'todo add [Mac] Run Import')).text).toContain('Added to [Mac].')
   await run($, 'todo add Call Sam')
   expect(written[file]).toContain('[Mac]\nRun Import\nCall Sam\n')
@@ -268,6 +269,34 @@ test('/progress-bar todo add, list, done and clear write todo.txt', async ($, on
   expect((await run($, 'todo done sam')).text).toBe('Done: Call Sam')
   expect((await run($, 'todo clear')).text).toBe('Removed 2 done items.')
   expect(written[file]).not.toContain('Run Import')
+})
+
+test('per-project to-dos: map by longest prefix, else the git root under home, no folder is todo.txt', async () => {
+  const map = '# prefix<TAB>project\n~/Desktop/NomBot\ttodo.txt\n~/.claude-progress\ttodo.txt\n~/Desktop/NomBot/web  Web App\n'
+  expect(parseProjects(map, HOME)).toEqual([[`${HOME}/Desktop/NomBot`, 'todo.txt'], [`${HOME}/.claude-progress`, 'todo.txt'], [`${HOME}/Desktop/NomBot/web`, 'Web App']])
+  expect(projectSlug(`${HOME}/Desktop/NomBot`, HOME)).toBe('desktop-nombot')
+  expect(projectSlug(HOME, HOME)).toBe('home')
+  expect(projectSlug('/srv/Cyber Portal/', HOME)).toBe('srv-cyber-portal')
+  expect(fileOf('Web App')).toBe('todos/web-app.txt')
+  expect(resolveProject(`${HOME}/Desktop/NomBot/api`, `${HOME}/Desktop/NomBot`, map, HOME)).toEqual({ slug: 'desktop-nombot', file: 'todo.txt' })
+  expect(resolveProject(`${HOME}/.claude-progress`, '', map, HOME).file).toBe('todo.txt')
+  expect(resolveProject(`${HOME}/Desktop/NomBot/web/src`, `${HOME}/Desktop/NomBot`, map, HOME)).toEqual({ slug: 'web-app', file: 'todos/web-app.txt' })
+  expect(resolveProject(`${HOME}/Desktop/NomBotX`, `${HOME}/Desktop/NomBotX`, map, HOME).file).toBe('todos/desktop-nombotx.txt')
+  expect(resolveProject(`${HOME}/code/cyber/app`, `${HOME}/code/cyber`, '', HOME)).toEqual({ slug: 'code-cyber', file: 'todos/code-cyber.txt' })
+  expect(resolveProject(`${HOME}/scratch`, '', '', HOME).file).toBe('todos/scratch.txt')
+  expect(resolveProject('', '', map, HOME)).toEqual({ slug: 'todo.txt', file: 'todo.txt' })
+})
+
+test('/progress-bar todo in another project uses its own list, and an unknown one starts empty', async ($, on) => {
+  const { written } = world(on, { gitDir: `${HOME}/code/cyber/.git` })
+  on('session.cwd', () => ({ value: `${HOME}/code/cyber/app` }))
+  written[`${DIR}/todo.txt`] = '[mac]\nnombot thing\n'
+  await $.session.start({ cwd: `${HOME}/code/cyber/app`, surface: 'terminal', isInteractive: true })
+  expect((await run($, 'todo')).text).toBe('No to-dos for code-cyber. Add one with /progress-bar todo add [name] <text>')
+  await run($, 'todo add [you] patch the portal')
+  expect(written[`${DIR}/todos/code-cyber.txt`]).toContain('[you]\npatch the portal\n')
+  expect(written[`${DIR}/todo.txt`]).toBe('[mac]\nnombot thing\n')
+  expect((await run($, 'todo')).text).toBe('[you]\n  1. patch the portal')
 })
 
 test('mac-clicks parsing', async () => {
@@ -454,7 +483,7 @@ test('the panel draws sections and rows, and a header press writes folded.txt', 
   const { ran, opened } = panelWorld(on, files)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   expect(opened).toEqual([PANE])
-  expect(ran).toContainEqual({ argv: ['/bin/sh', SCRIPT], env: { PB_FULL: '1' }, stdin: '{}' })
+  expect(ran).toContainEqual({ argv: ['/bin/sh', SCRIPT], env: { PB_FULL: '1' }, stdin: '{"session_id":"","cwd":"","workspace":{"current_dir":""}}' })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { title: 'Status', isFocused: false, bodyColumns: 52, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } })
   expect((await ui.find({ type: 'Text', text: /^  You$/ }))?.text).toBe('  You')
   expect((await ui.find({ type: 'Button', text: /call Sam/ }))?.text).toBe('    call Sam')
@@ -1053,7 +1082,7 @@ test('auto-next: machine, mode, caps, prompt and done events', async () => {
   expect(parseMode('on\n')).toBe('on')
   expect(parseMode('weird')).toBe('ask')
   expect(parseCaps('mac=4\nbox: 1\n')).toEqual({ mac: 4, hunty: 2, box: 1 })
-  expect(nextPrompt('dependabot', 'https://gh.io/x')).toBe('Next up from the to-do list: dependabot (https://gh.io/x). Start it with a progress bar, and take it off todo.txt once it runs.')
+  expect(nextPrompt('dependabot', 'https://gh.io/x')).toBe('Next up from the to-do list: dependabot (https://gh.io/x). Start it with a progress bar, and mark it done on the to-do list (/progress-bar todo done) once it runs.')
   const ev = ['{"ts": 100, "level": "success", "source": "a", "title": "A job done"}', '{"ts": 300, "level": "success", "source": "b", "title": "B done"}', '{"ts": 300, "level": "warning", "source": "c", "title": "C done"}', 'bad'].join('\n')
   expect(doneEvents(ev, 200)).toEqual([{ ts: 300, source: 'b', title: 'B' }])
   expect(rowName('⚠ stuck 16m Load 2019-20 filings █████░ 66.7% · 6/9')).toBe('Load 2019-20 filings')

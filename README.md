@@ -20,7 +20,7 @@ Live progress bars and a to-do list in the Claude Code status line. One line per
 - **Skill:** `progress-reporting` tells Claude to write those files for multi-step work and to ask subagents to do the same.
 - **Groups:** lines sort into **TO-DO**, **PROBLEMS**, **RUNNING**, **WAITING** and **DONE**. A job that ends shows as `finished 14:05` for 30 minutes, unless its progress file still exists. Duplicate rows of one job merge. A row is **DONE** only on `✔`, `100%`, or `· done` at the end (or `· done:`), so `done in 1h` stays RUNNING. `waiting`, `pending` and `waits for` go to **WAITING**.
 - **Spinner and stuck rows:** each RUNNING row gets a spinner (and `in progress` when it has no step). A row whose numbers have not moved for 10 minutes shows a yellow `⚠ stuck 14m` instead and sorts first. An agent's tool count counts as movement, so an agent working through a long step is not stuck. Change the 10 in `~/.claude-progress/.state/stuck-minutes`.
-- **To-dos:** `~/.claude-progress/todo.txt` shows first. Claude keeps it current. Number items to set their priority, and mark what waits on a running job.
+- **To-dos:** each project's own list shows first (see Per-project to-dos). Claude keeps it current. Number items to set their priority, and mark what waits on a running job.
 - **Auto-next:** when a job finishes, the top ready to-do of its machine starts by itself (or is suggested, the default).
 - **Links:** job names open their progress file, or a URL you set in `links.txt`.
 - **Status line:** a small script prints all this above your existing status line.
@@ -152,7 +152,7 @@ A psql script, one step per statement (`REFRESH MATERIALIZED VIEW` reports no pr
 
 ## To-dos
 
-`~/.claude-progress/todo.txt`, shown first in the status line:
+This project's list (see Per-project to-dos below), shown first in the status line:
 
 ```
 # comments start with #
@@ -180,14 +180,43 @@ Load the 2026 batch
 When a RUNNING job finishes (a `<job> done` event in `events.jsonl`, logged once per finish by the grouper), the plugin picks the top ready to-do of that job's machine, plus any machine with an item that was waiting for that job, and asks Claude to start it with this prompt:
 
 ```
-Next up from the to-do list: <item>. Start it with a progress bar, and take it off todo.txt once it runs.
+Next up from the to-do list: <item>. Start it with a progress bar, and mark it done on the to-do list (/progress-bar todo done) once it runs.
 ```
 
 - **Machine:** a `<host>: name` job, or a title that starts with a heading name (`Hunty CPU batch`), belongs to that heading. Any other job belongs to `[mac]` or `[local]`. `[you]` items never start on their own.
 - **Mode:** `/progress-bar autonext on|off|ask`, saved in `~/.claude-progress/.state/autonext`. `on` sends the prompt. `ask` (the default) shows a toast and puts the prompt in the prompt box as a suggestion, so Tab starts it. `off` does nothing. The panel menu's `▶ Start` sends the same prompt for any ready item.
 - **Caps:** `~/.claude-progress/.state/caps` holds one `machine=N` per line (default `mac=3`, `hunty=2`). A machine with N or more RUNNING rows waits, and the next one starts once a row finishes.
 - **Once:** every open session checks every 5 seconds, and only one acts on a finish. It claims the finish with a folder under `~/.claude-progress/.state/autonext-claims/`, and holds the item for 6 hours so two finishes never start the same to-do. The session that ran the finished agent goes first. Others wait 20 seconds.
+- **Per project:** a session starts items from its own project's list only.
 - **Claude keeps it current:** the skill tells Claude to add items when work is queued or handed to you and to mark them done when finished.
+
+## Per-project to-dos
+
+Each session shows the to-dos of its own project, and only its own running and done jobs.
+
+- **Which list:** the session's folder picks it. The git root above that folder, as a path under home, names the list: a session in `~/code/shop/web` uses `~/.claude-progress/todos/code-shop.txt`. A folder outside any repo uses its own path.
+- **Map folders:** `~/.claude-progress/todos/projects.txt` holds `<path prefix><TAB><project>` rows. The longest prefix that holds the folder wins. A project ending `.txt` is a file under `~/.claude-progress`, so `todo.txt` keeps the old single list for those folders. Any other name means `todos/<name>.txt`.
+
+```
+# prefix<TAB>project
+~/Desktop/NomBot	todo.txt
+~/label-logs	todo.txt
+~/code/shop/web	shop-web
+```
+
+- **New project:** with no file yet, the list is empty. The panel says `No to-dos for <project>. Add one with /progress-bar todo add`. The first add creates the file.
+- **Everywhere:** the status line TO-DO, the Status panel, the to-do menu, `/progress-bar todo ...` and auto-next all use the session's list. A run with no folder (a script, a test) reads `todo.txt`.
+- **Shared job lines:** `jobs.txt` and other machines' files (like `linux.txt`) show only in sessions of the project that `~/.claude-progress/todos/lines.txt` gives them to, as `<line file><TAB><project>` with the project named as in `projects.txt`. `echo all > ~/.claude-progress/.state/scope` shows everything everywhere again.
+
+```
+linux.txt	todo.txt
+jobs.txt	todo.txt
+```
+
+- **Panel too:** the Status panel runs the status line script as its own session (its id and folder on stdin), so RUNNING and DONE match that session's status line.
+- **Ended jobs per session:** `group.py` keeps the jobs each session saw in `.state/group-seen-<session>.json`, so a job another session shows never counts as finished here.
+- **Inbox:** stays one list for every session.
+- **Updates:** each session start rewrites an installed status line script and `group.py` with the plugin's version.
 
 ## Links
 
@@ -203,9 +232,9 @@ The first match wins. Clicking needs a terminal with link support (iTerm2, WezTe
 ## How it works
 
 - The plugin lists subagents, counts their tool calls and reads the progress files.
-- It writes subagent lines to `~/.claude-progress/.lines/agents-<session>.txt` (one file per open session, so sessions never overwrite each other) and job lines to `jobs.txt`. Each session's status line shows only its own bars: `agents-<session>.txt` and any `.lines/*-<session>.txt` file. Shared files such as `jobs.txt` show only after `echo all > ~/.claude-progress/.state/scope`. At most 6 lines each. A JSON file counts as a job only if it has `done` and `total` or a `step`, so data files like `inbox.json` never show as jobs.
+- It writes subagent lines to `~/.claude-progress/.lines/agents-<session>.txt` (one file per open session, so sessions never overwrite each other) and job lines to `jobs.txt`. Each session's status line shows only its own bars: `agents-<session>.txt` and any `.lines/*-<session>.txt` file. Shared files such as `jobs.txt` show only in the project `todos/lines.txt` gives them to, or everywhere after `echo all > ~/.claude-progress/.state/scope`. At most 6 lines each. A JSON file counts as a job only if it has `done` and `total` or a `step`, so data files like `inbox.json` never show as jobs.
 - The status line script prints every `.lines/*.txt` file changed in the last 2 minutes. Other tools can drop their own lines there too.
-- `group.py` sorts those lines into sections, adds the to-dos and links, and remembers ended jobs in `~/.claude-progress/.state/group-seen.json`.
+- `group.py` sorts those lines into sections, adds the to-dos and links, and remembers ended jobs in `~/.claude-progress/.state/group-seen-<session>.json`.
 - With `events.py` beside it, `group.py` logs done, stuck and problem rows once each to `~/.claude-progress/events.jsonl` (sent keys in `.state/events-sent.json`) and starts a log folder scan in the background at most every 30 seconds (offsets in `.state/log-offsets.json`).
 
 ## Status panel
@@ -243,7 +272,7 @@ The status line then reads:
 - **Needs setup:** the panel runs `~/.claude/progress-bar/statusline.sh` with `PB_FULL=1` every second while it is open. `panel on` refreshes that script and `group.py` and keeps your chained status line.
 - **Fold:** press a header, or its hotkey (`1` to-do, `2` running, `3` done, `4` waiting, `5` problems). It writes `~/.claude-progress/.state/folded.txt`, the same file `/progress-bar fold` uses.
 - **Off by default:** `panel on` writes `~/.claude-progress/.state/panel-on`. With that file the pane opens at session start and the status line prints the summary. `panel off` deletes it and closes the pane. `/progress-bar panel` opens it once without turning it on.
-- **To-do menu:** click a to-do for Done, Up, Down, Start (a ready machine item), Delete or Move back to to-do (a checked-off one). It edits `~/.claude-progress/todo.txt`, on the line that still holds that item's text, so a line added since the panel drew never hits the wrong item. TO-DO lists open items only. Checked-off ones move to DONE under **Checked-off to-dos**, after finished jobs, and count there.
+- **To-do menu:** click a to-do for Done, Up, Down, Start (a ready machine item), Delete or Move back to to-do (a checked-off one). It edits this project's list, on the line that still holds that item's text, so a line added since the panel drew never hits the wrong item. TO-DO lists open items only. Checked-off ones move to DONE under **Checked-off to-dos**, after finished jobs, and count there.
 - **Rows:** to-dos one per line under each owner, running jobs one line each, a press opening the details (see **Running cards**), done jobs dimmed with their finish time.
 - **Tabs:** `▌List  │   Connectors  │   GitHub  │   Log`, the shown one marked `▌`. **List** (the default) shows the sections above. **Connectors** shows your connectors, its label adding `!N` when N need attention. **GitHub** shows your repos. **Log** shows the events log, its label adding `!N` for unseen errors.
 

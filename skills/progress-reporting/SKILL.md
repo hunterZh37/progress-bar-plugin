@@ -76,9 +76,9 @@ python3 ~/.claude/progress-bar/events.py add error nightly-import "Nightly impor
 
 Levels: `error`, `warning`, `success`, `info`. Keep the title to a few plain words. To have job logs scanned for errors, add their folder to `~/.claude-progress/log-dirs.txt`.
 
-## To-dos: keep `~/.claude-progress/todo.txt` current
+## To-dos: keep this project's list current
 
-The status line shows open to-dos first, in a `☐ TO-DO` section. Keep the list true to what is left to do.
+Each project has its own list: `~/.claude-progress/todos/<project>.txt` (the slug of the git root under home, so `~/code/shop` is `code-shop.txt`), unless `~/.claude-progress/todos/projects.txt` maps the folder to another file such as `todo.txt`. `/progress-bar todo` shows which list this session uses. The status line shows open to-dos first, in a `☐ TO-DO` section. Keep the list true to what is left to do.
 
 ```
 [you]
@@ -93,7 +93,7 @@ x Rebuild the index
 - **Short items:** a few words, the action first. Add ` | <url>` to make it clickable.
 - **Group by owner or machine** under `[name]` headings (`[you]`, `[mac]`, `[server]`). Any name works.
 - **Priority:** start machine items with `1. `, `2. ` (1 first). End one with `(after <job words>)` when it must wait for a running job. When a job finishes, the plugin may send "Next up from the to-do list: <item>": start that item with a progress bar and take it off the list.
-- Edit the file directly, or use `/progress-bar todo add [name] <text>`, `todo done <n|text>`, `todo clear`.
+- Prefer `/progress-bar todo add [name] <text>`, `todo done <n|text>`, `todo clear`, which always pick this project's list. Edit the file directly only when you know which one it is.
 
 ## Shell helper
 

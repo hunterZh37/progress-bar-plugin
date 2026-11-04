@@ -6,7 +6,7 @@ export const GROUP_PY = String.raw`#!/usr/bin/env python3
 """progress-bar grouper. Written by /progress-bar setup. Safe to edit or delete.
 
 Reads status lines on stdin and prints:
-  TO-DO (from ~/.claude-progress/todo.txt), then PROBLEMS / RUNNING / WAITING / DONE,
+  TO-DO (this project's list, see todo_file), then PROBLEMS / RUNNING / WAITING / DONE,
   then any line that is not a job (your own status line) as is.
 Jobs that vanish show as "finished HH:MM" for 30 min, unless their last row said starting with no progress.
 Duplicate rows of one job are merged. A trailing status word (working, starting…) is not part of a job's name.
@@ -32,6 +32,13 @@ import json, os, re, subprocess, sys, time
 HOME = os.path.expanduser('~')
 ROOT = os.environ.get('PROGRESS_DIR') or os.path.join(HOME, '.claude-progress')
 STATE = os.path.join(ROOT, '.state', 'group-seen.json')
+
+
+def state_file():
+    """Where the jobs seen are kept: per session (PB_SID from the status line script), so a job another
+    session's view leaves out never counts as finished here. No session: the shared group-seen.json."""
+    sid = re.sub(r'[^A-Za-z0-9_-]', '', os.environ.get('PB_SID', ''))[:12]
+    return os.path.join(ROOT, '.state', 'group-seen-' + sid + '.json') if sid else STATE
 KEEP = 30 * 60
 MARKS = '▶✔✖■'
 SPIN = '◐◓◑◒'  # 4 frames: a full turn every 4 s at refreshInterval 1
@@ -163,6 +170,50 @@ def blocker(after, running):
     return ''
 
 
+def _slug(p):
+    return re.sub(r'[^a-z0-9]+', '-', p.lower()).strip('-')
+
+
+def _under(p, prefix):
+    return p == prefix or p.startswith(prefix.rstrip('/') + '/')
+
+
+def todo_file(cwd=None):
+    """This project's to-do list, from PB_CWD (the session's folder the status line script passes).
+    ~/.claude-progress/todos/projects.txt ("<path prefix><TAB><slug or file>", longest prefix wins) maps first,
+    a value ending .txt being a file under ~/.claude-progress (todo.txt = the old single list).
+    Else todos/<slug>.txt, the slug from the git root (or the folder) under home: ~/Desktop/NomBot -> desktop-nombot.
+    No folder at all: todo.txt."""
+    cwd = (os.environ.get('PB_CWD', '') if cwd is None else cwd).rstrip('/')
+    if not cwd:
+        return os.path.join(ROOT, 'todo.txt')
+    best = None
+    for l in (read(os.path.join(ROOT, 'todos', 'projects.txt')) or '').splitlines():
+        l = l.strip()
+        m = re.match(r'^(.+?)(?:\t+|\s{2,})(\S.*)$', l)
+        if not l or l.startswith('#') or not m:
+            continue
+        pre = re.sub(r'^~(?=/|$)', lambda _: HOME, m.group(1).strip()).rstrip('/') or '/'
+        if _under(cwd, pre) and (best is None or len(pre) > len(best[0])):
+            best = (pre, m.group(2).strip())
+    if best:
+        v = best[1]
+        return os.path.join(ROOT, v.lstrip('/')) if v.endswith('.txt') else os.path.join(ROOT, 'todos', _slug(v) + '.txt')
+    root, d = '', cwd
+    while d:
+        if os.path.exists(os.path.join(d, '.git')):
+            root = d
+            break
+        up = os.path.dirname(d)
+        if up == d:
+            break
+        d = up
+    r = root or cwd
+    h = HOME.rstrip('/')
+    rel = r[len(h):] if _under(r, h) else r
+    return os.path.join(ROOT, 'todos', (_slug(rel) or ('home' if r == h else 'root')) + '.txt')
+
+
 def parse_todo(text, running=()):
     """{heading: [rendered item]} for open items. "x " = done (hidden), "text | url" = clickable.
     "N. " = priority (1 first, unnumbered after). "(after X)" is dim with "waits for" while X runs.
@@ -222,9 +273,11 @@ def main(stdin, now, summary=False):
     jobs = [l for l in jobs if best.get(slugify(name_of(l))) is l]
 
     try:
-        seen = json.loads(read(STATE) or '{}')
+        state = state_file()
+        fresh = not os.path.exists(state)
+        seen = json.loads(read(state) or '{}')
     except Exception:
-        seen = {}
+        state, fresh, seen = state_file(), False, {}
     ev = load_events()
     groups = {'problem': [], 'running': [], 'waiting': [], 'done': []}
     current = set()
@@ -252,11 +305,16 @@ def main(stdin, now, summary=False):
         if v.get('kind') != 'problem':
             groups['done'].append('✔ ' + v.get('name', s) + ' · finished ' + time.strftime('%H:%M', time.localtime(v.get('at', now))))
     try:
-        os.makedirs(os.path.dirname(STATE), exist_ok=True)
-        tmp = STATE + '.tmp'
+        os.makedirs(os.path.dirname(state), exist_ok=True)
+        tmp = state + '.tmp'
         with open(tmp, 'w') as f:
             json.dump(seen, f)
-        os.replace(tmp, STATE)
+        os.replace(tmp, state)
+        if fresh:  # a new session: drop the files of sessions quiet for 2 days
+            d = os.path.dirname(state)
+            for x in os.listdir(d):
+                if x != os.path.basename(state) and re.match(r'^group-seen-[A-Za-z0-9_-]+\.json$', x) and time.time() - os.path.getmtime(os.path.join(d, x)) > 2 * 86400:
+                    os.remove(os.path.join(d, x))
     except Exception:
         pass
 
@@ -336,7 +394,7 @@ def main(stdin, now, summary=False):
             out.append('  ' + (deco(i, body) if deco else body))
 
     run_names = [name_of(l) for l in groups['running']]
-    todo = parse_todo(read(os.path.join(ROOT, 'todo.txt')) or '', run_names + [nice(slugify(n), n, tt) for n in run_names])
+    todo = parse_todo(read(todo_file()) or '', run_names + [nice(slugify(n), n, tt) for n in run_names])
     if summary:
         n_err = ev.unseen(now) if ev else 0
         line = summary_line(groups, sum(len(v) for v in todo.values()), sum(1 for l in groups['running'] if stuck_for(l) is not None), n_err)

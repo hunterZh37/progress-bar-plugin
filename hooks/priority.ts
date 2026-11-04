@@ -153,7 +153,7 @@ export function parseCaps(s: string): Record<string, number> {
 
 /** The prompt auto-next sends. */
 export const nextPrompt = (body: string, url = '') =>
-  `Next up from the to-do list: ${body}${url ? ` (${url})` : ''}. Start it with a progress bar, and take it off todo.txt once it runs.`
+  `Next up from the to-do list: ${body}${url ? ` (${url})` : ''}. Start it with a progress bar, and mark it done on the to-do list (/progress-bar todo done) once it runs.`
 
 /** A status line row's job name, as group.py reads it. */
 export function rowName(l: string): string {

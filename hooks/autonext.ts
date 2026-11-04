@@ -13,6 +13,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import { resolveHome } from './home'
+import { sessionProject } from './project'
 import { blocker, doneEvents, isRunningRow, jobMachine, nextPrompt, openItems, parseCaps, parseMode, ranked, rowName } from './priority'
 import type { Mode } from './priority'
 import { FRESH_MS, parseTitles, pickMeta, slug } from './render'
@@ -77,8 +78,11 @@ async function runningRows($: EngineInterface, dir: string, now: number): Promis
       out.push({ name, title })
     }
   }
-  // The grouper's own view (every source it groups, not just .lines): .state/group-seen.json, or seen.txt of an older group.py.
-  for (const file of ['group-seen.json', 'seen.txt']) {
+  // The grouper's own view (every source it groups, not just .lines): .state/group-seen.json, each session's
+  // group-seen-<session>.json, or seen.txt of an older group.py.
+  let stateFiles: string[] = []
+  try { stateFiles = (await $.fs.list(`${dir}/.state`)).filter(f => f.kind === 'file' && /^group-seen(-[A-Za-z0-9_-]+)?\.json$/.test(f.name) && now - f.mtimeMs < 5 * 60_000).map(f => f.name) } catch { stateFiles = [] }
+  for (const file of [...new Set(['group-seen.json', ...stateFiles, 'seen.txt'])]) {
     let saved: Record<string, { name?: string; at?: number; kind?: string }> = {}
     try { saved = JSON.parse(String(await $.fs.read(`${dir}/.state/${file}`))) } catch { continue }
     for (const [k, v] of Object.entries(saved ?? {})) {
@@ -121,8 +125,10 @@ export async function tickAutonext($: EngineInterface) {
   if (!since) { since = now - 60; return } // the first check only sets the start: older finishes are not this session's to act on
   const mode = await readMode($, h)
   if (mode === 'off') { pending.clear(); return }
+  // This session's project list (project.ts): a finish starts the next item of the session's own project.
+  const proj = await sessionProject($, h)
   let todo = ''
-  try { todo = String(await $.fs.read(`${dir}/todo.txt`)) } catch { return }
+  try { todo = String(await $.fs.read(proj.path)) } catch { return }
   const heads = [...new Set(openItems(todo).map(i => i.heading))]
   if (!heads.some(x => x.toLowerCase() !== 'you')) return
 
@@ -157,7 +163,7 @@ export async function tickAutonext($: EngineInterface) {
       const ready = ranked(todo, running).filter(i => i.heading.toLowerCase() === m.toLowerCase() && !i.blockedBy)
       if (!ready.length) continue
       // One session acts per finish and machine; one start per item (the top one another finish took is skipped).
-      if (!(await claim($, `${claims}/${p.key}-${slug(m)}`))) continue
+      if (!(await claim($, `${claims}/${p.key}-${slug(proj.slug)}-${slug(m)}`))) continue
       let item = null
       for (const r of ready) if (await holdItem($, claims, r.body, nowMs)) { item = r; break }
       if (!item) continue

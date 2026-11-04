@@ -8,7 +8,8 @@ import { inboxCommand } from './inbox'
 import { resolveHome } from './home'
 import { macClicks, parseMacClicks } from './mac'
 import { checkpointCommand, panelCommand, registerPanel, startPanel } from './panel'
-import { FRESH_MS, eta, expandHome, lines, parseProgress, parseWatch, prevOf, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList } from './render'
+import { FRESH_MS, eta, expandHome, lines, parseProgress, parseWatch, prevOf, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
+import { sessionProject } from './project'
 import type { Progress, Row } from './render'
 
 const WATCH = '.watch.json'
@@ -259,13 +260,18 @@ async function setupMacClicks($: EngineInterface, mode: 'on' | 'off') {
   return text
 }
 
-/** `/progress-bar todo ...`: list, add, done, clear in ~/.claude-progress/todo.txt. */
+/** `/progress-bar todo ...`: list, add, done, clear in this session's project list (project.ts). */
 async function todo($: EngineInterface, rest: string): Promise<string> {
   const h = await resolveHome($)
   if (!h) return 'Could not find your home folder ($HOME is unset).'
-  const file = `${dirOf(h)}/todo.txt`
+  const proj = await sessionProject($, h)
+  const file = proj.path
   let text = ''
   try { text = String(await $.fs.read(file)) } catch { /* none yet */ }
+  const todoList = (t: string) => {
+    const l = listOf(t)
+    return l.startsWith('No to-dos.') ? `No to-dos for ${proj.slug}. Add one with /progress-bar todo add [name] <text>` : l
+  }
   const [verb = '', ...more] = rest.split(/\s+/)
   const arg = rest.slice(verb.length).trim()
   switch (verb.toLowerCase()) {
@@ -353,6 +359,8 @@ export const register: Register = on => {
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup [mac-clicks [off]] | demo | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | fold <section>]' })
+    // An installed status line script and group.py follow the plugin version (per-project to-dos, session filter).
+    await refreshInstalled($).catch(() => undefined)
     void poll($)
     $.clock.every(5000, () => { void poll($); void tickAutonext($) })
     await startPanel($, await resolveHome($))

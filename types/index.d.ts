@@ -4,6 +4,8 @@ export type Folded = string[]
 export type Lines = string[]
 /** Status panel: one todo.txt item; `line` is its 0-based line in the file. */
 export type Todo = { owner: string; text: string; done: boolean; line: number }
+/** Status panel: this session's project, the name of its to-do list (hooks/project.ts). */
+export type Project = string
 /** Status panel: the todo.txt line whose menu is open, -1 for none. */
 export type MenuFor = number
 
@@ -52,6 +54,6 @@ export type Recap = { cp: Checkpoint | null; lastTick: number; open: boolean }
 
 declare module 'claude-code' {
   interface PluginState {
-    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards; recap: Recap; inbox: Inbox }
+    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; project: Project; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards; recap: Recap; inbox: Inbox }
   }
 }
