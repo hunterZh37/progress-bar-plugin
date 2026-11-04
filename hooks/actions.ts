@@ -4,14 +4,16 @@
 //      "created": <epoch s>, "project": "<slug or to-do file>", "status": "open|done|skipped", "skipReason": "..." }]
 // Claude adds one with the action_add tool or `/progress-bar action add`. Any script may write the file too.
 // While one is open for this session's project (or has no project, so it is global):
-//   - macOS shows a dialog when it is added and at most every 10 min after (Run or Copy command, I ran it, Later),
+//   - an "Action needed" pane opens inside Claude Code when it is added and at most every 10 min after (Run, Copy,
+//     I ran it, Later, Skip). When Claude Code's terminal is not the front app, macOS also gets one quiet
+//     notification that an action waits in Claude Code. There is no system dialog,
 //   - a typed prompt is held with a message naming the action. "done" runs the check, "skip <reason>" skips it,
 //     slash commands always pass,
 //   - checks run every 30 s, so a command run in a terminal clears its action by itself.
 // SAFETY: the plugin never runs an action's `command` on its own. Only the person does, by hand or with the Run
-// button, which asks first in a dialog showing the full command and then opens a new visible terminal window that
+// button, which asks first inside the pane showing the full command and then opens a new visible terminal window that
 // runs it. Claude has no tool for Run. The plugin runs `check` itself, which must be a read-only test that exits 0
-// once the step is done. The dialog text goes to osascript as argv, never into the AppleScript source, a copied
+// once the step is done. The notification text goes to osascript as argv, never into the AppleScript source, a copied
 // command goes to pbcopy on stdin, and a run command goes to a 0700 script file on stdin, whose path alone reaches
 // AppleScript as argv. Actions hold commands, never secret values.
 
@@ -20,7 +22,7 @@ import type { EngineInterface } from 'claude-code'
 
 import { isDarwin } from './mac'
 import { sessionProject } from './project'
-import type { Action } from '../types'
+import type { Action, ActionUi } from '../types'
 
 export const ACTIONS_REL = '.claude-progress/actions.json'
 export const POPUP_REL = '.claude-progress/.state/actions-popup.json'
@@ -28,9 +30,11 @@ export const EVENTS_FILE_REL = '.claude-progress/events.jsonl'
 export const CHECK_EVERY = 30_000
 export const POPUP_EVERY = 10 * 60_000
 export const CHECK_TIMEOUT = 5000
-const POPUP_WAIT_S = 120
 
 export const actionsAtom = atom({ plugin: 'progress-bar', key: 'actions' } as const, [] as Action[])
+export const actionUiAtom = atom({ plugin: 'progress-bar', key: 'actionUi' } as const, { confirm: '', term: '', failId: '', fail: '' } as ActionUi)
+/** The in-app popup: a pane inside Claude Code, drawn in panel.tsx. */
+export const ACTION_PANE = 'progress-bar-action'
 
 const clean = (v: unknown, n: number) => (typeof v === 'string' || typeof v === 'number' ? String(v) : '').replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, n)
 export const cut = (t: string, n: number) => (t.length > n ? `${t.slice(0, Math.max(1, n - 1))}…` : t)
@@ -118,53 +122,43 @@ export function blockText(open: Action[], width = 100): string {
   return out.join('\n')
 }
 
-// The dialog's AppleScript is fixed text. The body and the button set reach it only as argv, so nothing in an
-// action's title, why or command is ever parsed as AppleScript.
-// A dialog holds at most 3 buttons, so a runnable action shows Run, I ran it, Later (Copy stays in the panel and
-// in /progress-bar action copy). A slash command can only be typed in Claude Code, so it keeps Copy command.
-export const POPUP_SCRIPT = [
+// The notification's AppleScript is fixed text. Its body and subtitle (the action's title) reach it only as argv,
+// so nothing in an action's text is ever parsed as AppleScript. It only says an action waits in Claude Code.
+export const NOTIFY_SCRIPT = [
   'on run argv',
-  '  set body to item 1 of argv',
-  '  if (item 2 of argv) is "2" then',
-  '    set bs to {"Run", "I ran it", "Later"}',
-  '  else if (item 2 of argv) is "1" then',
-  '    set bs to {"Copy command", "I ran it", "Later"}',
-  '  else',
-  '    set bs to {"I ran it", "Later"}',
-  '  end if',
-  '  activate',
-  `  set r to display dialog body with title "Action needed" buttons bs default button "Later" giving up after ${POPUP_WAIT_S} with icon caution`,
-  '  if gave up of r then return "Later"',
-  '  return button returned of r',
+  '  display notification (item 1 of argv) with title "Claude Code" subtitle (item 2 of argv)',
   'end run',
 ]
-export const FAIL_SCRIPT = [
-  'on run argv',
-  '  activate',
-  '  display dialog (item 1 of argv) with title "Check still fails" buttons {"OK"} default button "OK" giving up after 60 with icon stop',
-  'end run',
-]
-
-/** osascript's argv for the action dialog: each script line as -e, then the body and whether a command exists. */
-export function popupArgv(a: Action): string[] {
-  const body = [a.title, a.why ? `\nWhy: ${cut(a.why, 300)}` : '', a.command ? `\nRun: ${cut(a.command, 400)}` : '', a.check ? '\n\n"I ran it" runs the check first.' : ''].join('')
-  return ['osascript', ...POPUP_SCRIPT.flatMap(l => ['-e', l]), body, canRun(a) ? '2' : a.command ? '1' : '0']
-}
-export function failArgv(a: Action): string[] {
-  return ['osascript', ...FAIL_SCRIPT.flatMap(l => ['-e', l]), `${a.title}\n\nThe check still fails:\n${cut(a.check ?? '', 400)}\n\nRun the command, then try again.`]
+export const NOTIFY_TEXT = 'An action is waiting for you in Claude Code.'
+export function notifyArgv(a: Action): string[] {
+  return ['osascript', ...NOTIFY_SCRIPT.flatMap(l => ['-e', l]), NOTIFY_TEXT, cut(a.title, 120)]
 }
 
-/** The button osascript printed. */
-export function parseButton(stdout: string): 'run' | 'copy' | 'ran' | 'later' {
-  const t = stdout.trim()
-  return t === 'Run' ? 'run' : t === 'Copy command' ? 'copy' : t === 'I ran it' ? 'ran' : 'later'
+/** The front app's name, from lsappinfo (no permission needed): `"Ghostty" ASN:...` or `"LSDisplayName"="Ghostty"`. '' when unread. */
+async function frontApp($: EngineInterface): Promise<string> {
+  try {
+    const asn = (await $.process.run(['lsappinfo', 'front'], { timeoutMs: 3000 })).stdout.trim()
+    if (!asn) return ''
+    const out = (await $.process.run(['lsappinfo', 'info', '-only', 'name', asn], { timeoutMs: 3000 })).stdout
+    return /"(?:LSDisplayName|name)"\s*=\s*"([^"]*)"/i.exec(out)?.[1] ?? /^\s*"([^"]+)"\s+ASN:/m.exec(out)?.[1] ?? ''
+  } catch { return '' }
 }
 
-// ---- Run: the person's click, a confirm dialog, then a new visible terminal window ----
+const TERM_APPS: Record<string, string[]> = {
+  ghostty: ['Ghostty'], Apple_Terminal: ['Terminal'], 'iTerm.app': ['iTerm2', 'iTerm'], WarpTerminal: ['Warp'],
+  vscode: ['Code', 'Visual Studio Code', 'Cursor', 'Windsurf'], WezTerm: ['WezTerm'], kitty: ['kitty'], Alacritty: ['Alacritty'],
+}
+/** True when the front app is the terminal Claude Code runs in ($TERM_PROGRAM, else any known terminal). */
+export function isTerminalFront(front: string, termProgram: string): boolean {
+  if (!front) return false
+  const names = TERM_APPS[termProgram] ?? Object.values(TERM_APPS).flat()
+  return names.some(n => n.toLowerCase() === front.toLowerCase())
+}
+
+// ---- Run: the person's click, a confirm line in the pane, then a new visible terminal window ----
 
 export const RUN_DIR_REL = '.claude-progress/.state/run'
 export const RUN_RECHECK = 10_000
-const CONFIRM_WAIT_S = 120
 
 /** A Claude Code slash command (`/plugin update x`), typed in Claude Code, so it cannot run in a terminal. */
 export const isSlashCommand = (cmd: string) => /^\/[A-Za-z][\w:.-]*(\s|$)/.test(cmd.trim())
@@ -189,20 +183,6 @@ export function runScriptText(command: string): string {
   ].join('\n')
 }
 
-// The confirm dialog shows the full command. Cancel is the default, and a dialog left alone gives up as Cancel.
-export const CONFIRM_SCRIPT = [
-  'on run argv',
-  '  activate',
-  `  set r to display dialog (item 1 of argv) with title "Run this command?" buttons {"Cancel", "Run in Terminal"} default button "Cancel" giving up after ${CONFIRM_WAIT_S} with icon caution`,
-  '  if gave up of r then return "Cancel"',
-  '  return button returned of r',
-  'end run',
-]
-export function confirmArgv(a: Action): string[] {
-  const body = `${a.title}\n\nThis runs in a new terminal window:\n\n${a.command ?? ''}`
-  return ['osascript', ...CONFIRM_SCRIPT.flatMap(l => ['-e', l]), body]
-}
-
 // The terminal scripts are fixed text. They get only the script file's path, as argv.
 export const GHOSTTY_SCRIPT = [
   'on run argv',
@@ -225,7 +205,7 @@ export const TERMINAL_SCRIPT = [
 export const terminalArgv = (script: string[], path: string) => ['osascript', ...script.flatMap(l => ['-e', l]), path]
 
 /** Ghostty when it is installed (1.3+ takes AppleScript), else Terminal.app. */
-async function ghosttyInstalled($: EngineInterface, h: string): Promise<boolean> {
+export async function ghosttyInstalled($: EngineInterface, h: string): Promise<boolean> {
   for (const p of ['/Applications/Ghostty.app', `${h}/Applications/Ghostty.app`]) {
     try { if (await $.fs.exists(p)) return true } catch { /* not there */ }
   }
@@ -233,17 +213,32 @@ async function ghosttyInstalled($: EngineInterface, h: string): Promise<boolean>
 }
 
 /**
- * The Run button: asks first with the full command, then writes it to a 0700 script and opens a new terminal window
- * that runs it. Returns what happened. Only a person's click calls this. Claude has no tool or command for it.
+ * The Run button: shows a confirm line in the pane with the full command ("Run this in Ghostty?" with Run and Cancel).
+ * Nothing runs until the person presses that Run (confirmRun).
  */
-export async function runAction($: EngineInterface, h: string, a: Action): Promise<'ran' | 'cancelled' | 'unavailable' | 'failed'> {
+export async function runAction($: EngineInterface, h: string, a: Action): Promise<'asked' | 'unavailable'> {
   if (!a.command) return 'unavailable'
   if (isSlashCommand(a.command)) { $.ui.toast('That is a Claude Code command. Copy it and type it in Claude Code.'); return 'unavailable' }
   if (darwin === null) darwin = await isDarwin($)
   if (!darwin) { $.ui.toast('Run needs macOS. Copy the command instead.'); return 'unavailable' }
-  let out = ''
-  try { out = (await $.process.run(confirmArgv(a), { timeoutMs: (CONFIRM_WAIT_S + 15) * 1000 })).stdout } catch { out = '' }
-  if (out.trim() !== 'Run in Terminal') return 'cancelled'
+  const term = (await ghosttyInstalled($, h)) ? 'Ghostty' : 'Terminal'
+  await update($, actionUiAtom, u => ({ ...u, confirm: a.id, term }))
+  return 'asked'
+}
+
+/** The confirm line's Cancel: runs nothing. */
+export async function cancelRun($: EngineInterface) {
+  await update($, actionUiAtom, u => ({ ...u, confirm: '' }))
+}
+
+/**
+ * The confirm line's Run: writes the command to a 0700 script and opens a new terminal window that runs it.
+ * Only a person's press calls this. Claude has no tool or command for it.
+ */
+export async function confirmRun($: EngineInterface, h: string, a: Action): Promise<'ran' | 'unavailable' | 'failed'> {
+  if ((await read($, actionUiAtom)).confirm !== a.id) return 'unavailable'
+  await update($, actionUiAtom, u => ({ ...u, confirm: '' }))
+  if (!a.command || isSlashCommand(a.command)) return 'unavailable'
   const path = runScriptPath(h, a.id)
   try {
     const w = await $.process.run(['/bin/sh', '-c', 'umask 077; mkdir -p "$(dirname "$1")" && cat > "$1" && chmod 700 "$1"', 'sh', path], { stdin: runScriptText(a.command), timeoutMs: 5000 })
@@ -295,6 +290,7 @@ export async function readActions($: EngineInterface, h: string): Promise<Action
   const open = openFor(await loadActions($, h), await projectOf($, h))
   const prev = await read($, actionsAtom)
   if (JSON.stringify(prev) !== JSON.stringify(open)) await update($, actionsAtom, () => open)
+  if (prev.length && !open.length) await $.ui.close({ id: ACTION_PANE }).catch(() => undefined)
   return open
 }
 
@@ -352,18 +348,19 @@ export async function addFromClaude($: EngineInterface, h: string, n: NewAction 
   await readActions($, h)
   void popup($, h, r.action, true)
   return r.isNew
-    ? `Action added: ${r.action.title}${project ? ` (project ${project})` : ' (global)'}. The person gets a popup on macOS and their next prompt is held until it is done or skipped.${r.action.check ? ' It clears by itself once its check passes.' : ' It has no check, so the person types done.'}`
+    ? `Action added: ${r.action.title}${project ? ` (project ${project})` : ' (global)'}. The person sees an Action needed pane in Claude Code and their next prompt is held until it is done or skipped.${r.action.check ? ' It clears by itself once its check passes.' : ' It has no check, so the person types done.'}`
     : `That action is already open: ${r.action.title}`
 }
 
 let popping = false
 let darwin: boolean | null = null
 
-/** The macOS dialog for one action. Shown at most every 10 min per action across sessions. */
+/**
+ * Shows one action: the Action needed pane inside Claude Code, and a toast. When the terminal is not the front app,
+ * one quiet macOS notification too. At most every 10 min per action across sessions. Never a system dialog.
+ */
 export async function popup($: EngineInterface, h: string, a: Action, force = false) {
   if (popping) return
-  if (darwin === null) darwin = await isDarwin($)
-  if (!darwin) return
   const now = await $.clock.now()
   let shown: Record<string, number> = {}
   try { shown = JSON.parse(String(await $.fs.read(`${h}/${POPUP_REL}`))) as Record<string, number> } catch { shown = {} }
@@ -372,12 +369,14 @@ export async function popup($: EngineInterface, h: string, a: Action, force = fa
   try { await $.fs.write(`${h}/${POPUP_REL}`, JSON.stringify(shown)) } catch { /* shown anyway */ }
   popping = true
   try {
-    let out = ''
-    try { out = (await $.process.run(popupArgv(a), { timeoutMs: (POPUP_WAIT_S + 15) * 1000 })).stdout } catch { out = '' }
-    const b = parseButton(out)
-    if (b === 'run') await runAction($, h, a)
-    else if (b === 'copy') await copyCommand($, a)
-    else if (b === 'ran') await ranIt($, h, a, true)
+    try { await $.ui.open({ id: ACTION_PANE, title: 'Action needed', focus: true, rows: 12 }) } catch { /* the Status panel banner still shows it */ }
+    $.ui.toast(`⛔ Action needed: ${cut(a.title, 80)}`)
+    if (darwin === null) darwin = await isDarwin($)
+    if (!darwin) return
+    let termProgram = ''
+    try { termProgram = (await $.env.get('TERM_PROGRAM')) ?? '' } catch { termProgram = '' }
+    if (isTerminalFront(await frontApp($), termProgram)) return
+    try { await $.process.run(notifyArgv(a), { timeoutMs: 10_000 }) } catch { /* no notification */ }
   } finally { popping = false }
 }
 
@@ -392,13 +391,14 @@ export async function copyCommand($: EngineInterface, a: Action) {
   } catch { $.ui.toast('Could not copy the command.') }
 }
 
-/** "I ran it": runs the check (if any) and closes the action only when it passes. */
-export async function ranIt($: EngineInterface, h: string, a: Action, dialog = false): Promise<boolean> {
+/** "I ran it": runs the check (if any) and closes the action only when it passes. A failing check shows in the pane. */
+export async function ranIt($: EngineInterface, h: string, a: Action): Promise<boolean> {
   if (a.check && !(await runCheck($, h, a.check))) {
-    if (dialog && darwin) { try { await $.process.run(failArgv(a), { timeoutMs: 75_000 }) } catch { /* closed */ } }
-    else $.ui.toast(`Check still fails: ${cut(a.title, 60)}`)
+    await update($, actionUiAtom, u => ({ ...u, failId: a.id, fail: `Check still fails: ${cut(a.check ?? '', 200)}. Run the command, then try again.` }))
+    $.ui.toast(`Check still fails: ${cut(a.title, 60)}`)
     return false
   }
+  await update($, actionUiAtom, u => (u.failId === a.id ? { ...u, failId: '', fail: '' } : u))
   await closeAction($, h, a.id, 'done', '', a.check ? 'Its check passed after "I ran it".' : 'Marked done by the person.')
   return true
 }
@@ -543,7 +543,7 @@ export async function actionCommand($: EngineInterface, h: string, rest: string)
 /** The tool Claude calls when the person must run something before work can go on. */
 export const ACTION_TOOL = {
   name: 'action_add',
-  description: 'Ask the person to run a step only they can do (a deploy swap, a login, a command the permission system blocks, deleting a repo) before work goes on. It shows a macOS popup and holds their next prompt until the step is done or skipped, so use it only for high-priority blockers. Give a short title, the exact command to run (never a secret value), why it matters, and when possible a read-only check command that exits 0 once the step is done (for example grep -q, test -e, gh repo view). Never put destructive commands in check.',
+  description: 'Ask the person to run a step only they can do (a deploy swap, a login, a command the permission system blocks, deleting a repo) before work goes on. It opens an Action needed pane in Claude Code (and a quiet macOS notification when they are away) and holds their next prompt until the step is done or skipped, so use it only for high-priority blockers. Give a short title, the exact command to run (never a secret value), why it matters, and when possible a read-only check command that exits 0 once the step is done (for example grep -q, test -e, gh repo view). Never put destructive commands in check.',
   inputSchema: {
     type: 'object',
     properties: {

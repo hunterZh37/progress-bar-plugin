@@ -1,11 +1,11 @@
 ---
 name: action-needed
-description: Ask the person to run a step only they can do (a deploy swap, a login, a command the permission system blocked, deleting a repo, a /plugin update) through the progress-bar action_add tool, so it pops up and holds their next prompt until done. Use whenever work cannot go on until the person runs something themselves.
+description: Ask the person to run a step only they can do (a deploy swap, a login, a command the permission system blocked, deleting a repo, a /plugin update) through the progress-bar action_add tool, so it shows an Action needed pane in Claude Code and holds their next prompt until done. Use whenever work cannot go on until the person runs something themselves.
 ---
 
 # Action needed
 
-When you need the person to run something before work can go on, add an **action**. Do not only write the command in chat. An action pops up on macOS, shows a red banner in the Status panel, and holds their next prompt until it is done or skipped.
+When you need the person to run something before work can go on, add an **action**. Do not only write the command in chat. An action opens an Action needed pane inside Claude Code (never a system dialog, only a quiet macOS notification when they are in another app), shows a red box in the Status panel, and holds their next prompt until it is done or skipped.
 
 ## When
 
@@ -29,7 +29,7 @@ Call the `action_add` tool (`mcp__progress-bar__action_add`):
 
 Then tell the person in one line that an action is waiting and what it unblocks.
 
-The plugin never runs `command` on its own. The person may press **▶ Run** in the banner or popup, which asks them to confirm the full command and then runs it in a new visible terminal window. Only the person can press Run. You have no tool for it and must never try to trigger it, run the command yourself, or work around a block that made the action necessary. Write `command` so it runs as is in a terminal (slash commands like `/plugin update` get Copy, not Run).
+The plugin never runs `command` on its own. The person may press **▶ Run** in the Status panel or the Action needed pane, which asks them to confirm the full command in the pane and then runs it in a new visible terminal window. Only the person can press Run. You have no tool for it and must never try to trigger it, run the command yourself, or work around a block that made the action necessary. Write `command` so it runs as is in a terminal (slash commands like `/plugin update` get Copy, not Run).
 
 Without the tool (another machine, a script), the same works with `/progress-bar action add <title> --command <cmd> --why <text> --check <test>`, or by writing `~/.claude-progress/actions.json`.
 

@@ -379,7 +379,7 @@ export const register: Register = on => {
     const home = await resolveHome($)
     void pollChannel($, home)
     $.clock.every(CHANNEL_EVERY, () => pollChannel($, home))
-    // Action needed: checks every 30 s, and the popup for actions not shown in the last 10 min.
+    // Action needed: checks every 30 s, and the in-app pane for actions not shown in the last 10 min.
     void tickActions($, home)
     $.clock.every(CHECK_EVERY, () => tickActions($, home))
     return next(e)

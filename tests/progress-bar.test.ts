@@ -6,7 +6,7 @@ import { CONN_CACHE_REL, connUrl, connName, connSummary, formatCache, parseAccou
 import { CHECKPOINT_PY } from '../hooks/checkpoint'
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
-import { PANE, maxReading, badge, evId, fitLabel, labelCol, machineTitle, machines, maxMeter, nestRows, runCount, shortTitle, parseSections, runCard, shortAge, timeTail, slide, stripAnsi } from '../hooks/panel'
+import { PANE, maxReading, waitReason, badge, evId, fitLabel, labelCol, machineTitle, machines, maxMeter, nestRows, runCount, shortTitle, parseSections, runCard, shortAge, timeTail, slide, stripAnsi } from '../hooks/panel'
 import { EVENTS_PY, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from '../hooks/events'
 import { REPOS_REL, parseBranches, parseCommits, webUrl } from '../hooks/github'
 import { blocker, clip, doneEvents, isRunningRow, jobMachine, keyWords, moveItem, nextPrompt, nextReady, parseCaps, parseItem, parseMode, rankTodos, ranked, rowName, shortJob, todoRows } from '../hooks/priority'
@@ -1003,6 +1003,40 @@ test('running jobs: one aligned line each, a press opens the details', async ($,
   expect(texts.filter(t => /40%/.test(t))).toEqual(['  40%'])
   expect(texts).toContain('  3:10 running')
   await ui.unmount()
+})
+
+test('waiting rows: the running card with a ⏸ mark and a short reason, one line at 60 columns', async ($, on) => {
+  const row = 'Hunty Schedule O places grant rematch ████████░░ 75.0% · 6/8 · graded 50/50 x4, waiting on 2021-22 grant adds before load · 1h08m · 88 tools'
+  expect(waitReason(runCard(row), row)).toBe('2021-22 grant adds before load')
+  expect(waitReason(runCard('deploy waits for build · 1m'))).toBe('build')
+  expect(waitReason(runCard('arts-verify · waiting on: Arts labels'))).toBe('Arts labels')
+  expect(waitReason(runCard('import pending'))).toBe('')
+  const full = ['▾ ⏸ WAITING', `  ${row}`].join('\n')
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [TODO_FILE]: '[mac]\nx a\n[hunty]\nx b\n' }
+  panelWorld(on, files, full)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  for (const cols of [60, 90]) {
+    const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: cols } })
+    const key = 'open-hunty-schedule-o-places-grant-rematch'
+    const btn = (await ui.find({ type: 'Button', key }))?.text ?? ''
+    expect(btn).toMatch(/^▸ Hunty: Schedule O/)
+    const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+    expect(texts).toContain('  ⏸ ')
+    expect(texts).toContain('  75%')
+    expect(texts.some(t => t.includes('█'.repeat(8)))).toBe(true)
+    const note = texts.find(t => /^  (waiting|20)/.test(t)) ?? ''
+    // One line: mark, label, 10-cell bar, % and the note fit the pane width.
+    expect(4 + btn.length + 2 + 10 + 5 + note.length).toBeLessThanOrEqual(cols)
+    expect(texts.some(t => /graded 50\/50/.test(t))).toBe(false)
+    if (cols === 90) expect(note).toBe('  waiting: 2021-22 grant adds be…')
+    else expect(note).toBe('  2021…')
+    await ui.press({ key })
+    const open = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+    expect(open).toContain('    6 of 8 steps')
+    expect(open).toContain('    ▸ graded 50/50 x4, waiting on 2021-22 grant adds before load')
+    await ui.press({ key })
+    await ui.unmount()
+  }
 })
 
 test('the RUNNING count: top-level lines, nested ones noted', async () => {

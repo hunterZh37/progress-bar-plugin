@@ -60,8 +60,11 @@ export type Channel = { items: ChanItem[] }
 /** Action needed: one row of ~/.claude-progress/actions.json. `created` and `closed` are epoch s. `check` is a read-only test, never the command. */
 export type Action = { id: string; title: string; command?: string; why: string; check?: string; priority: 'high'; created: number; project?: string; status: 'open' | 'done' | 'skipped'; skipReason?: string; closed?: number }
 
+/** Action needed: the in-app popup's state. `confirm` is the id waiting on "Run this in <term>?", `term` the terminal it names, `failId` and `fail` the action whose check still fails and what to show. */
+export type ActionUi = { confirm: string; term: string; failId: string; fail: string }
+
 declare module 'claude-code' {
   interface PluginState {
-    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; project: Project; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards; recap: Recap; inbox: Inbox; channel: Channel; actions: Action[] }
+    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; project: Project; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards; recap: Recap; inbox: Inbox; channel: Channel; actions: Action[]; actionUi: ActionUi }
   }
 }

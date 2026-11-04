@@ -6,14 +6,14 @@ import { connSummary, readConns, refreshConns, resetConns } from './connectors'
 import { EVENTS_REL, LOG_DIRS_REL, SEEN_REL, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from './events'
 import { GH_EVERY, openUrl, openWeb, readGh } from './github'
 import { resolveHome } from './home'
-import { canRun, closeAction, copyCommand, cut as cutA, ranIt, readActions, runAction } from './actions'
+import { ACTION_PANE, canRun, cancelRun, closeAction, confirmRun, copyCommand, cut as cutA, ranIt, readActions, runAction } from './actions'
 import { markRead, openLocal, readChannel } from './channel'
 import { markHandled, readInbox } from './inbox'
 import { isDarwin } from './mac'
 import { moveItem, nextPrompt, rankTodos, todoRows as layoutTodos } from './priority'
 import { sessionProject } from './project'
 import { FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, slug } from './render'
-import type { Action, Channel, Checkpoint, Conn, Ev, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
+import type { Action, ActionUi, Channel, Checkpoint, Conn, Ev, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
 
 // The Status panel: the grouped status line, drawn in a docked pane beside the chat.
 // It runs the plugin's own status line script with PB_FULL=1 every second while the pane is open.
@@ -64,6 +64,7 @@ const recapAtom = atom({ plugin: 'progress-bar', key: 'recap' } as const, { cp: 
 const inboxAtom = atom({ plugin: 'progress-bar', key: 'inbox' } as const, { checked: 0, items: [] } as Inbox)
 const channelAtom = atom({ plugin: 'progress-bar', key: 'channel' } as const, { items: [] } as Channel)
 const actionsAtom = atom({ plugin: 'progress-bar', key: 'actions' } as const, [] as Action[])
+const actionUiAtom = atom({ plugin: 'progress-bar', key: 'actionUi' } as const, { confirm: '', term: '', failId: '', fail: '' } as ActionUi)
 const DIR_REL = '.claude-progress'
 const META_MS = 24 * 60 * 60_000
 
@@ -174,6 +175,19 @@ export function runCard(row: string): RunCard {
     ran,
     elapsed,
   }
+}
+
+/**
+ * Why a WAITING row waits: "waiting on: X" from the grouper, else the text after "waiting on", "waiting for", "waits for"
+ * or "waiting" in its step, name or row, up to the next " · ". Empty when it gives no reason.
+ */
+export function waitReason(r: Pick<RunCard, 'waitOn' | 'step' | 'name'>, row = ''): string {
+  if (r.waitOn) return r.waitOn
+  for (const s of [r.step, r.name, row]) {
+    const m = /\bwait(?:ing|s)\b(?:\s+(?:on|for))?:?\s*([^·]*)/i.exec(s)
+    if (m && m[1]!.trim()) return m[1]!.trim()
+  }
+  return ''
 }
 
 /** Minutes in "1h05m", "12m" or "45s", else 0. */
@@ -613,7 +627,64 @@ export async function startPanel($: EngineInterface, h: string) {
 }
 
 /** Draws the pane. */
+type RenderEv = Parameters<EngineInterface['ui']['resolve']>[0]
+
+/**
+ * The red Action needed box: title, why, the command, then ▶ Run, Copy, ✓ I ran it, Later (popup only) and Skip.
+ * Run shows a confirm line with the full command ("Run this in Ghostty?" Run, Cancel). A failing check shows in red.
+ * Drawn first on the Status panel's List tab and as the whole Action needed pane.
+ */
+async function actionBox($: EngineInterface, e: RenderEv, homeDir: string, width: number, popup: boolean): Promise<RenderChildren[]> {
+  const { Box, Button, Text } = $.ui.resolve(e)
+  const acts = await read($, actionsAtom)
+  if (!acts.length) return popup ? [<Text key="act-none" dimColor>{'No actions needed. Press Later to close.'}</Text>, <Button key="act-later" plain onPress={() => $.ui.close({ id: ACTION_PANE })}>{'Later'}</Button>] : []
+  const ui = await read($, actionUiAtom)
+  const w = Math.max(16, width - 6)
+  const gap = (k: string) => <Text key={k} dimColor>{'   '}</Text>
+  return [
+    <Box key="act" flexDirection="column" borderStyle="bold" borderColor="red" paddingX={1} marginBottom={1}>
+      <Text key="act-h" bold color="red">{`⛔ Action needed${acts.length > 1 ? `  ${acts.length}` : ''}`}</Text>
+      {acts.slice(0, popup ? 1 : 3).flatMap(a => [
+        <Text key={`act-t-${a.id}`} bold>{cutA(a.title, w)}</Text>,
+        popup && a.why ? <Text key={`act-w-${a.id}`} dimColor>{cutA(`Why: ${a.why}`, w * 2)}</Text> : null,
+        a.command ? <Text key={`act-c-${a.id}`} color="red">{cutA(`$ ${a.command}`, popup ? w * 4 : w)}</Text> : null,
+        ui.confirm === a.id
+          ? <Box key={`act-q-${a.id}`} flexDirection="column">
+              <Text key="q" bold>{`Run this in ${ui.term || 'Terminal'}?`}</Text>
+              <Text key="qc" color="red">{`$ ${a.command ?? ''}`}</Text>
+              <Box key="qb">
+                <Button key={`act-yes-${a.id}`} plain onPress={() => confirmRun($, homeDir, a)}>{'▶ Run'}</Button>
+                {gap('g0')}
+                <Button key={`act-no-${a.id}`} plain onPress={() => cancelRun($)}>{'Cancel'}</Button>
+              </Box>
+            </Box>
+          : null,
+        ui.failId === a.id && ui.fail ? <Text key={`act-f-${a.id}`} color="red">{cutA(ui.fail, w * 2)}</Text> : null,
+        <Box key={`act-b-${a.id}`}>
+          {canRun(a) ? <Button key={`act-run-${a.id}`} plain onPress={() => runAction($, homeDir, a)}>{'▶ Run'}</Button> : null}
+          {canRun(a) ? gap('g1') : null}
+          {a.command ? <Button key={`act-copy-${a.id}`} plain onPress={() => copyCommand($, a)}>{'Copy'}</Button> : null}
+          {a.command ? gap('g2') : null}
+          <Button key={`act-ran-${a.id}`} plain onPress={() => ranIt($, homeDir, a)}>{'✓ I ran it'}</Button>
+          {popup ? gap('g3') : null}
+          {popup ? <Button key={`act-later-${a.id}`} plain onPress={() => $.ui.close({ id: ACTION_PANE })}>{'Later'}</Button> : null}
+          {gap('g4')}
+          <Button key={`act-skip-${a.id}`} plain onPress={() => closeAction($, homeDir, a.id, 'skipped', popup ? 'skipped in the Action needed pane' : 'skipped in the Status panel')}>{'Skip'}</Button>
+        </Box>,
+      ].filter(Boolean) as RenderChildren[])}
+      {acts.length > (popup ? 1 : 3) ? <Text key="act-more" dimColor>{`+${acts.length - (popup ? 1 : 3)} more. /progress-bar action list`}</Text> : null}
+    </Box>,
+  ]
+}
+
 export function registerPanel(on: On) {
+  // The Action needed pane: the popup inside Claude Code (actions.ts popup), never a system dialog.
+  on('ui.render', { component: 'Pane', requestId: 'progress-bar-action' }, async ($, e) => {
+    const { Box } = $.ui.resolve(e)
+    const homeDir = await resolveHome($)
+    await readActions($, homeDir)
+    return <Box flexDirection="column">{await actionBox($, e, homeDir, Math.max(30, e.props.bodyColumns ?? 60), true)}</Box>
+  })
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Button, Text } = $.ui.resolve(e)
     const homeDir = await resolveHome($)
@@ -708,9 +779,10 @@ export function registerPanel(on: On) {
     const openCards = new Set(await read($, openAtom))
     const metaOf = (name: string): Meta => meta[slug(name)] ?? {}
     const short = (t: string) => t.split(' · ')[0]!
-    const mach = machines((sections.find(x => x.key === 'running')?.rows ?? []).map(x => runCard(x).name), todos.map(t => t.owner))
+    const mach = machines(sections.filter(x => x.key === 'running' || x.key === 'waiting').flatMap(x => x.rows).map(x => runCard(x).name), todos.map(t => t.owner))
     const MINI = 10
-    const card = (r: RunCard, k: string, ind: string, child: boolean, kid: string) => {
+    // `wait` is a WAITING row's reason ('' when it gives none): a dim yellow ⏸ mark and a "waiting: <reason>" note.
+    const card = (r: RunCard, k: string, ind: string, child: boolean, kid: string, wait: string | null = null) => {
       const m0 = metaOf(r.name)
       const key = slug(r.name)
       const isOpen = openCards.has(key)
@@ -719,14 +791,22 @@ export function registerPanel(on: On) {
       const frac = r.pct === null ? null : Math.min(1, r.pct / 100)
       const filled = frac === null ? 0 : Math.round(frac * MINI)
       const [before, after] = slide(nowMs, MINI)
-      const mark = stuck ? '⚠' : child ? '↳' : r.mark === '⚠' ? '•' : r.mark
+      const isWait = wait !== null
+      const mark = isWait ? '⏸' : stuck ? '⚠' : child ? '↳' : r.mark === '⚠' ? '•' : r.mark
       const pad = `${ind}    `
       const why = m0.why ? `unlocks: ${m0.why.replace(/^unlocks:?\s*/i, '')}` : ''
-      const label = fitLabel(machineTitle(r.name, m0.title || r.name, mach), labelCol(width, ind.length))
-      const tail = stuck ? `⚠ no progress ${stuck}` : waitOn ? `waiting on ${short(waitOn)}` : timeTail(r)
+      const col = labelCol(width, ind.length)
+      const label = fitLabel(machineTitle(r.name, m0.title || r.name, mach), col)
+      // Room left on the line after mark, label and bar (4 + 2 + col + 17) and the note's two spaces.
+      const room = width - ind.length - col - 25
+      const fit = (x: string) => (x.length > room ? (room > 1 ? `${x.slice(0, room - 1)}…` : '') : x)
+      const tail = isWait ? fit(room >= 14 ? (wait ? `waiting: ${wait}` : 'waiting') : wait || 'waiting')
+        : stuck ? `⚠ no progress ${stuck}` : waitOn ? `waiting on ${short(waitOn)}` : timeTail(r)
       return [
         <Box key={`r${k}`}>
-          <Text color={stuck ? 'yellow' : 'cyan'}>{`${ind}  ${mark} `}</Text>
+          {isWait
+            ? <Text color="yellow" dimColor>{`${ind}  ${mark} `}</Text>
+            : <Text color={stuck ? 'yellow' : 'cyan'}>{`${ind}  ${mark} `}</Text>}
           <Button key={`open-${key}`} plain onPress={() => update($, openAtom, l => (l.includes(key) ? l.filter(x => x !== key) : [...l, key]))}>
             {`${isOpen ? '▾' : '▸'} ${label}`}
           </Button>
@@ -742,7 +822,7 @@ export function registerPanel(on: On) {
                 <Text key="b" dimColor>{'░'.repeat(MINI - filled)}</Text>,
                 <Text key="c" bold>{` ${String(Math.round(r.pct!)).padStart(3)}%`}</Text>,
               ]}
-          {tail ? <Text color={stuck ? 'yellow' : undefined} dimColor={!stuck}>{`  ${tail}`}</Text> : null}
+          {tail ? <Text color={stuck ? 'yellow' : undefined} dimColor={!stuck} wrap="truncate-end">{`  ${tail}`}</Text> : null}
         </Box>,
         ...(isOpen
           ? [
@@ -781,6 +861,12 @@ export function registerPanel(on: On) {
         </Box>,
       ]
     }
+
+    // Waiting rows: the same one-line card as a running job, with a ⏸ mark and "waiting: <reason>" for its note.
+    const waitRows = (rows: string[]) => rows.flatMap((row, i) => {
+      const c = runCard(row)
+      return card(c, `w${i}`, '', false, '', waitReason(c, row))
+    })
 
     // Done rows: "✓ <title>  14:05" for a finished job, one dim line "✓ <title>  finishing · a/b" for a row at 100% that
     // still reports (no bar).
@@ -1019,26 +1105,7 @@ export function registerPanel(on: On) {
 
     // Action needed: steps only the person can run, first of all (actions.ts). Run asks first with the full command,
     // then opens a new visible terminal window. Slash commands have no Run (they are typed in Claude Code).
-    const acts = await read($, actionsAtom)
-    const actBlock: RenderChildren[] = acts.length === 0 ? [] : [
-      <Box key="act" flexDirection="column" borderStyle="bold" borderColor="red" paddingX={1} marginBottom={1}>
-        <Text key="act-h" bold color="red">{`⛔ Action needed${acts.length > 1 ? `  ${acts.length}` : ''}`}</Text>
-        {acts.slice(0, 3).flatMap(a => [
-          <Text key={`act-t-${a.id}`} bold>{cutA(a.title, Math.max(16, width - 6))}</Text>,
-          a.command ? <Text key={`act-c-${a.id}`} color="red">{cutA(`$ ${a.command}`, Math.max(16, width - 6))}</Text> : null,
-          <Box key={`act-b-${a.id}`}>
-            {canRun(a) ? <Button key={`act-run-${a.id}`} plain onPress={() => runAction($, homeDir, a)}>{'▶ Run'}</Button> : null}
-            {canRun(a) ? <Text dimColor>{'   '}</Text> : null}
-            {a.command ? <Button key={`act-copy-${a.id}`} plain onPress={() => copyCommand($, a)}>{'Copy'}</Button> : null}
-            {a.command ? <Text dimColor>{'   '}</Text> : null}
-            <Button key={`act-ran-${a.id}`} plain onPress={() => ranIt($, homeDir, a)}>{'✓ I ran it'}</Button>
-            <Text dimColor>{'   '}</Text>
-            <Button key={`act-skip-${a.id}`} plain onPress={() => closeAction($, homeDir, a.id, 'skipped', 'skipped in the Status panel')}>{'Skip'}</Button>
-          </Box>,
-        ].filter(Boolean) as RenderChildren[])}
-        {acts.length > 3 ? <Text key="act-more" dimColor>{`+${acts.length - 3} more. /progress-bar action list`}</Text> : null}
-      </Box>,
-    ]
+    const actBlock = await actionBox($, e, homeDir, width, false)
 
     return (
       <Box flexDirection="column">
@@ -1056,7 +1123,7 @@ export function registerPanel(on: On) {
               <Button key={`h-${sec.key}`} hotkey={HOTKEYS[sec.key]} plain onPress={() => flip($, homeDir, sec.key)}>
                 {`${isFolded ? '▸' : '▾'} ${ICON[sec.key]} ${sec.title}  ${sec.key === 'todo' ? openTodos : sec.key === 'done' ? sec.count + doneTodos.length : sec.key === 'running' && sec.rows.length ? runCount(sec.rows.map(r => runCard(r).name), meta) : sec.count}`}
               </Button>
-              {!isFolded && (sec.key === 'todo' ? todoRows() : sec.key === 'running' ? runRows(sec.rows) : sec.key === 'done' ? doneRows(sec.rows) : plainRows(sec.rows, sec.key))}
+              {!isFolded && (sec.key === 'todo' ? todoRows() : sec.key === 'running' ? runRows(sec.rows) : sec.key === 'waiting' ? waitRows(sec.rows) : sec.key === 'done' ? doneRows(sec.rows) : plainRows(sec.rows, sec.key))}
             </Box>
           )
         })}
