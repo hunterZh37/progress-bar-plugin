@@ -14,10 +14,19 @@ export type Conn = { name: string; kind: ConnKind; account?: string }
 /** Status panel: the last connector check (epoch ms, 0 for none), whether one runs now, the Claude login (email · org) and the list. */
 export type Conns = { at: number; checking: boolean; login: string; list: Conn[] }
 /** Status panel: the tab shown. */
-export type Tab = 'list' | 'connectors'
+export type Tab = 'list' | 'connectors' | 'github'
+
+/** GitHub tab: one local branch, ahead/behind its upstream. */
+export type Branch = { name: string; current: boolean; ahead: number; behind: number }
+/** GitHub tab: one commit; `when` is git's relative date without " ago". */
+export type Commit = { sha: string; subject: string; when: string; author: string }
+/** GitHub tab: one repo read with local git; `url` is https://github.com/<owner>/<repo> or '' when origin is not on GitHub. */
+export type Repo = { name: string; path: string; url: string; branch: string; dirty: number; ahead: number; behind: number; branches: Branch[]; commits: Commit[] }
+/** GitHub tab: the repos found, the one shown and when they were read (epoch ms). */
+export type Gh = { repos: Repo[]; sel: number; at: number }
 
 declare module 'claude-code' {
   interface PluginState {
-    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; menuFor: MenuFor; conns: Conns; tab: Tab }
+    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh }
   }
 }

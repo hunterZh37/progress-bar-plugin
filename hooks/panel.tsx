@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import { connSummary, readConns, refreshConns, resetConns } from './connectors'
+import { GH_EVERY, openUrl, readGh } from './github'
 import { resolveHome } from './home'
 import { todoItems as parseTodo } from './render'
 import type { Conn, Todo } from '../types'
@@ -11,7 +12,8 @@ import type { Conn, Todo } from '../types'
 // Section headers are buttons that fold or open the section through ~/.claude-progress/.state/folded.txt.
 // To-dos come straight from ~/.claude-progress/todo.txt: open ones under TO-DO, checked-off ones under DONE.
 // Pressing one opens a menu: mark as done (or move back to to-do) or delete.
-// Two tabs: List (the sections) and Connectors (see connectors.ts). Connector checks run only while the pane is open.
+// Three tabs: List (the sections), Connectors (see connectors.ts) and GitHub (see github.ts).
+// Connector checks run only while the pane is open; GitHub reads only while its tab shows.
 
 export const PANE = 'progress-bar-status'
 const TITLE = 'Status'
@@ -34,6 +36,7 @@ const menuAtom = atom({ plugin: 'progress-bar', key: 'menuFor' } as const, -1)
 // The same state connectors.ts writes; the scan wants each atom declared in the file that reads it.
 const connsAtom = atom({ plugin: 'progress-bar', key: 'conns' } as const, { at: 0, checking: false, login: '', list: [] })
 const tabAtom = atom({ plugin: 'progress-bar', key: 'tab' } as const, 'list')
+const ghAtom = atom({ plugin: 'progress-bar', key: 'gh' } as const, { repos: [], sel: 0, at: 0 })
 
 /** Removes terminal colors and OSC 8 links. */
 export const stripAnsi = (s: string) =>
@@ -97,12 +100,28 @@ async function readTodos($: EngineInterface, h: string) {
   if (JSON.stringify(prev) !== JSON.stringify(out)) await update($, todosAtom, () => out)
 }
 
-/** One menu action on a todo.txt line: mark done, mark to-do (reopen) or delete. */
-export async function todoAction($: EngineInterface, h: string, line: number, action: 'done' | 'todo' | 'delete') {
+/** "3 weeks" -> "3w", "2 hours" -> "2h", "4 months" -> "4mo": a commit's age, short. */
+export const shortAge = (w: string) => {
+  const m = /^(\d+) (\w+)/.exec(w)
+  if (!m) return w
+  return `${m[1]}${m[2]!.startsWith('mo') ? 'mo' : m[2]!.charAt(0)}`
+}
+
+/** A todo.txt line's item text: no "x " mark, no " | link". */
+const itemText = (l: string) => l.trim().replace(/^x\s+/i, '').split(' | ')[0]!.trim()
+
+/**
+ * One menu action on a to-do: mark done, mark to-do (reopen) or delete.
+ * Acts on the line that still holds the item's text: the file can change between drawing and the press
+ * (another session adds a line), so the line number alone could hit the wrong item.
+ */
+export async function todoAction($: EngineInterface, h: string, line: number, action: 'done' | 'todo' | 'delete', text = '') {
   const file = `${h}/${TODO_REL}`
   try {
     const lines = String(await $.fs.read(file)).split('\n')
-    if (line < lines.length) {
+    const same = (l: string) => itemText(l) === text.trim()
+    if (text && !(line < lines.length && same(lines[line]!))) line = lines.findIndex(same)
+    if (line >= 0 && line < lines.length) {
       const body = lines[line]!.trim().replace(/^x\s+/i, '')
       if (action === 'delete') lines.splice(line, 1)
       else lines[line] = action === 'done' ? `x ${body}` : body
@@ -174,6 +193,11 @@ export async function startPanel($: EngineInterface, h: string) {
     const open = await $.ui.panes().then(ps => ps.some(p => p.id === PANE)).catch(() => false)
     if (open) await pollPanel($, h)
   })
+  $.clock.every(GH_EVERY, async () => {
+    if ((await read($, tabAtom)) !== 'github') return
+    const open = await $.ui.panes().then(ps => ps.some(p => p.id === PANE)).catch(() => false)
+    if (open) await readGh($, h)
+  })
   if (await isPanelOn($, h)) {
     await pollPanel($, h)
     void openPanel($)
@@ -210,9 +234,9 @@ export function registerPanel(on: On) {
         ? <Box key={`m-${t.line}`}>
             <Text dimColor>{'      '}</Text>
             {t.done
-              ? <Button key={`a-todo-${t.line}`} plain onPress={() => todoAction($, homeDir, t.line, 'todo')}>{'○ Move back to to-do  '}</Button>
-              : <Button key={`a-done-${t.line}`} plain onPress={() => todoAction($, homeDir, t.line, 'done')}>{'✓ Mark as done  '}</Button>}
-            <Button key={`a-del-${t.line}`} plain onPress={() => todoAction($, homeDir, t.line, 'delete')}>{'✕ Delete  '}</Button>
+              ? <Button key={`a-todo-${t.line}`} plain onPress={() => todoAction($, homeDir, t.line, 'todo', t.text)}>{'○ Move back to to-do  '}</Button>
+              : <Button key={`a-done-${t.line}`} plain onPress={() => todoAction($, homeDir, t.line, 'done', t.text)}>{'✓ Mark as done  '}</Button>}
+            <Button key={`a-del-${t.line}`} plain onPress={() => todoAction($, homeDir, t.line, 'delete', t.text)}>{'✕ Delete  '}</Button>
             <Button key={`a-x-${t.line}`} plain onPress={() => update($, menuAtom, () => -1)}>{'Cancel'}</Button>
           </Box>
         : null,
@@ -260,20 +284,67 @@ export function registerPanel(on: On) {
       return <Text key={`p${i}`} color={key === 'problems' ? 'red' : undefined} dimColor={key === 'done'}>{`  ${row}`}</Text>
     })
 
-    // The tab bar: List and Connectors, the latter with "!N" when N connectors need sign-in or failed.
+    // The tab bar: List, Connectors (with "!N" when N need sign-in or failed) and GitHub. The shown tab has a bar mark.
     const badN = conns.list.filter(c => c.kind !== 'ok').length
-    const connLabel = `Connectors${badN ? ` !${badN}` : ''}`
+    const mark = (t: string) => (tab === t ? '▌' : ' ')
     const tabBar = (
       <Box key="tabs" marginBottom={1}>
-        <Button key="tab-list" hotkey="l" plain onPress={() => update($, tabAtom, () => 'list')}>
-          {tab === 'list' ? '[ List ]' : '  List  '}
-        </Button>
-        <Text>{' '}</Text>
-        <Button key="tab-connectors" hotkey="c" plain onPress={() => update($, tabAtom, () => 'connectors')}>
-          {tab === 'connectors' ? `[ ${connLabel} ]` : `  ${connLabel}  `}
-        </Button>
+        <Button key="tab-list" plain onPress={() => update($, tabAtom, () => 'list')}>{`${mark('list')}List`}</Button>
+        <Text dimColor>{'  │  '}</Text>
+        <Button key="tab-connectors" plain onPress={() => update($, tabAtom, () => 'connectors')}>{`${mark('connectors')}Connectors${badN ? ` !${badN}` : ''}`}</Button>
+        <Text dimColor>{'  │  '}</Text>
+        <Button key="tab-github" plain onPress={async () => { await update($, tabAtom, () => 'github'); await readGh($, homeDir) }}>{`${mark('github')}GitHub`}</Button>
       </Box>
     )
+
+    if (tab === 'github') {
+      const gh = await read($, ghAtom)
+      const n = gh.repos.length
+      const repo = gh.repos[gh.sel]
+      const [owner = '', slugName = ''] = repo?.url ? repo.url.replace('https://github.com/', '').split('/') : []
+      const others = repo ? repo.branches.filter(b => !b.current) : []
+      const msgW = Math.max(16, width - 8)
+      const cut = (s: string) => (s.length > msgW ? `${s.slice(0, msgW - 1)}…` : s)
+      const link = (path: string) => (repo?.url ? `${repo.url}${path}` : '')
+      return (
+        <Box flexDirection="column">
+          {tabBar}
+          {n > 1 && (
+            <Box key="repo-pick" marginBottom={1}>
+              <Button key="repo-prev" plain onPress={() => update($, ghAtom, g => ({ ...g, sel: (g.sel - 1 + n) % n }))}>{'‹  '}</Button>
+              <Text dimColor>{`repo ${gh.sel + 1} of ${n}`}</Text>
+              <Button key="repo-next" plain onPress={() => update($, ghAtom, g => ({ ...g, sel: (g.sel + 1) % n }))}>{'  ›'}</Button>
+            </Box>
+          )}
+          {!repo && <Text dimColor>No git repo found.</Text>}
+          {repo && [
+            <Button key="gh-repo" plain onPress={() => openUrl($, repo.url)}>{`${slugName || repo.name}  ↗`}</Button>,
+            owner ? <Text key="gh-owner" dimColor>{owner}</Text> : null,
+            <Box key="gh-state" marginTop={1}>
+              <Text color="green" bold>{`● ${repo.branch}`}</Text>
+              <Text color={repo.ahead || repo.behind ? 'yellow' : undefined} dimColor={!repo.ahead && !repo.behind}>{`   ↑${repo.ahead} ↓${repo.behind}`}</Text>
+              <Text color={repo.dirty ? 'yellow' : 'green'}>{repo.dirty ? `   ✎ ${repo.dirty} changed` : '   ✓ clean'}</Text>
+            </Box>,
+            <Text key="gh-bh" bold color="cyan">{`\nOTHER BRANCHES  ${others.length}`}</Text>,
+            ...others.map(b => (
+              <Button key={`br-${b.name}`} plain onPress={() => openUrl($, link(`/tree/${encodeURIComponent(b.name)}`))}>
+                {`  ○ ${b.name}${b.ahead ? `  ↑${b.ahead}` : ''}${b.behind ? `  ↓${b.behind}` : ''}`}
+              </Button>
+            )),
+            others.length ? null : <Text key="gh-nob" dimColor>{'  none'}</Text>,
+            <Text key="gh-ch" bold color="cyan">{'\nRECENT COMMITS'}</Text>,
+            ...repo.commits.map(c => (
+              <Box key={`c-${c.sha}`}>
+                <Button key={`cb-${c.sha}`} plain onPress={() => openUrl($, link(`/commit/${c.sha}`))}>{`  ${cut(c.subject)}`}</Button>
+                <Text dimColor>{`  ${shortAge(c.when)}`}</Text>
+              </Box>
+            )),
+            <Text key="gh-foot" dimColor>{`\n  click to open on GitHub${repo.commits[0]?.author ? ` · latest by ${repo.commits[0].author}` : ''}`}</Text>,
+            <Button key="gh-refresh" plain onPress={() => readGh($, homeDir)}>{'  ↻ refresh'}</Button>,
+          ].filter(Boolean)}
+        </Box>
+      )
+    }
 
     if (tab === 'connectors') {
       const hhmm = (ms: number) => { const t = new Date(ms); return `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}` }

@@ -39,7 +39,7 @@ export function parseMacClicks(rest: string): 'on' | 'off' | null {
 
 type Run = { exitCode: number | null; stdout: string; stderr: string }
 
-async function isDarwin($: EngineInterface): Promise<boolean> {
+export async function isDarwin($: EngineInterface): Promise<boolean> {
   try { return (await $.process.run(['uname'])).stdout.trim() === 'Darwin' } catch { return false }
 }
 

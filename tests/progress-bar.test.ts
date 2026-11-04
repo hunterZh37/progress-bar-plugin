@@ -5,7 +5,8 @@ import type { On } from 'claude-code'
 import { CONN_CACHE_REL, connName, connSummary, formatCache, parseAccounts, parseCache, parseLogin, parseMcpList } from '../hooks/connectors'
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
-import { PANE, parseSections, runningRow, stripAnsi } from '../hooks/panel'
+import { PANE, parseSections, runningRow, shortAge, stripAnsi } from '../hooks/panel'
+import { REPOS_REL, parseBranches, parseCommits, webUrl } from '../hooks/github'
 import { eta, expandHome, line, lines, parseProgress, parseWatch, prevOf, readLog, slug, statusScript, todoAdd, todoClear, todoDone, todoItems, todoList } from '../hooks/render'
 
 const NOW = 1_800_000_000_000
@@ -517,13 +518,13 @@ test('the Connectors tab: checks claude mcp list, caches name and status only, n
   expect(files[CACHE]).not.toContain('postgres')
   expect(files[CACHE]).not.toContain('https')
 
-  expect((await ui.find({ type: 'Button', text: /List/ }))?.text).toBe('[ List ]')
-  expect((await ui.find({ type: 'Button', text: /Connectors/ }))?.text).toBe('  Connectors !3  ')
+  expect((await ui.find({ type: 'Button', text: /List/ }))?.text).toBe('▌List')
+  expect((await ui.find({ type: 'Button', text: /Connectors/ }))?.text).toBe(' Connectors !3')
   expect((await ui.find({ type: 'Button', text: /RUNNING/ }))?.text).toBe('▾ ▶ RUNNING  1')
   expect(await ui.find({ type: 'Text', text: /CONNECTORS/ })).toBe(undefined)
 
   await ui.press({ key: 'tab-connectors' })
-  expect((await ui.find({ type: 'Button', text: /Connectors/ }))?.text).toBe('[ Connectors !3 ]')
+  expect((await ui.find({ type: 'Button', text: /Connectors/ }))?.text).toBe('▌Connectors !3')
   expect(await ui.find({ type: 'Button', text: /RUNNING/ })).toBe(undefined)
   expect((await ui.find({ type: 'Text', text: /CONNECTORS/ }))?.text).toBe('⚡ CONNECTORS  2 ok · 2 need sign-in · 1 failed')
   expect((await ui.find({ type: 'Text', text: /Claude:/ }))?.text).toBe('  Claude: me@x.test · Acme')
@@ -554,8 +555,95 @@ test('a fresh shared cache is read, not refreshed', async ($, on) => {
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
   expect(ran.some(r => r.argv[0] === 'claude')).toBe(false)
-  expect((await ui.find({ type: 'Button', text: /Connectors/ }))?.text).toBe('  Connectors !1  ')
+  expect((await ui.find({ type: 'Button', text: /Connectors/ }))?.text).toBe(' Connectors !1')
   await ui.press({ key: 'tab-connectors' })
   expect((await ui.find({ type: 'Text', text: /CONNECTORS/ }))?.text).toBe('⚡ CONNECTORS  1 ok · 1 need sign-in')
+  await ui.unmount()
+})
+
+test('a to-do action finds its item again when a line was added before the press', async ($, on) => {
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [TODO_FILE]: '[you]\nreview PR\ncall Sam\n' }
+  panelWorld(on, files, DONE_FULL)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  await ui.press({ key: 't-2' })
+  // Another session adds a line above before the press: line 2 now holds "review PR".
+  files[TODO_FILE] = '[you]\nnew thing\nreview PR\ncall Sam\n'
+  await ui.press({ key: 'a-done-2' })
+  expect(files[TODO_FILE]).toBe('[you]\nnew thing\nreview PR\nx call Sam\n')
+  await ui.unmount()
+})
+
+const SEP = '\x1f'
+test('GitHub parsing: web URLs without credentials, branches and commits', async () => {
+  expect(webUrl('git@github.com:acme/app.git\n')).toBe('https://github.com/acme/app')
+  expect(webUrl(`https://user:${SECRET}@github.com/acme/app.git`)).toBe('https://github.com/acme/app')
+  expect(webUrl('ssh://git@github.com/acme/app')).toBe('https://github.com/acme/app')
+  expect(webUrl('https://gitlab.com/acme/app.git')).toBe('')
+  expect(webUrl('https://github.com.evil.test/acme/app')).toBe('')
+  expect(parseBranches(`*${SEP}main${SEP}ahead 2, behind 1\n ${SEP}dev${SEP}\n`)).toEqual([
+    { name: 'main', current: true, ahead: 2, behind: 1 },
+    { name: 'dev', current: false, ahead: 0, behind: 0 },
+  ])
+  expect(parseCommits(`abc1234${SEP}Fix it${SEP}3 weeks ago${SEP}Ann\n`)).toEqual([{ sha: 'abc1234', subject: 'Fix it', when: '3 weeks', author: 'Ann' }])
+  expect([shortAge('3 weeks'), shortAge('2 hours'), shortAge('4 months'), shortAge('5 minutes')]).toEqual(['3w', '2h', '4mo', '5m'])
+})
+
+/** Stubbed git: `repos` maps a folder to its toplevel, origin, branches and log output. */
+function gitAnswer(repos: Record<string, { origin: string; dirty?: string }>) {
+  return (argv: string[]) => {
+    if (argv[0] === 'uname') return 'Darwin\n'
+    if (argv[0] !== 'git') return undefined
+    const r = repos[argv[2]!]
+    if (!r) return undefined
+    const cmd = argv.slice(3).join(' ')
+    if (cmd === 'rev-parse --show-toplevel') return `${argv[2]}\n`
+    if (cmd === 'remote get-url origin') return `${r.origin}\n`
+    if (cmd === 'branch --show-current') return 'main\n'
+    if (cmd === 'status --porcelain') return r.dirty ?? ''
+    if (cmd.startsWith('for-each-ref')) return `*${SEP}main${SEP}ahead 1\n ${SEP}feature/x${SEP}behind 2\n`
+    if (cmd.startsWith('log')) return `abc1234${SEP}Add the GitHub tab${SEP}2 hours ago${SEP}Ann\ndef5678${SEP}First commit${SEP}3 weeks ago${SEP}Bo\n`
+    return ''
+  }
+}
+
+test('the GitHub tab draws the repo, other branches and commits, and a press opens the commit page', async ($, on) => {
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [`${HOME}/${REPOS_REL}`]: '# extra repos\n/w/two\n' }
+  const { ran } = panelWorld(on, files, DONE_FULL, gitAnswer({
+    '/w/app': { origin: `https://bot:${SECRET}@github.com/acme/app.git`, dirty: ' M a.ts\n' },
+    '/w/two': { origin: 'https://gitlab.com/acme/two.git' },
+  }))
+  on('session.cwd', () => ({ value: '/w/app' }))
+  await $.session.start({ cwd: '/w/app', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  expect(ran.some(r => r.argv[0] === 'git')).toBe(false)
+  await ui.press({ key: 'tab-github' })
+  expect((await ui.find({ type: 'Button', text: /GitHub/ }))?.text).toBe('▌GitHub')
+  expect((await ui.find({ type: 'Text', text: /repo \d of/ }))?.text).toBe('repo 1 of 2')
+  expect((await ui.find({ type: 'Button', text: /↗/ }))?.text).toBe('app  ↗')
+  expect((await ui.find({ type: 'Text', text: /^acme$/ }))?.text).toBe('acme')
+  expect((await ui.find({ type: 'Text', text: /^● / }))?.text).toBe('● main')
+  expect((await ui.find({ type: 'Text', text: /changed/ }))?.text).toBe('   ✎ 1 changed')
+  expect((await ui.find({ type: 'Text', text: /OTHER BRANCHES/ }))?.text).toBe('\nOTHER BRANCHES  1')
+  expect((await ui.find({ type: 'Button', text: /feature/ }))?.text).toBe('  ○ feature/x  ↓2')
+  expect((await ui.find({ type: 'Button', text: /Add the GitHub tab/ }))?.text).toBe('  Add the GitHub tab')
+  expect((await ui.find({ type: 'Text', text: /^  2h$/ }))?.text).toBe('  2h')
+  expect((await ui.find({ type: 'Text', text: /click to open/ }))?.text).toBe('\n  click to open on GitHub · latest by Ann')
+  expect(await allText(ui)).not.toContain(SECRET)
+
+  await ui.press({ key: 'cb-abc1234' })
+  expect(ran).toContainEqual({ argv: ['open', 'https://github.com/acme/app/commit/abc1234'], env: undefined, stdin: undefined })
+  await ui.press({ key: 'br-feature/x' })
+  expect(ran).toContainEqual({ argv: ['open', 'https://github.com/acme/app/tree/feature%2Fx'], env: undefined, stdin: undefined })
+  expect(ran.some(r => r.argv.join(' ').includes(SECRET) && r.argv[0] === 'open')).toBe(false)
+
+  // The second repo is on GitLab: it draws, but nothing opens.
+  await ui.press({ key: 'repo-next' })
+  expect((await ui.find({ type: 'Text', text: /repo \d of/ }))?.text).toBe('repo 2 of 2')
+  expect((await ui.find({ type: 'Button', text: /↗/ }))?.text).toBe('two  ↗')
+  const opens = ran.filter(r => r.argv[0] === 'open').length
+  await ui.press({ key: 'gh-repo' })
+  await ui.press({ key: 'cb-abc1234' })
+  expect(ran.filter(r => r.argv[0] === 'open' || r.argv[0] === 'xdg-open').length).toBe(opens)
   await ui.unmount()
 })

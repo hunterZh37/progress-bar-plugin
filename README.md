@@ -25,6 +25,7 @@ Live progress bars and a to-do list in the Claude Code status line. One line per
 - **Status line:** a small script prints all this above your existing status line.
 - **Status panel:** an optional docked pane beside the chat with the same groups, foldable headers and a one-line status line.
 - **Connectors:** a second tab in the panel shows which MCP connectors are connected, need sign-in or failed.
+- **GitHub:** a third tab shows the session repo's branch, other branches and recent commits. Click one to open it on GitHub.
 
 ## Install
 
@@ -194,16 +195,16 @@ The status line then reads:
 - **Needs setup:** the panel runs `~/.claude/progress-bar/statusline.sh` with `PB_FULL=1` every second while it is open. `panel on` refreshes that script and `group.py` and keeps your chained status line.
 - **Fold:** press a header, or its hotkey (`1` to-do, `2` running, `3` done, `4` waiting, `5` problems). It writes `~/.claude-progress/.state/folded.txt`, the same file `/progress-bar fold` uses.
 - **Off by default:** `panel on` writes `~/.claude-progress/.state/panel-on`. With that file the pane opens at session start and the status line prints the summary. `panel off` deletes it and closes the pane. `/progress-bar panel` opens it once without turning it on.
-- **To-do menu:** click a to-do for Mark as done, Move back to to-do or Delete. It edits `~/.claude-progress/todo.txt`. TO-DO lists open items only. Checked-off ones move to DONE under **Checked-off to-dos**, after finished jobs, and count there.
+- **To-do menu:** click a to-do for Mark as done, Move back to to-do or Delete. It edits `~/.claude-progress/todo.txt`, on the line that still holds that item's text, so a line added since the panel drew never hits the wrong item. TO-DO lists open items only. Checked-off ones move to DONE under **Checked-off to-dos**, after finished jobs, and count there.
 - **Rows:** to-dos one per line under each owner, running jobs as name, bar and details (stuck ones in yellow), done jobs dimmed with their finish time.
-- **Tabs:** `[ List ]` (hotkey `l`, the default) shows the sections above. `Connectors` (hotkey `c`) shows your connectors. Its label adds `!N` when N need attention.
+- **Tabs:** `▌List  │   Connectors  │   GitHub`, the shown one marked `▌`. **List** (the default) shows the sections above. **Connectors** shows your connectors, its label adding `!N` when N need attention. **GitHub** shows your repos.
 
 ## Connectors
 
 The **Connectors** tab of the Status panel lists each MCP connector with its status.
 
 ```
-[ List ]   Connectors !2
+ List  │  ▌Connectors !2  │   GitHub
 
 ⚡ CONNECTORS  7 ok · 2 need sign-in
   Claude: you@example.com · Your Org
@@ -224,6 +225,43 @@ The **Connectors** tab of the Status panel lists each MCP connector with its sta
 # connector<TAB>account
 Gmail	you@gmail.com
 Google Drive	work@example.com
+```
+
+## GitHub tab
+
+The **GitHub** tab of the Status panel shows the repo the session runs in.
+
+```
+ List  │   Connectors  │  ▌GitHub
+
+‹  repo 1 of 2  ›
+
+progress-bar-plugin  ↗
+hunterZh37
+
+● main   ↑0 ↓0   ✓ clean
+
+OTHER BRANCHES  1
+  ○ feature/x  ↓2
+
+RECENT COMMITS
+  Add the GitHub tab  2h
+  First commit  3w
+
+  click to open on GitHub · latest by Ann
+  ↻ refresh
+```
+
+- **Click to open:** the repo name opens the repo, a branch opens `/tree/<branch>`, a commit opens `/commit/<sha>`. It runs `open` on macOS and `xdg-open` on Linux, and only ever for `https://github.com/` pages. A repo whose origin is not on GitHub still shows, but nothing opens.
+- **Local git only:** reads `git -C <folder>` for the branch, changed files, the 8 most recent branches with ahead/behind and the 8 latest commits. No network and no token.
+- **Credentials dropped:** a `https://user:token@github.com/...` remote becomes `https://github.com/owner/repo`. The token is never stored or shown.
+- **When it reads:** on opening the tab, every 30 s while the tab shows and the pane is open, and on `↻ refresh`.
+- **More repos (optional):** list folders in `~/.claude-progress/repos.txt`, one per line (`~` works, `#` starts a comment). The session's repo comes first. With more than one, `‹ ›` steps through them.
+
+```
+# one repo folder per line
+~/code/api
+/srv/site
 ```
 
 ## Fold sections
@@ -248,7 +286,7 @@ Optional. Makes each section header a link that folds or unfolds that section.
 
 ## Privacy
 
-Everything stays on your machine. The plugin reads and writes only files under `~/.claude-progress/`, `~/.claude/progress-bar/` and `~/.cache/progress-bar/`, plus `~/Applications/ProgressBarToggle.app` if you run `setup mac-clicks`. The plugin makes no network calls itself. While the Status panel is open, the Connectors tab runs `claude mcp list`, which contacts your configured connectors to check them.
+Everything stays on your machine. The plugin reads and writes only files under `~/.claude-progress/`, `~/.claude/progress-bar/` and `~/.cache/progress-bar/`, plus `~/Applications/ProgressBarToggle.app` if you run `setup mac-clicks`. The plugin makes no network calls itself. While the Status panel is open, the Connectors tab runs `claude mcp list`, which contacts your configured connectors to check them. The GitHub tab runs local `git` only, and opens a page in your browser when you click.
 
 ## License
 
