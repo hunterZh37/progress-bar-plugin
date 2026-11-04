@@ -452,7 +452,7 @@ test('the panel draws an indeterminate bar without a %, and one Claude Max meter
   expect((await ui.find({ type: 'Text', text: /^███$/ }))?.text).toBe('███')
   expect((await ui.find({ type: 'Text', text: /Claude Max/ }))?.text).toBe('  Claude Max this week  ')
   expect((await ui.find({ type: 'Text', text: /% used/ }))?.text).toBe('  62% used')
-  expect((await ui.find({ type: 'Text', text: /^▰+$/ }))?.text).toBe('▰'.repeat(6))
+  expect((await ui.find({ type: 'Text', text: /^█{6}$/ }))?.text).toBe('█'.repeat(6))
   expect((await ui.find({ type: 'Text', text: /3 of 10 steps/ }))?.text).toBe('  3 of 10 steps')
   await ui.unmount()
 })

@@ -358,8 +358,8 @@ export function registerPanel(on: On) {
         ...out,
         <Box key="maxmeter" marginTop={1}>
           <Text dimColor>{'  Claude Max this week  '}</Text>
-          <Text color={m.color}>{'▰'.repeat(m.filled)}</Text>
-          <Text dimColor>{'▱'.repeat(10 - m.filled)}</Text>
+          <Text color={m.color}>{'█'.repeat(m.filled)}</Text>
+          <Text dimColor>{'░'.repeat(10 - m.filled)}</Text>
           <Text>{`  ${used}% used`}</Text>
         </Box>,
       ]

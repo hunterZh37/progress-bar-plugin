@@ -215,7 +215,7 @@ Each RUNNING job in the Status panel is a card, so every kind of job reads the s
   ░░░░███░░░░░░░░░░░░░  steps not reported
   ⏱ 3m so far   🔧 12 actions · last: Edit
 
-Claude Max this week  ▰▰▰▰▰▰▱▱▱▱  62% used
+Claude Max this week  ██████░░░░  62% used
 ```
 
 - **Kind badge:** 🏷 **labeling** for names ending `-classify`, `-verify`, `-judge` or `-candidates`. 🖥 **on host** for names starting `host:` (any `name:` prefix, such as `gpu-box:train`). 🤖 **Claude agent** when the row reports `N tools`. ⚙ **job** for the rest.
