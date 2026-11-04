@@ -337,8 +337,8 @@ test('the panel parser: sections, counts, folded headers and trailing lines', as
   expect(runningRow(sections[1]!.rows[1]!).mark).toBe('◐')
 })
 
-/** A world for the panel: the status script answers FULL, files live in `files`. */
-function panelWorld(on: On, files: Record<string, string>) {
+/** A world for the panel: the status script answers `full`, files live in `files`. */
+function panelWorld(on: On, files: Record<string, string>, full = FULL) {
   const ran: { argv: string[]; env?: Record<string, string>; stdin?: string }[] = []
   mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
@@ -357,7 +357,7 @@ function panelWorld(on: On, files: Record<string, string>) {
   on('process.run', (_, e) => {
     ran.push({ argv: [...e.argv], env: e.init?.env, stdin: e.init?.stdin })
     if (e.argv[0] === 'rm') for (const f of e.argv.slice(2)) delete files[f]
-    const stdout = e.argv[1]?.endsWith('statusline.sh') ? FULL : ''
+    const stdout = e.argv[1]?.endsWith('statusline.sh') ? full : ''
     return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   const opened: string[] = []
@@ -370,16 +370,19 @@ function panelWorld(on: On, files: Record<string, string>) {
 const SCRIPT = `${HOME}/.claude/progress-bar/statusline.sh`
 const FLAG = `${DIR}/.state/panel-on`
 const FOLDED = `${DIR}/.state/folded.txt`
+const TODO_FILE = `${DIR}/todo.txt`
+const PANE_PROPS = { title: 'Status', isFocused: false, bodyColumns: 52, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } as const
 
 test('the panel draws sections and rows, and a header press writes folded.txt', async ($, on) => {
-  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n' }
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [TODO_FILE]: '[you]\nreview PR\ncall Sam\n[mac]\nrun import\n' }
   const { ran, opened } = panelWorld(on, files)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   expect(opened).toEqual([PANE])
   expect(ran).toContainEqual({ argv: ['/bin/sh', SCRIPT], env: { PB_FULL: '1' }, stdin: '{}' })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { title: 'Status', isFocused: false, bodyColumns: 52, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } })
   expect((await ui.find({ type: 'Text', text: /^  You$/ }))?.text).toBe('  You')
-  expect((await ui.find({ type: 'Text', text: /call Sam/ }))?.text).toBe('    ○ call Sam')
+  expect((await ui.find({ type: 'Button', text: /call Sam/ }))?.text).toBe('    ○ call Sam')
+  expect((await ui.find({ type: 'Button', text: /TO-DO/ }))?.text).toBe('▾ ☐ TO-DO  3')
   expect((await ui.find({ type: 'Text', text: /^nightly-import$/ }))?.text).toBe('nightly-import')
   expect((await ui.find({ type: 'Text', text: /4\/5 · batch 4/ }))?.text).toBe('    4/5 · batch 4 · 12m')
   await ui.press({ key: 'h-running' })
@@ -404,4 +407,49 @@ test('/progress-bar panel on and off: the flag file, and setup first', async ($,
   expect((await run($, 'panel off')).text).toContain('Status panel off')
   expect(files[FLAG]).toBe(undefined)
   expect((await run($, 'panel')).text).toContain('`/progress-bar panel on` opens it at every session start.')
+})
+
+test('a to-do press opens its menu; mark as done, mark as to-do and delete edit todo.txt', async ($, on) => {
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [TODO_FILE]: '# note\n[you]\nreview PR | https://x.test/1\nx old thing\ncall Sam\n' }
+  panelWorld(on, files)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  expect((await ui.find({ type: 'Button', text: /review PR/ }))?.text).toBe('    ○ review PR')
+  expect((await ui.find({ type: 'Button', text: /old thing/ }))?.text).toBe('    ✓ old thing')
+  expect((await ui.find({ type: 'Button', text: /TO-DO/ }))?.text).toBe('▾ ☐ TO-DO  2')
+  expect(await ui.find({ type: 'Button', text: /Mark as done/ })).toBe(undefined)
+
+  await ui.press({ key: 't-2' })
+  expect((await ui.find({ type: 'Button', text: /Mark as done/ }))?.text).toBe('✓ Mark as done  ')
+  expect(await ui.find({ type: 'Button', text: /Mark as to-do/ })).toBe(undefined)
+  await ui.press({ key: 'a-done-2' })
+  expect(files[TODO_FILE]).toBe('# note\n[you]\nx review PR | https://x.test/1\nx old thing\ncall Sam\n')
+  expect(await ui.find({ type: 'Button', text: /Mark as done/ })).toBe(undefined)
+
+  await ui.press({ key: 't-3' })
+  expect((await ui.find({ type: 'Button', text: /Mark as to-do/ }))?.text).toBe('○ Mark as to-do  ')
+  await ui.press({ key: 'a-todo-3' })
+  expect(files[TODO_FILE]).toBe('# note\n[you]\nx review PR | https://x.test/1\nold thing\ncall Sam\n')
+
+  await ui.press({ key: 't-4' })
+  await ui.press({ key: 'a-del-4' })
+  expect(files[TODO_FILE]).toBe('# note\n[you]\nx review PR | https://x.test/1\nold thing\n')
+
+  await ui.press({ key: 't-3' })
+  await ui.press({ key: 'a-x-3' })
+  expect(await ui.find({ type: 'Button', text: /Delete/ })).toBe(undefined)
+  await ui.unmount()
+})
+
+test('TO-DO stays visible when every item is done, so one can be reopened', async ($, on) => {
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [TODO_FILE]: '[mac]\nx run import\n' }
+  panelWorld(on, files, '▾ ▶ RUNNING\n  ◐ job ██░░ 50.0% · 1/2\n')
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  expect((await ui.find({ type: 'Button', text: /TO-DO/ }))?.text).toBe('▾ ☐ TO-DO  0')
+  expect((await ui.find({ type: 'Text', text: /^  Mac$/ }))?.text).toBe('  Mac')
+  await ui.press({ key: 't-1' })
+  await ui.press({ key: 'a-todo-1' })
+  expect(files[TODO_FILE]).toBe('[mac]\nrun import\n')
+  await ui.unmount()
 })
