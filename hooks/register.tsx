@@ -15,6 +15,8 @@ import { sessionProject } from './project'
 import type { Progress, Row } from './render'
 
 const WATCH = '.watch.json'
+// Data files in ~/.claude-progress that are never jobs.
+const DATA_FILES = new Set(['inbox', 'actions', 'max-usage', 'channels'])
 const MAX_LOG = 4 * 1024 * 1024 // bigger logs are read from their last 4 MB
 
 /** A row for one watch file, or null when its log is missing or the job is long over. */
@@ -129,7 +131,7 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number }
     if (used.has(name) || now - f.mtimeMs > FRESH_MS) continue
     const p = await readP($, `${dir}/${f.name}`)
     // Only progress files count: inbox.json and other data files have no done/total or step.
-    if (!p || name === 'inbox' || (p.done === null && !p.step)) continue
+    if (!p || DATA_FILES.has(name) || (p.done === null && !p.step)) continue
     rows.push({ id: `file:${name}`, description: name, status: 'running', startedAt: p.startedAt ?? f.mtimeMs, tools: 0, lastTool: '', done: p.done, total: p.total, step: p.step })
   }
   return { rows, now }

@@ -306,7 +306,7 @@ def main(stdin, now, summary=False):
     raw = [l.rstrip('\n') for l in stdin if l.strip()]
     # inbox.json is data for the Inbox block, not a job. Older plugin builds in other sessions still write an
     # "inbox" row to the shared jobs list, so drop it here by name, not only in collect().
-    raw = [l for l in raw if not re.match(r'^\W*(?:\x1b\][^\x07]*\x07|\x1b\]8;;[^\x1b]*\x1b\\)*inbox\b', re.sub(r'\x1b\[[0-9;]*m', '', l))]
+    raw = [l for l in raw if not re.match(r'^\W*(?:\x1b\][^\x07]*\x07|\x1b\]8;;[^\x1b]*\x1b\\)*(?:inbox|actions|max-usage|channels)\b', re.sub(r'\x1b\[[0-9;]*m', '', l))]
     jobs = [l for l in raw if is_job(l) and not l.startswith('…')]
     other = [l for l in raw if l not in jobs]
 
