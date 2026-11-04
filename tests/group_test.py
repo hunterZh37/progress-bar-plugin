@@ -96,6 +96,22 @@ class Group(unittest.TestCase):
         self.assertTrue(out[1].startswith('  import · finished '))
         self.assertEqual(self.run_('', now=t + 31 * 60), [])
 
+    def test_todo_priority_blocked_and_next(self):
+        self.write('todo.txt', '[you]\nreply Sam\n[mac]\nlater thing\n2. second | https://x.org\n1. first (after classify)\n[hunty]\n1. trends (after 2019-20 load)\n2. board links\n')
+        raw = self.g.main(io.StringIO('▶ arts-classify ████░░░░ 40.0% · 2/5\n'), T0)
+        plain = [re.sub(r'\033\[[0-9;]*m', '', strip_links(l)) for l in raw]
+        self.assertEqual(plain[:4], [
+            '▾ ☐ TO-DO',
+            '  YOU: reply Sam',
+            '  MAC: 1. first (waits for arts-classify) · next 2. second · later thing',
+            '  HUNTY: next 1. trends (after 2019-20 load) · 2. board links'])
+        self.assertIn('\033[2m1. first (waits for arts-classify)\033[0m', raw[2])
+
+    def test_todo_blocker_needs_every_key_word(self):
+        self.assertEqual(self.g.blocker('2019-20 load', ['Load 2019-20 filings', 'x']), 'Load 2019-20 filings')
+        self.assertEqual(self.g.blocker('2019-20 load', ['Load 2018 filings']), '')
+        self.assertEqual(self.g.blocker('the', ['the job']), '')
+
     def test_todo_hidden_done_links_and_free_headings(self):
         self.write('todo.txt', '# comment\nloose item\n[Team Alpha]\nx shipped\nopen site | https://example.com\n')
         raw = self.g.main(io.StringIO(''), time.time())

@@ -9,6 +9,7 @@ import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hook
 import { PANE, badge, evId, fitLabel, labelCol, machineTitle, machines, maxMeter, nestRows, runCount, shortTitle, parseSections, runCard, shortAge, timeTail, slide, stripAnsi } from '../hooks/panel'
 import { EVENTS_PY, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from '../hooks/events'
 import { REPOS_REL, parseBranches, parseCommits, webUrl } from '../hooks/github'
+import { blocker, clip, doneEvents, isRunningRow, jobMachine, keyWords, moveItem, nextPrompt, nextReady, parseCaps, parseItem, parseMode, rankTodos, ranked, rowName, shortJob, todoRows } from '../hooks/priority'
 import { eta, expandHome, line, lines, parseProgress, parseTitles, pickMeta, parseWatch, prevOf, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoItems, todoList } from '../hooks/render'
 
 const NOW = 1_800_000_000_000
@@ -251,7 +252,7 @@ test('/progress-bar shows a watched log, and stopped when its process is gone', 
 test('/progress-bar with an unknown argument prints usage', async ($, on) => {
   world(on)
   const { text } = await run($, 'nope')
-  expect(text.split('\n')[0]).toBe('Usage: /progress-bar [setup | demo | clear | todo | panel [on|off] | checkpoint [label] | fold <section> | unfold <section> | toggle <section>]')
+  expect(text.split('\n')[0]).toBe('Usage: /progress-bar [setup | demo | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | fold <section> | unfold <section> | toggle <section>]')
 })
 
 test('/progress-bar todo add, list, done and clear write todo.txt', async ($, on) => {
@@ -456,7 +457,7 @@ test('the panel draws sections and rows, and a header press writes folded.txt', 
   expect(ran).toContainEqual({ argv: ['/bin/sh', SCRIPT], env: { PB_FULL: '1' }, stdin: '{}' })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { title: 'Status', isFocused: false, bodyColumns: 52, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } })
   expect((await ui.find({ type: 'Text', text: /^  You$/ }))?.text).toBe('  You')
-  expect((await ui.find({ type: 'Button', text: /call Sam/ }))?.text).toBe('    ○ call Sam')
+  expect((await ui.find({ type: 'Button', text: /call Sam/ }))?.text).toBe('    call Sam')
   expect((await ui.find({ type: 'Button', text: /TO-DO/ }))?.text).toBe('▾ ☐ TO-DO  3')
   // One line per job by default: the title button, the bar, %, and a yellow no-progress note. No details yet.
   expect((await ui.find({ type: 'Button', key: 'open-nightly-import' }))?.text).toBe(`▸ ${'nightly-import'.padEnd(22)}`)
@@ -522,15 +523,15 @@ test('open to-dos under TO-DO, checked-off ones under DONE; the menu marks done,
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
   expect((await ui.find({ type: 'Button', text: /TO-DO/ }))?.text).toBe('▾ ☐ TO-DO  2')
-  expect((await ui.find({ type: 'Button', text: /review PR/ }))?.text).toBe('    ○ review PR')
+  expect((await ui.find({ type: 'Button', text: /review PR/ }))?.text).toBe('    review PR')
   expect(await ui.find({ type: 'Text', text: /^  Mac$/ })).toBe(undefined)
   expect((await ui.find({ type: 'Button', text: /DONE/ }))?.text).toBe('▾ ✔ DONE  3')
   expect((await ui.find({ type: 'Text', text: /Checked-off to-dos/ }))?.text).toBe('  Checked-off to-dos')
   expect((await ui.find({ type: 'Button', text: /old thing/ }))?.text).toBe('    ✓ old thing')
-  expect(await ui.find({ type: 'Button', text: /Mark as done/ })).toBe(undefined)
+  expect(await ui.find({ type: 'Button', text: /✓ Done/ })).toBe(undefined)
 
   await ui.press({ key: 't-2' })
-  expect((await ui.find({ type: 'Button', text: /Mark as done/ }))?.text).toBe('✓ Mark as done  ')
+  expect((await ui.find({ type: 'Button', text: /✓ Done/ }))?.text).toBe('✓ Done  ')
   expect(await ui.find({ type: 'Button', text: /Move back/ })).toBe(undefined)
   await ui.press({ key: 'a-done-2' })
   expect(files[TODO_FILE]).toBe('# note\n[you]\nx review PR | https://x.test/1\nx old thing\ncall Sam\n[mac]\nx all done here\n')
@@ -541,7 +542,7 @@ test('open to-dos under TO-DO, checked-off ones under DONE; the menu marks done,
   expect((await ui.find({ type: 'Button', text: /Move back/ }))?.text).toBe('○ Move back to to-do  ')
   await ui.press({ key: 'a-todo-3' })
   expect(files[TODO_FILE]).toBe('# note\n[you]\nx review PR | https://x.test/1\nold thing\ncall Sam\n[mac]\nx all done here\n')
-  expect((await ui.find({ type: 'Button', text: /old thing/ }))?.text).toBe('    ○ old thing')
+  expect((await ui.find({ type: 'Button', text: /old thing/ }))?.text).toBe('    old thing')
 
   await ui.press({ key: 't-4' })
   await ui.press({ key: 'a-del-4' })
@@ -674,6 +675,17 @@ test('a to-do action finds its item again when a line was added before the press
   files[TODO_FILE] = '[you]\nnew thing\nreview PR\ncall Sam\n'
   await ui.press({ key: 'a-done-2' })
   expect(files[TODO_FILE]).toBe('[you]\nnew thing\nreview PR\nx call Sam\n')
+  await ui.unmount()
+})
+
+test('the panel lists to-dos by priority with next and waits for, and Move up renumbers', async ($, on) => {
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [TODO_FILE]: '[mac]\nloose\n2. second\n1. first (after nothing runs)\n' }
+  panelWorld(on, files, DONE_FULL)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  await ui.press({ key: 't-1' })
+  await ui.press({ key: 'a-up-1' })
+  expect(files[TODO_FILE]).toBe('[mac]\n1. first (after nothing runs)\n2. loose\n3. second\n')
   await ui.unmount()
 })
 
@@ -986,4 +998,85 @@ test('connectors open their web page as the connected account', () => {
   expect(connUrl('Canva', 'not signed in')).toBe('https://www.canva.com/')
   expect(connUrl('my-db', '')).toBe('')
   expect(connUrl('my-db', '', 'https://example.org/admin')).toBe('https://example.org/admin')
+})
+
+// Priority to-dos and auto-next (hooks/priority.ts).
+const PTODO = '[you]\nreply Sam\n[mac]\nloose one\n2. dependabot | https://gh.io/x\n1. Arts: verify (after classify)\nx 3. shipped\n[hunty]\n1. trends (after 2019-20 load)\n2. board links (after 2019-20 load)\n'
+
+test('priority: an item splits into number, body, after and link', async () => {
+  expect(parseItem('2. Grant links (after 2019-20 load) | https://x.org')).toEqual({ num: 2, body: 'Grant links (after 2019-20 load)', after: '2019-20 load', url: 'https://x.org' })
+  expect(parseItem('plain')).toEqual({ num: null, body: 'plain', after: '', url: '' })
+  expect(keyWords('the 2019-20 load')).toEqual(['2019', '20', 'load'])
+})
+
+test('priority: blocked while a running name or title holds every key word', async () => {
+  expect(blocker('classify', ['arts_culture-classify'])).toBe('arts_culture-classify')
+  expect(blocker('2019-20 load', ['Load 2019-20 filings'])).toBe('Load 2019-20 filings')
+  expect(blocker('2019-20 load', ['Load 2018 filings'])).toBe('')
+  const r = ranked(PTODO, ['Arts classify'])
+  expect(r.filter(i => i.heading === 'mac').map(i => [i.num, i.body, i.blockedBy, i.next])).toEqual([
+    [1, 'Arts: verify (after classify)', 'Arts classify', false],
+    [2, 'dependabot', '', true],
+    [null, 'loose one', '', false],
+  ])
+  expect(r.find(i => i.heading === 'you')!.next).toBe(false)
+  expect(nextReady(PTODO, 'mac', [])!.body).toBe('Arts: verify (after classify)')
+  expect(nextReady(PTODO, 'hunty', ['Load 2019-20 filings'])).toBe(null)
+  expect(nextReady(PTODO, 'you', [])).toBe(null)
+})
+
+test('priority: panel to-dos rank the same way', async () => {
+  const todos = [
+    { owner: 'mac', text: 'b', done: false, line: 1 },
+    { owner: 'mac', text: '1. a (after load)', done: false, line: 2 },
+    { owner: 'mac', text: '2. c', done: false, line: 3 },
+  ]
+  expect(rankTodos(todos, ['big load']).map(t => [t.body, !!t.blockedBy, t.next])).toEqual([['a (after load)', true, false], ['c', false, true], ['b', false, false]])
+})
+
+test('priority: move up and down renumber the heading, matched by text', async () => {
+  const up = moveItem(PTODO, 'loose one', 'up')!
+  expect(up.split('\n').slice(3, 6)).toEqual(['1. Arts: verify (after classify)', '2. loose one', '3. dependabot | https://gh.io/x'])
+  expect(up).toContain('x 3. shipped')
+  expect(up).toContain('[you]\nreply Sam\n')
+  const down = moveItem(PTODO, '1. trends (after 2019-20 load)', 'down')!
+  expect(down.endsWith('[hunty]\n1. board links (after 2019-20 load)\n2. trends (after 2019-20 load)\n')).toBe(true)
+  expect(moveItem(PTODO, '1. Arts: verify (after classify)', 'up')).toBe(null)
+  expect(moveItem(PTODO, 'nothing like it', 'up')).toBe(null)
+})
+
+test('auto-next: machine, mode, caps, prompt and done events', async () => {
+  const heads = ['you', 'mac', 'hunty']
+  expect(jobMachine('hunty: embed', '', heads)).toBe('hunty')
+  expect(jobMachine('cpu-batch', 'Hunty CPU batch', heads)).toBe('hunty')
+  expect(jobMachine('Load 2019-20 filings', '', heads)).toBe('mac')
+  expect(parseMode('on\n')).toBe('on')
+  expect(parseMode('weird')).toBe('ask')
+  expect(parseCaps('mac=4\nbox: 1\n')).toEqual({ mac: 4, hunty: 2, box: 1 })
+  expect(nextPrompt('dependabot', 'https://gh.io/x')).toBe('Next up from the to-do list: dependabot (https://gh.io/x). Start it with a progress bar, and take it off todo.txt once it runs.')
+  const ev = ['{"ts": 100, "level": "success", "source": "a", "title": "A job done"}', '{"ts": 300, "level": "success", "source": "b", "title": "B done"}', '{"ts": 300, "level": "warning", "source": "c", "title": "C done"}', 'bad'].join('\n')
+  expect(doneEvents(ev, 200)).toEqual([{ ts: 300, source: 'b', title: 'B' }])
+  expect(rowName('⚠ stuck 16m Load 2019-20 filings █████░ 66.7% · 6/9')).toBe('Load 2019-20 filings')
+  expect(isRunningRow('▶ build ████░░░░ 40.0% · 2/5')).toBe(true)
+  expect(isRunningRow('▶ hunty ✓ helper healthy · load 0.98')).toBe(false)
+  expect(isRunningRow('✔ docs ████████ 100.0% · 5/5')).toBe(false)
+})
+
+test('to-do rows: one line each, ▶ next, ⏸ blocked, one waits for line per run, no (after X) shown', async () => {
+  const todos = [
+    { owner: 'hunty', text: '1. trends per org (after 2019-20 load)', done: false, line: 1 },
+    { owner: 'hunty', text: '2. grant links (after 2019-20 load)', done: false, line: 2 },
+    { owner: 'hunty', text: '3. a very long title that will not fit in the pane at all', done: false, line: 3 },
+  ]
+  const rows = todoRows(rankTodos(todos, ['load-2019-20']), 40, b => (b === 'load-2019-20' ? 'Load 2019-20 filings · board history' : b))
+  expect(rows.map(r => (r.kind === 'item' ? `${r.marker} ${r.num}  ${r.title}` : r.kind === 'waits' ? `~ ${r.text}` : r.kind))).toEqual([
+    'head',
+    '⏸  1  trends per org',
+    '⏸  2  grant links',
+    '~ waits for Load 2019-20 filings',
+    '▶  3  a very long title that will n…',
+  ])
+  expect(shortJob('Hunty: Similar orgs · step')).toBe('Hunty: Similar orgs')
+  expect(shortJob('Arts classify: batch 3')).toBe('Arts classify')
+  expect(clip('abcdef', 4)).toBe('abc…')
 })

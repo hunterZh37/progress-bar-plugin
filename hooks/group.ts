@@ -11,6 +11,7 @@ Reads status lines on stdin and prints:
 Jobs that vanish show as "finished HH:MM" for 30 min, unless their last row said starting with no progress.
 Duplicate rows of one job are merged. A trailing status word (working, starting…) is not part of a job's name.
 A stopped row (■) whose job log ends with a finish line counts as done, not a problem.
+To-dos sort by a leading "N. " (1 first). One ending "(after X)" is dim while a running job matches X. The top ready one per machine says next.
 Folded sections (~/.claude-progress/.state/folded.txt) show as one line with a count, unless PB_UNFOLD=1.
 With --summary it prints one count line instead (the status line does this while the Status panel is on).
 It ends with "☀ recap ready" while an overnight checkpoint (.state/overnight.json) is 4 h old or the panel saw a sleep.
@@ -139,10 +140,33 @@ def load_links():
     return out
 
 
-def parse_todo(text):
-    """{heading: [rendered item]} for open items. "x " = done (hidden), "text | url" = clickable."""
+NUM = re.compile(r'^(\d+)\.\s+')
+AFTER = re.compile(r'\s*\(after\s+([^)]+)\)\s*$', re.I)
+STOP = set('the a an and or of for to in on with is it its job run done finish finishes after'.split())
+
+
+def key_words(x):
+    return [w for w in re.split(r'[^a-z0-9]+', x.lower()) if w and w not in STOP]
+
+
+def blocker(after, running):
+    """The running name or title holding every key word of an "(after X)", or ''."""
+    ks = key_words(after)
+    if not ks:
+        return ''
+    for r in running:
+        ws = set(re.split(r'[^a-z0-9]+', r.lower()))
+        if all(k in ws for k in ks):
+            return r
+    return ''
+
+
+def parse_todo(text, running=()):
+    """{heading: [rendered item]} for open items. "x " = done (hidden), "text | url" = clickable.
+    "N. " = priority (1 first, unnumbered after). "(after X)" is dim with "waits for" while X runs.
+    Under a machine heading that uses numbers or "(after", the first ready item is marked next."""
     todo, cur = {}, None
-    for t in text.splitlines():
+    for i, t in enumerate(text.splitlines()):
         t = t.strip()
         if not t or t.startswith('#'):
             continue
@@ -157,8 +181,29 @@ def parse_todo(text):
             cur = 'todo'
             todo.setdefault(cur, [])
         text_, _, url = t.partition(' | ')
-        todo[cur].append(link(text_.strip(), url.strip() or None))
-    return {k: v for k, v in todo.items() if v}
+        text_ = text_.strip()
+        n = NUM.match(text_)
+        a = AFTER.search(text_)
+        todo[cur].append((int(n.group(1)) if n else float('inf'), i, text_, url.strip(), a.group(1).strip() if a else ''))
+    out = {}
+    for h, items in todo.items():
+        if not items:
+            continue
+        items.sort(key=lambda x: (x[0], x[1]))
+        mark = h.lower() != 'you' and any(x[0] != float('inf') or x[4] for x in items)
+        rows = []
+        for num, _, text_, url, after in items:
+            b = blocker(after, running) if after else ''
+            if b:
+                rows.append('\033[2m' + AFTER.sub(' (waits for ' + b.split(' · ')[0] + ')', text_) + '\033[0m')
+                continue
+            label = link(text_, url or None)
+            if mark:
+                label = '\033[32mnext\033[0m ' + label
+                mark = False
+            rows.append(label)
+        out[h] = rows
+    return out
 
 
 def main(stdin, now, summary=False):
@@ -288,7 +333,8 @@ def main(stdin, now, summary=False):
             body = i if plain else linked(re.sub(r'^[▶✔]\s*', '', i))
             out.append('  ' + (deco(i, body) if deco else body))
 
-    todo = parse_todo(read(os.path.join(ROOT, 'todo.txt')) or '')
+    run_names = [name_of(l) for l in groups['running']]
+    todo = parse_todo(read(os.path.join(ROOT, 'todo.txt')) or '', run_names + [nice(slugify(n), n, tt) for n in run_names])
     if summary:
         n_err = ev.unseen(now) if ev else 0
         line = summary_line(groups, sum(len(v) for v in todo.values()), sum(1 for l in groups['running'] if stuck_for(l) is not None), n_err)

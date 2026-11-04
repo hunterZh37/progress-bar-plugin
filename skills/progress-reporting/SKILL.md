@@ -92,6 +92,7 @@ x Rebuild the index
 - **Mark it done** when finished: prefix `x ` (hidden from the status line). Don't delete other people's items.
 - **Short items:** a few words, the action first. Add ` | <url>` to make it clickable.
 - **Group by owner or machine** under `[name]` headings (`[you]`, `[mac]`, `[server]`). Any name works.
+- **Priority:** start machine items with `1. `, `2. ` (1 first). End one with `(after <job words>)` when it must wait for a running job. When a job finishes, the plugin may send "Next up from the to-do list: <item>": start that item with a progress bar and take it off the list.
 - Edit the file directly, or use `/progress-bar todo add [name] <text>`, `todo done <n|text>`, `todo clear`.
 
 ## Shell helper

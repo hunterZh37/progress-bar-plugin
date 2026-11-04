@@ -20,7 +20,8 @@ Live progress bars and a to-do list in the Claude Code status line. One line per
 - **Skill:** `progress-reporting` tells Claude to write those files for multi-step work and to ask subagents to do the same.
 - **Groups:** lines sort into **TO-DO**, **PROBLEMS**, **RUNNING**, **WAITING** and **DONE**. A job that ends shows as `finished 14:05` for 30 minutes, unless its progress file still exists. Duplicate rows of one job merge. A row is **DONE** only on `✔`, `100%`, or `· done` at the end (or `· done:`), so `done in 1h` stays RUNNING. `waiting`, `pending` and `waits for` go to **WAITING**.
 - **Spinner and stuck rows:** each RUNNING row gets a spinner (and `in progress` when it has no step). A row whose numbers have not moved for 10 minutes shows a yellow `⚠ stuck 14m` instead and sorts first. An agent's tool count counts as movement, so an agent working through a long step is not stuck. Change the 10 in `~/.claude-progress/.state/stuck-minutes`.
-- **To-dos:** `~/.claude-progress/todo.txt` shows first. Claude keeps it current.
+- **To-dos:** `~/.claude-progress/todo.txt` shows first. Claude keeps it current. Number items to set their priority, and mark what waits on a running job.
+- **Auto-next:** when a job finishes, the top ready to-do of its machine starts by itself (or is suggested, the default).
 - **Links:** job names open their progress file, or a URL you set in `links.txt`.
 - **Status line:** a small script prints all this above your existing status line.
 - **Status panel:** an optional docked pane beside the chat with the same groups, foldable headers and a one-line status line.
@@ -77,6 +78,7 @@ Already have a status line? Setup reads it and builds it into the script. The ba
 | `/progress-bar todo add [name] <text>` | Adds a to-do under `[name]` (default: the last heading, or `[todo]`) |
 | `/progress-bar todo done <n\|text>` | Marks a to-do done by number or by text it contains |
 | `/progress-bar todo clear` | Removes done to-dos |
+| `/progress-bar autonext on\|off\|ask` | When a job finishes: start the next to-do (`on`), suggest it (`ask`, the default) or do nothing (`off`) |
 | `/progress-bar panel` | Opens the Status panel. `panel on` opens it at every session start, `panel off` stops that |
 | `/progress-bar checkpoint [label]` | Saves the running jobs for the overnight recap. `away` does the same |
 | `/progress-bar fold <section>` | Folds a section to one line. `unfold` opens it, `toggle` flips it |
@@ -156,12 +158,33 @@ A psql script, one step per statement (`REFRESH MATERIALIZED VIEW` reports no pr
 Review the deploy PR | https://github.com/org/repo/pull/12
 x Rotate the token
 [mac]
+1. Verify and load the arts labels (after classify)
+2. Review the Dependabot alerts
 Load the 2026 batch
+[hunty]
+1. Finance trends per org (after 2019-20 load)
 ```
 
 - **Headings:** any `[name]`, for a person or a machine. Each shows as one row: `YOU: item · item`.
 - **Done:** prefix `x `. Done items are hidden in the status line and shown with `✓` under DONE in the Status panel. `/progress-bar todo clear` removes them.
 - **Links:** `text | url` makes the text clickable in terminals that support links.
+- **Priority:** a leading `N. ` sets an item's place under its heading, `1.` first. Unnumbered items come after the numbered ones, in file order. The status line and the Status panel list items in this order, with the number.
+- **Blocked items:** an item ending `(after X)` waits while any RUNNING job's name or title holds every key word of X (case does not matter, small words like "the" are skipped). `(after 2019-20 load)` waits on `Load 2019-20 filings`. A blocked item shows dim. The Status panel hides the `(after X)` text and adds one dim `waits for <job>` line under the items that wait on that job.
+- **Next:** the top ready item of each machine heading (any heading but `[you]`) is marked: `next` in the status line, a green `▶` in the Status panel.
+- **Move up and Move down:** in the Status panel, press an item and pick `↑ Up` or `↓ Down`. Every open item under that heading is renumbered `1.` to `N.` in the new order. The item is found by its text, never by line number.
+
+### Auto-next
+
+When a RUNNING job finishes (a `<job> done` event in `events.jsonl`, logged once per finish by the grouper), the plugin picks the top ready to-do of that job's machine, plus any machine with an item that was waiting for that job, and asks Claude to start it with this prompt:
+
+```
+Next up from the to-do list: <item>. Start it with a progress bar, and take it off todo.txt once it runs.
+```
+
+- **Machine:** a `<host>: name` job, or a title that starts with a heading name (`Hunty CPU batch`), belongs to that heading. Any other job belongs to `[mac]` or `[local]`. `[you]` items never start on their own.
+- **Mode:** `/progress-bar autonext on|off|ask`, saved in `~/.claude-progress/.state/autonext`. `on` sends the prompt. `ask` (the default) shows a toast and puts the prompt in the prompt box as a suggestion, so Tab starts it. `off` does nothing. The panel menu's `▶ Start` sends the same prompt for any ready item.
+- **Caps:** `~/.claude-progress/.state/caps` holds one `machine=N` per line (default `mac=3`, `hunty=2`). A machine with N or more RUNNING rows waits, and the next one starts once a row finishes.
+- **Once:** every open session checks every 5 seconds, and only one acts on a finish. It claims the finish with a folder under `~/.claude-progress/.state/autonext-claims/`, and holds the item for 6 hours so two finishes never start the same to-do. The session that ran the finished agent goes first. Others wait 20 seconds.
 - **Claude keeps it current:** the skill tells Claude to add items when work is queued or handed to you and to mark them done when finished.
 
 ## Links
@@ -218,7 +241,7 @@ The status line then reads:
 - **Needs setup:** the panel runs `~/.claude/progress-bar/statusline.sh` with `PB_FULL=1` every second while it is open. `panel on` refreshes that script and `group.py` and keeps your chained status line.
 - **Fold:** press a header, or its hotkey (`1` to-do, `2` running, `3` done, `4` waiting, `5` problems). It writes `~/.claude-progress/.state/folded.txt`, the same file `/progress-bar fold` uses.
 - **Off by default:** `panel on` writes `~/.claude-progress/.state/panel-on`. With that file the pane opens at session start and the status line prints the summary. `panel off` deletes it and closes the pane. `/progress-bar panel` opens it once without turning it on.
-- **To-do menu:** click a to-do for Mark as done, Move back to to-do or Delete. It edits `~/.claude-progress/todo.txt`, on the line that still holds that item's text, so a line added since the panel drew never hits the wrong item. TO-DO lists open items only. Checked-off ones move to DONE under **Checked-off to-dos**, after finished jobs, and count there.
+- **To-do menu:** click a to-do for Done, Up, Down, Start (a ready machine item), Delete or Move back to to-do (a checked-off one). It edits `~/.claude-progress/todo.txt`, on the line that still holds that item's text, so a line added since the panel drew never hits the wrong item. TO-DO lists open items only. Checked-off ones move to DONE under **Checked-off to-dos**, after finished jobs, and count there.
 - **Rows:** to-dos one per line under each owner, running jobs one line each, a press opening the details (see **Running cards**), done jobs dimmed with their finish time.
 - **Tabs:** `▌List  │   Connectors  │   GitHub  │   Log`, the shown one marked `▌`. **List** (the default) shows the sections above. **Connectors** shows your connectors, its label adding `!N` when N need attention. **GitHub** shows your repos. **Log** shows the events log, its label adding `!N` for unseen errors.
 

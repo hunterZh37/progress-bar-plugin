@@ -7,6 +7,7 @@ import { EVENTS_REL, LOG_DIRS_REL, SEEN_REL, hhmm, insideDirs, parseEvents, pars
 import { GH_EVERY, openUrl, openWeb, readGh } from './github'
 import { resolveHome } from './home'
 import { isDarwin } from './mac'
+import { moveItem, nextPrompt, rankTodos, todoRows as layoutTodos } from './priority'
 import { FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, slug } from './render'
 import type { Checkpoint, Conn, Ev, LogFilter, Meta, Recap, Snap, Todo } from '../types'
 
@@ -14,7 +15,9 @@ import type { Checkpoint, Conn, Ev, LogFilter, Meta, Recap, Snap, Todo } from '.
 // It runs the plugin's own status line script with PB_FULL=1 every second while the pane is open.
 // Section headers are buttons that fold or open the section through ~/.claude-progress/.state/folded.txt.
 // To-dos come straight from ~/.claude-progress/todo.txt: open ones under TO-DO, checked-off ones under DONE.
-// Pressing one opens a menu: mark as done (or move back to to-do) or delete.
+// Pressing one opens a menu: mark as done (or move back to to-do), move up or down, start now, or delete.
+// Open to-dos show by priority ("N. " in todo.txt, see priority.ts) with their number. One that waits for a running
+// job ("(after X)") shows dim with "waits for X". The top ready one of each machine is marked "next".
 // RUNNING rows draw as one line per job (short title, a 10-cell bar, %, time left), the bars in one column.
 // Pressing a line opens its card (runCard): id and badge, count, step, facts and what it unlocks, from `title`, `why`
 // and `parent` in its progress file or ~/.claude-progress/titles.txt. A running child shows under its open parent.
@@ -374,6 +377,16 @@ export async function todoAction($: EngineInterface, h: string, line: number, ac
   await pollPanel($, h)
 }
 
+/** Move up or Move down: renumbers the item's heading in todo.txt. Matches the item by its text. */
+export async function todoMove($: EngineInterface, h: string, text: string, dir: 'up' | 'down') {
+  const file = `${h}/${TODO_REL}`
+  try {
+    const out = moveItem(String(await $.fs.read(file)), text, dir)
+    if (out !== null) await $.fs.write(file, out)
+  } catch { /* next press */ }
+  await pollPanel($, h)
+}
+
 /** Runs the status line script in full and keeps its lines. */
 export async function pollPanel($: EngineInterface, h: string) {
   if (!h) return
@@ -581,7 +594,12 @@ export function registerPanel(on: On) {
     if (openTodos > 0 && !sections.some(s => s.key === 'todo')) sections.unshift({ key: 'todo', title: 'TO-DO', folded: false, count: 0, rows: [] })
     if (doneTodos.length && !sections.some(s => s.key === 'done')) sections.push({ key: 'done', title: 'DONE', folded: false, count: 0, rows: [] })
 
-    // One to-do as a button. Pressing it opens its menu below it.
+    // Running names and titles: what an "(after X)" to-do waits for.
+    const runNames = (sections.find(x => x.key === 'running')?.rows ?? []).map(x => runCard(x).name)
+    const metaNow = await read($, metaAtom)
+    const running = runNames.flatMap(n => [n, metaNow[slug(n)]?.title ?? ''].filter(Boolean))
+
+    // A checked-off to-do (under DONE) as a button. Pressing it opens its menu below it.
     const todoItem = (t: Todo) => [
       <Button key={`t-${t.line}`} plain onPress={() => update($, menuAtom, v => (v === t.line ? -1 : t.line))}>
         {`    ${t.done ? '✓' : '○'} ${t.text}`}
@@ -598,14 +616,38 @@ export function registerPanel(on: On) {
         : null,
     ].filter(Boolean)
 
-    // Each owner with open items, then those items.
-    const todoRows = () => [...new Set(todos.map(t => t.owner))].flatMap(owner => {
-      const items = todos.filter(t => t.owner === owner && !t.done)
-      if (!items.length) return []
+    // Open to-dos, one line each, never wrapped: per machine "Mac  2", then by priority a marker (green ▶ next, dim ⏸
+    // blocked), the number in a 2-wide column and the title without its "(after X)". Blocked items that wait on the same
+    // job get one dim "waits for <job>" line under the last of them. Pressing an item opens its menu below it.
+    const jobLabel = (b: string) => (runNames.includes(b) ? metaNow[slug(b)]?.title ?? b : b)
+    const todoRows = () => layoutTodos(rankTodos(todos.filter(t => !t.done), running), width, jobLabel).flatMap(row => {
+      if (row.kind === 'gap') return [<Text key={`g-${row.owner}`}>{' '}</Text>]
+      if (row.kind === 'head') {
+        return [<Box key={`w-${row.owner}`}><Text bold color="magenta">{`  ${row.owner.charAt(0).toUpperCase()}${row.owner.slice(1).toLowerCase()}`}</Text><Text dimColor>{`  ${row.count}`}</Text></Box>]
+      }
+      if (row.kind === 'waits') return [<Text key={`wf-${row.at}`} dimColor>{`          ${row.text}`}</Text>]
+      const t = row.item
       return [
-        <Text key={`w-${owner}`} bold color="magenta">{`  ${owner.charAt(0).toUpperCase()}${owner.slice(1).toLowerCase()}`}</Text>,
-        ...items.flatMap(todoItem),
-      ]
+        <Box key={`tr-${t.line}`}>
+          <Text color={row.marker === '▶' ? 'green' : undefined} dimColor={row.marker === '⏸'}>{`    ${row.marker} `}</Text>
+          <Button key={`t-${t.line}`} plain onPress={() => update($, menuAtom, v => (v === t.line ? -1 : t.line))}>
+            {row.dim ? <Text dimColor>{`${row.num}  ${row.title}`}</Text> : `${row.num}  ${row.title}`}
+          </Button>
+        </Box>,
+        menuFor === t.line
+          ? <Box key={`m-${t.line}`}>
+              <Text dimColor>{'          '}</Text>
+              <Button key={`a-done-${t.line}`} plain onPress={() => todoAction($, homeDir, t.line, 'done', t.text)}>{'✓ Done  '}</Button>
+              <Button key={`a-up-${t.line}`} plain onPress={() => todoMove($, homeDir, t.text, 'up')}>{'↑ Up  '}</Button>
+              <Button key={`a-dn-${t.line}`} plain onPress={() => todoMove($, homeDir, t.text, 'down')}>{'↓ Down  '}</Button>
+              {!t.blockedBy && t.owner.toLowerCase() !== 'you'
+                ? <Button key={`a-go-${t.line}`} plain onPress={async () => { await update($, menuAtom, () => -1); void $.prompt.submit({ text: nextPrompt(t.body) }) }}>{'▶ Start  '}</Button>
+                : null}
+              <Button key={`a-del-${t.line}`} plain onPress={() => todoAction($, homeDir, t.line, 'delete', t.text)}>{'✕ Delete  '}</Button>
+              <Button key={`a-x-${t.line}`} plain onPress={() => update($, menuAtom, () => -1)}>{'Cancel'}</Button>
+            </Box>
+          : null,
+      ].filter(Boolean)
     })
 
     // Finished jobs, then the checked-off to-dos.

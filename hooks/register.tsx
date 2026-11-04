@@ -1,5 +1,6 @@
 import type { EngineInterface, Register } from 'claude-code'
 
+import { autonextCommand, ownJobs, tickAutonext } from './autonext'
 import { CHECKPOINT_PY } from './checkpoint'
 import { EVENTS_PY } from './events'
 import { GROUP_PY } from './group'
@@ -48,7 +49,8 @@ const EVENTS_PY_REL = '.claude/progress-bar/events.py'
 const CHECKPOINT_PY_REL = '.claude/progress-bar/checkpoint.py'
 const DEMO = 'progress-bar-demo'
 const USAGE = [
-  'Usage: /progress-bar [setup | demo | clear | todo | panel [on|off] | checkpoint [label] | fold <section> | unfold <section> | toggle <section>]',
+  'Usage: /progress-bar [setup | demo | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | fold <section> | unfold <section> | toggle <section>]',
+  '  autonext: when a job finishes, start (on), suggest (ask, the default) or skip (off) the top ready to-do of its machine',
   '  panel: open the Status panel. panel on: open it at every session start, with a one-line status line',
   '  checkpoint (or away): save the running jobs. The Status panel shows what happened since once you are back',
   '  setup mac-clicks [off]: click a section header to fold it (macOS)',
@@ -87,6 +89,7 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number }
     const s = seen.get(a.id) ?? { startedAt: now, tools: 0, lastTool: '' }
     seen.set(a.id, s)
     // An agent that handed its report back is finished, even while the harness still lists it as waiting.
+    ownJobs.add(slug(a.description))
     if (s.lastTool === 'SubagentHandback') continue
     const p = h ? await readP($, `${dir}/${slug(a.description)}.json`) : null
     rows.push({ id: a.id, description: a.description, status: a.status, startedAt: s.startedAt, tools: s.tools, lastTool: s.lastTool, done: p?.done ?? null, total: p?.total ?? null, step: p?.step ?? '' })
@@ -334,9 +337,9 @@ export const register: Register = on => {
   })
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup [mac-clicks [off]] | demo | clear | todo | panel [on|off] | checkpoint [label] | fold <section>]' })
+    await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup [mac-clicks [off]] | demo | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | fold <section>]' })
     void poll($)
-    $.clock.every(5000, () => { void poll($) })
+    $.clock.every(5000, () => { void poll($); void tickAutonext($) })
     await startPanel($, await resolveHome($))
     return next(e)
   })
@@ -351,6 +354,7 @@ export const register: Register = on => {
       : arg === 'demo' ? await demo($)
       : arg === 'clear' ? await clear($)
       : /^panel\b/.test(arg) ? await panel($, arg.slice(5).trim())
+      : /^autonext\b/.test(arg) ? await autonextCommand($, arg.slice(8))
       : /^todo\b/.test(arg) ? await todo($, raw.slice(4).trim())
       : /^(checkpoint|away)\b/.test(arg) ? await checkpointCommand($, await resolveHome($), raw.replace(/^\S+\s*/, ''))
       : /^(fold|unfold|toggle)\b/.test(arg) ? await fold($, arg)
