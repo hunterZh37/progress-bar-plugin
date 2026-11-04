@@ -527,7 +527,7 @@ test('the panel draws an indeterminate bar without a %, and one Claude Max meter
   await ui.unmount()
 })
 
-test('/progress-bar panel on and off: the flag file, and setup first', async ($, on) => {
+test('/progress-bar panel on and off: the flag file, and setup first', { options: { openPanel: false, statusLine: false } }, async ($, on) => {
   const files: Record<string, string> = {}
   const { opened } = panelWorld(on, files)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })

@@ -9,13 +9,29 @@ description: Report progress of multi-step work to the progress-bar status line.
 
 The progress-bar plugin draws a bar for every progress file in `~/.claude-progress/`. Write one so the person can see how far a job is.
 
+**Already automatic:** your own task list (TodoWrite, TaskCreate, TaskUpdate) shows as one bar, a Bash command over a minute or in the background shows as a working row, and every subagent gets a line. Report on top of that for named jobs with steps.
+
+## Easiest: the progress_report tool
+
+Call `progress_report` (from the progress-bar plugin) when the job starts and after each step:
+
+```
+progress_report(title: "Login fix, tests and deploy", why: "people can sign in again", done: 2, total: 5, step: "run tests")
+```
+
+- It writes `~/.claude-progress/<slug of title>.json` with this session's id, folder and `startedAt` filled in, so the bar shows in this session's Status panel on any machine.
+- Pass `slug` to pick the file name, `parent` to nest it under a bigger job.
+- At the end call it with `finished: true`. That removes the bar.
+- No tool (a shell script, a job on another machine)? Write the file yourself (below).
+
 ## The file
 
 Path: `~/.claude-progress/<slug>.json`
 
 ```json
 {"done": 2, "total": 5, "step": "run tests", "startedAt": 1767225600000,
- "title": "Login fix · tests and deploy", "why": "people can sign in again", "parent": "release-prep"}
+ "title": "Login fix · tests and deploy", "why": "people can sign in again", "parent": "release-prep",
+ "session": "<session id>", "cwd": "/absolute/working/dir"}
 ```
 
 - **done**, **total**: numbers, `total` above 0. Without them the line shows `working`.
@@ -24,6 +40,9 @@ Path: `~/.claude-progress/<slug>.json`
 - **title**: plain words for what the job is, so a person knows it at a glance. The Status panel shows it in bold above the slug.
 - **why**: what the job unlocks for the person (`the weekly report`). Shown as `unlocks: …`.
 - **parent**: the slug of the bigger job this is part of. Set it when a subagent or script works for another job that has a progress file. While both run, the child draws inside the parent's card, and the parent reads `waiting on: <child>` instead of stuck.
+- **session**: the Claude Code session id, so the bar shows only in this session. In Bash it is `$CLAUDE_CODE_SESSION_ID`. Add it whenever you can.
+- **cwd**: always add it, the absolute folder you work in. The bar then shows in the sessions of that project, even when the session id is missing or that session has closed.
+- Without `session` and `cwd`, the bar goes to the shared list, which may show in no session on a machine that routes it elsewhere.
 - A job that can't write these (a log-only job) can get a line in `~/.claude-progress/titles.txt`: `<job id><TAB><title><TAB><why><TAB><parent>`.
 
 **Slug rule:** lowercase the job's name and turn every run of characters other than `a-z` and `0-9` into `-`, trimming `-` at both ends. `Fix the Login bug!` becomes `fix-the-login-bug`.
@@ -31,7 +50,7 @@ Path: `~/.claude-progress/<slug>.json`
 ## When to write it
 
 - **Your own multi-step job:** write the file after each step, overwriting it. Count the steps up front.
-- **Briefing a subagent:** name the slug from the subagent's `description` and add to its prompt: "After each step overwrite `~/.claude-progress/<slug>.json` with `{"done": N, "total": T, "step": "<short>"}`. Delete it when finished. Steps: ...". The plugin then puts the bar on that subagent's line.
+- **Briefing a subagent:** name the slug from the subagent's `description` and add to its prompt: "After each step call `progress_report` with slug `<slug>`, done N, total T and a short step, and `finished: true` at the end. Without that tool, overwrite `~/.claude-progress/<slug>.json` with `{"done": N, "total": T, "step": "<short>", "session": "<$CLAUDE_CODE_SESSION_ID>", "cwd": "<absolute working dir>"}` and delete it when finished. Steps: ...". The plugin then puts the bar on that subagent's line.
 - **Background shell jobs:** have the script write the file itself (below).
 
 ## Jobs that only write a log: watch files
@@ -101,7 +120,7 @@ x Rebuild the index
 ```sh
 progress() { # progress <slug> <done> <total> <step>
   mkdir -p ~/.claude-progress
-  printf '{"done":%s,"total":%s,"step":"%s"}\n' "$2" "$3" "$4" > ~/.claude-progress/"$1".json
+  printf '{"done":%s,"total":%s,"step":"%s","session":"%s","cwd":"%s"}\n' "$2" "$3" "$4" "$CLAUDE_CODE_SESSION_ID" "$PWD" > ~/.claude-progress/"$1".json
 }
 
 for i in 1 2 3; do

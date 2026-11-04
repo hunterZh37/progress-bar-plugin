@@ -40,6 +40,10 @@ const TITLE = 'Status'
 const COLUMNS = 52
 const SCRIPT_REL = '.claude/progress-bar/statusline.sh'
 export const PANEL_FLAG_REL = '.claude-progress/.state/panel-on'
+// `/progress-bar panel off` leaves this, so the default (panel on for a new install) never turns it back on.
+export const PANEL_OFF_REL = '.claude-progress/.state/panel-off'
+// The one-time hint when the pane cannot open (a narrow terminal).
+export const PANEL_HINT_REL = '.claude-progress/.state/panel-hint-shown'
 const FOLDED_REL = '.claude-progress/.state/folded.txt'
 
 export const SECTION_KEYS = ['todo', 'running', 'done', 'waiting', 'problems'] as const
@@ -592,12 +596,14 @@ export async function panelCommand($: EngineInterface, h: string, arg: string): 
   if (!h) return 'Could not find your home folder ($HOME is unset).'
   if (arg === 'on') {
     await $.fs.write(`${h}/${PANEL_FLAG_REL}`, 'on\n')
+    await $.process.run(['rm', '-f', `${h}/${PANEL_OFF_REL}`]).catch(() => undefined)
     await pollPanel($, h)
     await openPanel($)
     return 'Status panel on: it opens at session start, and the status line shows one summary line.'
   }
   if (arg === 'off') {
     await $.process.run(['rm', '-f', `${h}/${PANEL_FLAG_REL}`]).catch(() => undefined)
+    await $.fs.write(`${h}/${PANEL_OFF_REL}`, 'off\n').catch(() => undefined)
     await $.ui.close({ id: PANE }).catch(() => undefined)
     return 'Status panel off: the status line shows the full groups again.'
   }
@@ -609,8 +615,14 @@ export async function panelCommand($: EngineInterface, h: string, arg: string): 
     : 'Status panel opened. `/progress-bar panel on` opens it at every session start.'
 }
 
-/** At session start: poll every second while the pane is open, and open it when the panel is on. */
-export async function startPanel($: EngineInterface, h: string) {
+/**
+ * At session start: poll every second while the pane is open, and open it when the panel is on.
+ * `defaultOn` (a new install): the panel is on unless `/progress-bar panel off` turned it off.
+ */
+export async function startPanel($: EngineInterface, h: string, defaultOn = false) {
+  if (h && defaultOn && !(await isPanelOn($, h)) && !(await $.fs.exists(`${h}/${PANEL_OFF_REL}`).catch(() => false))) {
+    await $.fs.write(`${h}/${PANEL_FLAG_REL}`, 'on\n').catch(() => undefined)
+  }
   await resetConns($)
   // The recap ticks whether the pane is open or not, so a sleep shows as a gap between two ticks.
   await tickRecap($, h)
@@ -626,8 +638,15 @@ export async function startPanel($: EngineInterface, h: string) {
   })
   if (await isPanelOn($, h)) {
     await pollPanel($, h)
-    void openPanel($)
+    void openPanel($).then(r => (r && !r.isPlaced ? panelHint($, h) : undefined)).catch(() => undefined)
   }
+}
+
+/** Once per machine: the pane waits for a wider terminal, so say how to open it. */
+async function panelHint($: EngineInterface, h: string) {
+  if (!h || (await $.fs.exists(`${h}/${PANEL_HINT_REL}`).catch(() => false))) return
+  await $.fs.write(`${h}/${PANEL_HINT_REL}`, 'shown\n').catch(() => undefined)
+  await $.ui.toast('Progress panel: /progress-bar')
 }
 
 /** Draws the pane. */

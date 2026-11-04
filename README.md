@@ -15,6 +15,8 @@ Live progress bars and a to-do list in the Claude Code status line. One line per
 ## What it does
 
 - **Subagents:** every running subagent gets a line with its age, tool calls and last tool.
+- **Your own tasks:** when Claude keeps a task list (TodoWrite, TaskCreate, TaskUpdate) in the main session, the list shows as one bar: done of total, with the item in progress as its title. No skill or instructions needed.
+- **Long commands:** a Bash command that runs over a minute, or in the background, shows as a working row with its description until it ends.
 - **Real bars:** a subagent or shell job that writes `~/.claude-progress/<slug>.json` gets a bar with percent, count and step.
 - **Bars from logs:** a job that only writes a log (psql, a vendor tool, a remote job) gets a bar from a watch file: done/total read from the log by regex, an ETA, and `■ stopped` or `✖ error` when it dies or fails.
 - **Skill:** `progress-reporting` tells Claude to write those files for multi-step work and to ask subagents to do the same.
@@ -34,38 +36,26 @@ Live progress bars and a to-do list in the Claude Code status line. One line per
 
 ## Install
 
-At the prompt of a terminal session:
-
-```
-/plugin marketplace add hunterZh37/progress-bar-plugin
-/plugin install progress-bar@progress-bar
-```
-
-Or in one line:
-
 ```
 /plugin install progress-bar --marketplace hunterZh37/progress-bar-plugin
 ```
 
-Answer `y` to add the marketplace, then pick a scope. From a shell: `claude plugin install progress-bar --marketplace hunterZh37/progress-bar-plugin`.
+That's it. Answer `y` to add the marketplace and pick a scope. From the next session on, the status line shows the bars and the Status panel opens beside the chat. No setup command, no settings to edit.
 
-## Set up the status line
+**Opt-outs** (in `/config`, under progress-bar):
 
-```
-/progress-bar setup
-```
+- **Progress status line** off: the plugin leaves your status line alone.
+- **Open the Status panel** off: the panel stays closed until you run `/progress-bar`. `/progress-bar panel off` does the same.
 
-This writes `~/.claude/progress-bar/statusline.sh`. It never edits your settings. Add the line it prints to `~/.claude/settings.json`:
+**What the first session does:**
 
-```json
-"statusLine": { "type": "command", "command": "~/.claude/progress-bar/statusline.sh", "refreshInterval": 1 }
-```
+- Writes `~/.claude/progress-bar/statusline.sh`, with `group.py` (grouping), `events.py` (the events log) and `checkpoint.py` (the overnight recap) beside it. They need only the system `python3`. Without it the lines print ungrouped.
+- Points the status line at that script through the plugin, with `refreshInterval: 1` so bars move while Claude is idle. Your settings files are never edited.
+- Keeps a status line you already had: the script runs it after the bars, with the session JSON on stdin, so its lines print below the groups. A settings file that already names the script is left as it is.
+- Opens the Status panel. A terminal under 144 columns keeps it waiting, and a one-time toast says `Progress panel: /progress-bar`.
+- Each later session start rewrites the scripts with the plugin's version, so updates need nothing either.
 
-- **`refreshInterval: 1`** redraws the status line every second, so bars move while Claude is idle.
-- **Grouping** runs through `~/.claude/progress-bar/group.py`, which setup writes beside the script with `events.py` (the events log) and `checkpoint.py` (the overnight recap). Both need only the system `python3`. Without it the lines print ungrouped.
-- **Updating the plugin?** Run setup again to get the new scripts.
-
-Already have a status line? Setup reads it and builds it into the script. The bars print first, then your old status line, which still gets the session JSON on stdin. Its lines print as is, below the groups. Run setup before you change the setting.
+`/progress-bar setup` still writes the scripts by hand and prints the settings line, for a status line you manage yourself.
 
 ## Commands
 
@@ -82,7 +72,7 @@ Already have a status line? Setup reads it and builds it into the script. The ba
 | `/progress-bar todo clear` | Removes done to-dos |
 | `/progress-bar autonext on\|off\|ask` | When a job finishes: start the next to-do (`on`), suggest it (`ask`, the default) or do nothing (`off`) |
 | `/progress-bar` | Shows the bars as text and opens the Status panel |
-| `/progress-bar panel` | Opens the Status panel. `panel on` opens it at every session start, `panel off` stops that |
+| `/progress-bar panel` | Opens the Status panel. It opens at every session start by default. `panel off` stops that, `panel on` turns it back on |
 | `/progress-bar checkpoint [label]` | Saves the running jobs for the overnight recap. `away` does the same |
 | `/progress-bar action` | Lists open actions. `action add`, `done [n]`, `skip [n] <reason>`, `copy [n]`, `check`. See Action needed |
 | `/progress-bar inbox` | Lists what needs you from `~/.claude-progress/inbox.json`. `inbox setup` writes the example Gmail checker |
@@ -99,8 +89,11 @@ Already have a status line? Setup reads it and builds it into the script. The ba
 
 ```json
 {"done": 2, "total": 5, "step": "render pages", "startedAt": 1767225600000,
- "title": "Docs site · all pages", "why": "the public help pages", "parent": "release-prep"}
+ "title": "Docs site · all pages", "why": "the public help pages", "parent": "release-prep",
+ "session": "2f6c1e0a-7d4b-4e8f-9a1c-5b3d2e7f8a90", "cwd": "/Users/me/code/docs"}
 ```
+
+Easiest: Claude calls the plugin's `progress_report` tool (title, why, done, total, step, parent, slug, finished). It writes this file with `session`, `cwd` and `startedAt` filled in.
 
 | Field | Does |
 | --- | --- |
@@ -110,6 +103,8 @@ Already have a status line? Setup reads it and builds it into the script. The ba
 | `title` | Optional plain-language name. The job's line shows the part before ` · ` or `: `, and the open card shows the id and badge. The part before ` · ` names the job in the Log tab and in `waiting on:` |
 | `why` | Optional. What the job unlocks, shown dim as `unlocks: …` |
 | `parent` | Optional slug of the job this one is part of. While both run, this job shows under the parent's line when the parent is open, marked `↳` |
+| `session` | Optional. The Claude Code session id (`$CLAUDE_CODE_SESSION_ID` in Bash). The job shows only in that session while it is open |
+| `cwd` | Optional. The absolute folder the job works for. The job shows in every session of that folder's project (same project as Per-project to-dos) |
 
 - **Slug:** the job or subagent description, lowercased, each run of other characters turned into `-`. `Build docs!` becomes `build-docs`.
 - **Delete the file when done.** Files older than 10 minutes are hidden.
@@ -214,7 +209,8 @@ Each session shows the to-dos of its own project, and only its own running and d
 
 - **New project:** with no file yet, the list is empty. The panel says `No to-dos for <project>. Add one with /progress-bar todo add`. The first add creates the file.
 - **Everywhere:** the status line TO-DO, the Status panel, the to-do menu, `/progress-bar todo ...` and auto-next all use the session's list. A run with no folder (a script, a test) reads `todo.txt`.
-- **Shared job lines:** `jobs.txt` and other machines' files (like `linux.txt`) show only in sessions of the project that `~/.claude-progress/todos/lines.txt` gives them to, as `<line file><TAB><project>` with the project named as in `projects.txt`. `echo all > ~/.claude-progress/.state/scope` shows everything everywhere again.
+- **Owned jobs:** a progress file with `session` shows only in that session. One with `cwd` (and no open `session`) shows in the sessions of that folder's project. A session writes these to `.lines/jobs-<session>.txt`. A `cwd` whose project has no open session falls back to `jobs.txt`.
+- **Shared job lines:** progress files with neither go to `jobs.txt`. With no `~/.claude-progress/todos/lines.txt` (a fresh machine), `jobs.txt` shows in every session. With it, `jobs.txt` and other machines' files (like `linux.txt`) show only in sessions of the project it gives them to, as `<line file><TAB><project>` with the project named as in `projects.txt`. `echo all > ~/.claude-progress/.state/scope` shows everything everywhere again.
 
 ```
 linux.txt	todo.txt
@@ -224,7 +220,7 @@ jobs.txt	todo.txt
 - **Panel too:** the Status panel runs the status line script as its own session (its id and folder on stdin), so RUNNING and DONE match that session's status line.
 - **Ended jobs per session:** `group.py` keeps the jobs each session saw in `.state/group-seen-<session>.json`, so a job another session shows never counts as finished here.
 - **Inbox:** stays one list for every session.
-- **Updates:** each session start rewrites an installed status line script and `group.py` with the plugin's version.
+- **Updates:** each session start rewrites the status line script and `group.py` with the plugin's version.
 
 ## Links
 
@@ -240,18 +236,14 @@ The first match wins. Clicking needs a terminal with link support (iTerm2, WezTe
 ## How it works
 
 - The plugin lists subagents, counts their tool calls and reads the progress files.
-- It writes subagent lines to `~/.claude-progress/.lines/agents-<session>.txt` (one file per open session, so sessions never overwrite each other) and job lines to `jobs.txt`. Each session's status line shows only its own bars: `agents-<session>.txt` and any `.lines/*-<session>.txt` file. Shared files such as `jobs.txt` show only in the project `todos/lines.txt` gives them to, or everywhere after `echo all > ~/.claude-progress/.state/scope`. At most 6 lines each. A JSON file counts as a job only if it has `done` and `total` or a `step`, so data files like `inbox.json` and `actions.json` never show as jobs. The grouper also drops an `inbox` row that an older plugin build in another session still writes. A machine status row with `helper healthy` (like `<host> ✓ helper healthy · load 0.22 on 12 cores · idle`) shows under DONE with no bar, since it is not a job.
+- It writes subagent lines to `~/.claude-progress/.lines/agents-<session>.txt` (one file per open session, so sessions never overwrite each other), jobs this session owns (by `session` or `cwd`) to `jobs-<session>.txt` and the rest to `jobs.txt`. Each session's status line shows only its own bars: `agents-<session>.txt` and any `.lines/*-<session>.txt` file. Shared files such as `jobs.txt` show only in the project `todos/lines.txt` gives them to, everywhere when there is no `lines.txt`, or everywhere after `echo all > ~/.claude-progress/.state/scope`. Each session's claims file (`.state/claims-<session>.txt`) names its project on its first line, so other sessions know where a `cwd` job shows. At most 6 lines each. A JSON file counts as a job only if it has `done` and `total` or a `step`, so data files like `inbox.json` and `actions.json` never show as jobs. The grouper also drops an `inbox` row that an older plugin build in another session still writes. A machine status row with `helper healthy` (like `<host> ✓ helper healthy · load 0.22 on 12 cores · idle`) shows under DONE with no bar, since it is not a job.
 - The status line script prints every `.lines/*.txt` file changed in the last 2 minutes. Other tools can drop their own lines there too.
 - `group.py` sorts those lines into sections, adds the to-dos and links, and remembers ended jobs in `~/.claude-progress/.state/group-seen-<session>.json`.
 - With `events.py` beside it, `group.py` logs done, stuck and problem rows once each to `~/.claude-progress/events.jsonl` (sent keys in `.state/events-sent.json`) and starts a log folder scan in the background at most every 30 seconds (offsets in `.state/log-offsets.json`).
 
 ## Status panel
 
-Optional. Shows the full groups in a docked pane named **Status**, and shrinks the status line to one summary line.
-
-```
-/progress-bar panel on
-```
+On by default. Shows the full groups in a docked pane named **Status**, and shrinks the status line to one summary line. `/progress-bar panel off` turns it off, `/progress-bar panel on` back on.
 
 ```
 ▾ ☐ TO-DO  3
@@ -277,9 +269,9 @@ The status line then reads:
 
 `✖ N errors` shows only while the Log tab has unseen errors.
 
-- **Needs setup:** the panel runs `~/.claude/progress-bar/statusline.sh` with `PB_FULL=1` every second while it is open. `panel on` refreshes that script and `group.py` and keeps your chained status line.
+- **Runs the script:** the panel runs `~/.claude/progress-bar/statusline.sh` with `PB_FULL=1` every second while it is open. The first session writes that script, and `panel on` refreshes it and `group.py` and keeps your chained status line.
 - **Fold:** press a header, or its hotkey (`1` to-do, `2` running, `3` done, `4` waiting, `5` problems). It writes `~/.claude-progress/.state/folded.txt`, the same file `/progress-bar fold` uses.
-- **Off by default:** `panel on` writes `~/.claude-progress/.state/panel-on`. With that file the pane opens at session start and the status line prints the summary. `panel off` deletes it and closes the pane. `/progress-bar panel` opens it once without turning it on.
+- **On by default:** the first session writes `~/.claude-progress/.state/panel-on`. With that file the pane opens at session start and the status line prints the summary. `panel off` deletes it, writes `.state/panel-off` so the default never turns it back on, and closes the pane. `panel on` undoes that. With **Open the Status panel** off in `/config`, nothing is written and `/progress-bar` opens it once.
 - **To-do menu:** click a to-do for Done, Up, Down, Start (a ready machine item), Delete or Move back to to-do (a checked-off one). It edits this project's list, on the line that still holds that item's text, so a line added since the panel drew never hits the wrong item. TO-DO lists open items only. Checked-off ones move to DONE under **Checked-off to-dos**, after finished jobs, and count there.
 - **Rows:** to-dos one per line under each owner, running jobs one line each, a press opening the details (see **Running cards**), done jobs dimmed with their finish time.
 - **Tabs:** `▌List  │   Connectors  │   GitHub  │   Log`, the shown one marked `▌`. **List** (the default) shows the sections above. **Connectors** shows your connectors, its label adding `!N` when N need attention. **GitHub** shows your repos. **Log** shows the events log, its label adding `!N` for unseen errors.

@@ -1,11 +1,25 @@
 {
   "name": "progress-bar",
-  "version": "0.21.0",
+  "version": "0.22.0",
   "description": "Live progress bars in the status line and a docked Status panel for subagents and long jobs that write ~/.claude-progress/<slug>.json",
   "license": "MIT",
   "author": {
     "name": "hunterZh37"
   },
   "icon": "./.claude-plugin/icon.png",
-  "types": "./types/index.d.ts"
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "statusLine": {
+      "type": "boolean",
+      "title": "Progress status line",
+      "description": "Show the progress bars in the status line with no setup. A status line you already had still prints below them.",
+      "default": true
+    },
+    "openPanel": {
+      "type": "boolean",
+      "title": "Open the Status panel",
+      "description": "Open the Status panel beside the chat at session start, until /progress-bar panel off.",
+      "default": true
+    }
+  }
 }

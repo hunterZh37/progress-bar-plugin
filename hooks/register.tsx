@@ -12,7 +12,10 @@ import { resolveHome } from './home'
 import { macClicks, parseMacClicks } from './mac'
 import { checkpointCommand, panelCommand, registerPanel, startPanel } from './panel'
 import { FRESH_MS, eta, expandHome, lines, parseProgress, parseWatch, prevOf, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
-import { sessionProject } from './project'
+import { PROJECTS_REL, gitRootOf, resolveProject, sessionProject } from './project'
+import { LONG_BASH_MS, PROGRESS_TOOL, endBackground, endShell, mirrorTasks, startShell, taskCreated, taskList, taskUpdated, touchShells, writeReport } from './report'
+import type { Task } from './report'
+import { PROJECT_LINE, pickOwner, routeOf, sessionKeyOf as keyOf } from './route'
 import type { Progress, Row } from './render'
 
 const WATCH = '.watch.json'
@@ -79,8 +82,19 @@ async function readP($: EngineInterface, path: string): Promise<Progress | null>
   try { return parseProgress(String(await $.fs.read(path))) } catch { return null }
 }
 
-/** Builds the rows: live subagents first, then every other fresh progress file. */
-async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number }> {
+const gitRoots = new Map<string, string>()
+
+/** The project slug of a folder, as the per-project to-dos name it. */
+async function projectOfCwd($: EngineInterface, h: string, cwd: string, projectsText: string): Promise<string> {
+  if (!gitRoots.has(cwd)) gitRoots.set(cwd, await gitRootOf($, cwd))
+  return resolveProject(cwd, gitRoots.get(cwd)!, projectsText, h).slug
+}
+
+/**
+ * Builds the rows: live subagents first, then every other fresh progress file. `shared` holds the ids of the rows
+ * that go to the shared jobs.txt; the other file rows belong to this session (see route.ts).
+ */
+async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; shared: Set<string> }> {
   const h = await resolveHome($)
   const dir = dirOf(h)
   const now = await $.clock.now()
@@ -105,21 +119,36 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number }
     const p = h ? await readP($, `${dir}/${slug(a.description)}.json`) : null
     rows.push({ id: a.id, description: a.description, status: a.status, startedAt: s.startedAt, tools: s.tools, lastTool: s.lastTool, done: p?.done ?? null, total: p?.total ?? null, step: p?.step ?? '' })
   }
-  if (!h) return { rows, now }
+  const shared = new Set<string>()
+  if (!h) return { rows, now, shared }
   const used = new Set(rows.map(r => slug(r.description)))
+  let projectsText = ''
+  try { projectsText = String(await $.fs.read(`${h}/${PROJECTS_REL}`)) } catch { projectsText = '' }
+  let project = ''
+  try { const sp = await sessionProject($, h); project = sp.cwd ? sp.slug : '' } catch { project = '' }
   // Remember this session's agents (start time, tools) so a plugin reload keeps them, and claim their progress files.
+  // The claims file's first line names this session's project, so other sessions know where a cwd-owned job shows.
   try {
     const live = Object.fromEntries(rows.map(r => [r.id, seen.get(r.id)!]))
     await $.fs.write(`${dir}/.state/seen-${key}.json`, JSON.stringify(live))
-    await $.fs.write(`${dir}/.state/claims-${key}.txt`, [...used].join('\n'))
+    await $.fs.write(`${dir}/.state/claims-${key}.txt`, [`${PROJECT_LINE}${project}`, ...used].join('\n'))
   } catch { /* next poll */ }
   // Progress files another open session's agent already shows are skipped here, so no bar appears twice.
+  const live = new Map<string, string>()
   let stateFiles: Awaited<ReturnType<typeof $.fs.list>> = []
   try { stateFiles = await $.fs.list(`${dir}/.state`) } catch { stateFiles = [] }
   for (const f of stateFiles) {
     if (!f.name.startsWith('claims-') || f.name === `claims-${key}.txt` || now - f.mtimeMs > 30_000) continue
-    try { for (const n of String(await $.fs.read(`${dir}/.state/${f.name}`)).split('\n')) if (n) used.add(n) } catch { /* gone */ }
+    const other = f.name.slice(7, -4)
+    live.set(other, '')
+    try {
+      for (const n of String(await $.fs.read(`${dir}/.state/${f.name}`)).split('\n')) {
+        if (n.startsWith(PROJECT_LINE)) live.set(other, n.slice(PROJECT_LINE.length).trim())
+        else if (n) used.add(n)
+      }
+    } catch { /* gone */ }
   }
+  const projects = new Map<string, string>()
   let files: Awaited<ReturnType<typeof $.fs.list>> = []
   try { files = await $.fs.list(dir) } catch { files = [] }
   for (const f of files) {
@@ -131,12 +160,22 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number }
     if (f.kind !== 'file' || !f.name.endsWith('.json')) continue
     const name = f.name.slice(0, -5)
     if (used.has(name) || now - f.mtimeMs > FRESH_MS) continue
-    const p = await readP($, `${dir}/${f.name}`)
+    let text = ''
+    try { text = String(await $.fs.read(`${dir}/${f.name}`)) } catch { continue }
+    const p = parseProgress(text)
     // Only progress files count: inbox.json and other data files have no done/total or step.
     if (!p || DATA_FILES.has(name) || (p.done === null && !p.step)) continue
-    rows.push({ id: `file:${name}`, description: name, status: 'running', startedAt: p.startedAt ?? f.mtimeMs, tools: 0, lastTool: '', done: p.done, total: p.total, step: p.step })
+    let raw: unknown = null
+    try { raw = JSON.parse(text) } catch { raw = null }
+    const owner = pickOwner(raw)
+    if (owner.cwd && !projects.has(owner.cwd)) projects.set(owner.cwd, await projectOfCwd($, h, owner.cwd, projectsText))
+    const route = routeOf(owner, { key, project }, live, c => projects.get(c) ?? '')
+    if (route === 'skip') continue
+    const id = `file:${name}`
+    if (route === 'shared') shared.add(id)
+    rows.push({ id, description: name, status: 'running', startedAt: p.startedAt ?? f.mtimeMs, tools: 0, lastTool: '', done: p.done, total: p.total, step: p.step })
   }
-  return { rows, now }
+  return { rows, now, shared }
 }
 
 /** Folds or unfolds status line sections; the grouped status line shows a folded one as "▸ NAME (count)". */
@@ -160,21 +199,25 @@ async function fold($: EngineInterface, arg: string): Promise<string> {
 let sessionKey = ''
 let seenLoaded = false
 async function sessionKeyOf($: EngineInterface): Promise<string> {
-  if (!sessionKey) { try { sessionKey = (await $.session.id()).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 12) } catch { sessionKey = 'main' } }
+  if (!sessionKey) { try { sessionKey = keyOf(await $.session.id()) } catch { sessionKey = 'main' } }
   return sessionKey
 }
 
 // Each session writes its own subagents to agents-<session>.txt, so two open sessions never overwrite each other.
-// Job files (~/.claude-progress/*.json) are the same for every session, so they go to one shared jobs.txt.
+// Job files that name this session (or its project) go to jobs-<session>.txt. Job files that name no owner are the
+// same for every session, so they go to one shared jobs.txt.
 async function poll($: EngineInterface) {
-  const { rows, now } = await collect($)
+  await touchShells($)
+  const { rows, now, shared } = await collect($)
   const home = await resolveHome($)
   if (!home) return
   await sessionKeyOf($)
   const agents = rows.filter(r => !r.id.startsWith('file:'))
-  const jobs = rows.filter(r => r.id.startsWith('file:'))
+  const mine = rows.filter(r => r.id.startsWith('file:') && !shared.has(r.id))
+  const jobs = rows.filter(r => shared.has(r.id))
   const base = `${dirOf(home)}/.lines`
   try { await $.fs.write(`${base}/agents-${sessionKey}.txt`, lines(agents, now).join('\n')) } catch { /* next poll */ }
+  try { await $.fs.write(`${base}/jobs-${sessionKey}.txt`, lines(mine, now).join('\n')) } catch { /* next poll */ }
   try { await $.fs.write(`${base}/jobs.txt`, lines(jobs, now).join('\n')) } catch { /* next poll */ }
 }
 
@@ -214,10 +257,49 @@ async function show($: EngineInterface) {
   return `${bars}\n\n${setup}`
 }
 
+/** The merged settings with the status line pointing at the plugin's script, unless a settings file already does. */
+export function withStatusLine<S extends Record<string, unknown>>(s: S): S {
+  const cur = s.statusLine as { command?: unknown } | undefined
+  if (cur && typeof cur.command === 'string' && cur.command.includes(SCRIPT_REL)) return s
+  return { ...s, statusLine: { type: 'command', command: `~/${SCRIPT_REL}`, refreshInterval: 1 } }
+}
+
+/** The status line command the settings files hold (highest precedence first), before this plugin adds its own. */
+async function ownStatusLine($: EngineInterface): Promise<string | undefined> {
+  for (const source of ['policy', 'flag', 'local', 'project', 'user'] as const) {
+    try {
+      const v = (await $.settings.read({ source })).statusLine as { type?: string; command?: string } | undefined
+      if (v && v.type === 'command' && typeof v.command === 'string') return v.command
+    } catch { /* next source */ }
+  }
+  return undefined
+}
+
+/**
+ * First run and every session start: writes the status line script, group.py and the rest, chaining a status line
+ * the person already had (as setup does). The settings.read hook then points the status line at it, so nothing
+ * needs setting up by hand.
+ */
+async function ensureInstalled($: EngineInterface) {
+  const h = await resolveHome($)
+  if (!h) return
+  const path = `${h}/${SCRIPT_REL}`
+  const current = await ownStatusLine($)
+  const prev = current && !current.includes(SCRIPT_REL) ? current : await installedPrev($, path)
+  const script = statusScript(prev)
+  let old = ''
+  try { old = String(await $.fs.read(path)) } catch { old = '' }
+  if (old !== script) {
+    await $.fs.write(path, script)
+    await $.process.run(['chmod', '+x', path]).catch(() => undefined)
+  }
+  await writeLib($, h)
+}
+
 async function setup($: EngineInterface) {
   const h = await resolveHome($)
   if (!h) return 'Could not find your home folder ($HOME is unset).'
-  const current = await statusLineCommand($)
+  const current = await ownStatusLine($) ?? await statusLineCommand($)
   const path = `${h}/${SCRIPT_REL}`
   const prev = current && !current.includes(SCRIPT_REL) ? current : await installedPrev($, path)
   await $.fs.write(path, statusScript(prev))
@@ -352,8 +434,84 @@ async function clear($: EngineInterface) {
   return stale.length ? `Removed ${stale.length} stale file${stale.length === 1 ? '' : 's'}.` : 'Nothing stale.'
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
   registerPanel(on)
+  // Zero setup: on by default, off from /config (progress-bar.statusLine, progress-bar.openPanel).
+  const autoStatusLine = options?.statusLine !== false
+  const autoPanel = options?.openPanel !== false
+
+  // The status line points at the plugin's script, unless a settings file already does. A status line the person
+  // had is chained inside the script (its prev= line), so it still prints below the bars.
+  if (autoStatusLine) {
+    on('settings.read', async ($, e, next) => {
+      const s = await next(e)
+      return e.source ? s : withStatusLine(s)
+    })
+  }
+
+  // progress_report: a bar with this session's id and folder filled in.
+  on('tool.call', { tool: 'mcp__progress-bar__progress_report' }, async ($, e) => {
+    const i = e as unknown as Record<string, unknown>
+    const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
+    const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
+    const text = await writeReport($, await resolveHome($), { title: str(i.title) ?? '', done: num(i.done), total: num(i.total), step: str(i.step), why: str(i.why), parent: str(i.parent), slug: str(i.slug), finished: i.finished === true })
+    await poll($).catch(() => undefined)
+    return { result: text }
+  })
+
+  // The main session's own task list shows as one bar, with no skill needed. Subagents already have their lines.
+  on('tool.call', { tool: 'TodoWrite' }, async ($, e, next) => {
+    const r = await next(e)
+    if (!e.agentId && !('deny' in r && r.deny)) {
+      const todos = (e as unknown as { todos?: Task[] }).todos
+      if (Array.isArray(todos)) { await mirrorTasks($, await resolveHome($), todos).catch(() => undefined); await poll($).catch(() => undefined) }
+    }
+    return r
+  })
+  on('tool.call', { tool: 'TaskCreate' }, async ($, e, next) => {
+    const r = await next(e)
+    if (!e.agentId && !('deny' in r && r.deny) && !r.isError) {
+      taskCreated(e as unknown as { subject?: unknown; activeForm?: unknown }, r.result)
+      await mirrorTasks($, await resolveHome($), taskList()).catch(() => undefined)
+      await poll($).catch(() => undefined)
+    }
+    return r
+  })
+  on('tool.call', { tool: 'TaskUpdate' }, async ($, e, next) => {
+    const r = await next(e)
+    if (!e.agentId && !('deny' in r && r.deny) && !r.isError) {
+      taskUpdated(e as unknown as { taskId?: unknown; status?: unknown; subject?: unknown; activeForm?: unknown })
+      await mirrorTasks($, await resolveHome($), taskList()).catch(() => undefined)
+      await poll($).catch(() => undefined)
+    }
+    return r
+  })
+
+  // A main-session Bash command running over a minute, or in the background, shows as a working row.
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    if (e.agentId) return next(e)
+    const h = await resolveHome($)
+    if (!h) return next(e)
+    const b = e as unknown as { command?: unknown; description?: unknown; run_in_background?: unknown }
+    const description = typeof b.description === 'string' ? b.description : ''
+    const command = typeof b.command === 'string' ? b.command : ''
+    let over = false
+    let path = ''
+    void $.clock.sleep(LONG_BASH_MS).then(async () => { if (!over) { path = await startShell($, h, description, command); void poll($) } }).catch(() => undefined)
+    let r
+    try { r = await next(e) } finally { over = true }
+    if (path) await endShell($, path)
+    const taskId = !('deny' in r && r.deny) ? (r.result as { backgroundTaskId?: unknown } | undefined)?.backgroundTaskId : undefined
+    if (typeof taskId === 'string' && taskId) { await startShell($, h, description, command, taskId); void poll($) }
+    return r
+  })
+
+  // At each stop, background shells the session no longer lists as running are over.
+  on('classic.Stop', async ($, e, next) => {
+    const running = (e as unknown as { background_tasks?: { id: string; status?: string }[] }).background_tasks
+    if (Array.isArray(running)) await endBackground($, running).catch(() => undefined)
+    return next(e)
+  })
 
   // The channel's private keys never reach the model: a Read, Grep or Bash call naming that folder is refused.
   on('tool.call', async ($, e, next) => {
@@ -373,11 +531,13 @@ export const register: Register = on => {
     await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup [mac-clicks [off]] | demo | action [list|add|done|skip <reason>] | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | channel | send <file> to <name> | say <name> <text> | fold <section>]' })
     await $.tool.register(SEND_TOOL).catch(() => undefined)
     await $.tool.register(ACTION_TOOL).catch(() => undefined)
-    // An installed status line script and group.py follow the plugin version (per-project to-dos, session filter).
-    await refreshInstalled($).catch(() => undefined)
+    await $.tool.register(PROGRESS_TOOL).catch(() => undefined)
+    // The status line script and group.py are written on the first run and follow the plugin version after that.
+    // With the status line turned off in /config, only a script that is already installed is refreshed.
+    await (autoStatusLine ? ensureInstalled($) : refreshInstalled($)).catch(() => undefined)
     void poll($)
     $.clock.every(5000, () => { void poll($); void tickAutonext($) })
-    await startPanel($, await resolveHome($))
+    await startPanel($, await resolveHome($), autoPanel)
     const home = await resolveHome($)
     void backfillChat($, home).then(() => pollChannel($, home)).catch(() => undefined)
     $.clock.every(CHANNEL_EVERY, () => pollChannel($, home))

@@ -82,7 +82,7 @@ test('Channel block: unread files, a press opens the local copy, ✓ read hides 
   await ui.unmount()
 })
 
-test('/progress-bar send runs channel.py send with an absolute path, channel with no channels makes no network call', async ($, on) => {
+test('/progress-bar send runs channel.py send with an absolute path, channel with no channels makes no network call', { options: { openPanel: false, statusLine: false } }, async ($, on) => {
   const files: Record<string, string> = {}
   const ran = world(on, files)
   on('session.cwd', () => ({ value: '/work' }))
@@ -103,7 +103,7 @@ test('copy: no semicolons or em dashes, the tool only sends', () => {
   expect(SEND_TOOL.name).toBe('channel_send')
 })
 
-test('the model cannot read the channel private keys', async ($, on) => {
+test('the model cannot read the channel private keys', { options: { openPanel: false, statusLine: false } }, async ($, on) => {
   world(on, {})
   on('tool.call', () => ({ result: 'ran' }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })

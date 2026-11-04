@@ -141,7 +141,7 @@ test('Chat tab: Enter in the field sends a say line to the selected channel, arg
   await ui.unmount()
 })
 
-test('/progress-bar say <channel> <text> runs channel.py say', async ($, on) => {
+test('/progress-bar say <channel> <text> runs channel.py say', { options: { openPanel: false, statusLine: false } }, async ($, on) => {
   const files = seed()
   delete files[`${P}/.state/panel-on`]
   const ran = world(on, files)
