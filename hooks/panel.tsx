@@ -1,20 +1,21 @@
 import { atom, read, update } from 'claude-code'
-import type { ElementConstructor, EngineInterface, InputProps, On, RenderChildren } from 'claude-code'
+import type { ElementConstructor, EngineInterface, InputProps, On, RenderChildren, RenderInput } from 'claude-code'
 
 import { AWAY_S, GAP_MS, OVERNIGHT_REL, dayOf, snapOf } from './checkpoint'
 import { connSummary, readConns, refreshConns, resetConns } from './connectors'
 import { EVENTS_REL, LOG_DIRS_REL, SEEN_REL, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from './events'
 import { GH_EVERY, openUrl, openWeb, readGh } from './github'
 import { resolveHome } from './home'
-import { ACTION_PANE, canRun, cancelRun, closeAction, confirmRun, copyCommand, cut as cutA, ranIt, readActions, runAction } from './actions'
+import { ACTION_PANE, logEvent, canRun, cancelRun, closeAction, confirmRun, copyCommand, cut as cutA, ranIt, readActions, runAction } from './actions'
 import { markRead, openLocal, readChannel } from './channel'
 import { PAGE_LINES, kb, pageCount, readChat, selectChannel, sendChat, toggleOpen, when } from './chat'
 import { markHandled, readInbox } from './inbox'
 import { isDarwin } from './mac'
 import { moveItem, nextPrompt, rankTodos, todoRows as layoutTodos } from './priority'
 import { sessionProject } from './project'
+import { turnOnStatusLine } from './setup'
 import { FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, slug } from './render'
-import type { Action, ActionUi, Channel, ChatMsg, ChatState, Checkpoint, Conn, Ev, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
+import type { Action, ActionUi, Channel, ChatMsg, ChatState, Checkpoint, Conn, Ev, Health, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
 
 // The Status panel: the grouped status line, drawn in a docked pane beside the chat.
 // It runs the plugin's own status line script with PB_FULL=1 every second while the pane is open.
@@ -72,7 +73,70 @@ const channelAtom = atom({ plugin: 'progress-bar', key: 'channel' } as const, { 
 const chatAtom = atom({ plugin: 'progress-bar', key: 'chat' } as const, { msgs: [], channels: [], sel: '', open: '', page: 0, full: [], sending: false, note: '', draft: '', n: 0 } as ChatState)
 const actionsAtom = atom({ plugin: 'progress-bar', key: 'actions' } as const, [] as Action[])
 const actionUiAtom = atom({ plugin: 'progress-bar', key: 'actionUi' } as const, { confirm: '', term: '', failId: '', fail: '' } as ActionUi)
+// Why the panel or status line may show nothing (pollPanel, noteStatusLine), drawn as a short line.
+const healthAtom = atom({ plugin: 'progress-bar', key: 'health' } as const, { script: '', statusOff: '', note: '' } as Health)
 const DIR_REL = '.claude-progress'
+// Holds why the status line was not switched over, once that was logged, so the Log tab says it once, not every
+// session. The panel reads it for its "Turn on status line" line.
+export const STATUS_OFF_REL = '.claude-progress/.state/statusline-off'
+
+const firstLine = (t: string) => t.split('\n').map(l => l.trim()).find(Boolean)?.slice(0, 200) ?? ''
+
+/** The panel's note for a status script run: '' when it printed, or said nothing with no error. */
+export function scriptNote(r: { exitCode: number; stdout: string; stderr: string }): string {
+  if (r.stdout.trim()) return ''
+  const why = firstLine(r.stderr)
+  if (r.exitCode !== 0) return `Status script failed (exit ${r.exitCode})${why ? `: ${why}` : ''}`
+  return why ? `Status script returned nothing: ${why}` : ''
+}
+
+/**
+ * Why the status line is not the plugin's script, or '' when it is: `applied` says the settings.read hook ran on the
+ * engine's merge, `current` is the status line the settings files hold.
+ */
+export function statusOffReason(applied: boolean, current: string | undefined): string {
+  return applied || current?.includes(SCRIPT_REL)
+    ? ''
+    : `The status line was not switched over${current ? ` (it still runs ${current})` : ''}. Another plugin's settings.read hook may run first.`
+}
+
+/** Log it once (the marker absent), clear the marker once it is on again, else nothing. */
+export function statusOffAction(off: string, logged: boolean): 'log' | 'clear' | 'none' {
+  return off && !logged ? 'log' : !off && logged ? 'clear' : 'none'
+}
+
+/**
+ * At session start: whether the settings.read hook switched the status line over. Another plugin's settings.read hook
+ * that answers first skips it, so the panel then offers "Turn on status line" and the Log tab says why, once.
+ */
+export async function noteStatusLine($: EngineInterface, h: string, applied: boolean, current: string | undefined) {
+  if (!h) return
+  const off = statusOffReason(applied, current)
+  const marker = `${h}/${STATUS_OFF_REL}`
+  const logged = await $.fs.exists(marker).catch(() => false)
+  const act = statusOffAction(off, logged)
+  if (act === 'log') {
+    await logEvent($, h, 'warning', 'Status line not switched over', `${off}\nPress "Turn on status line" in the Status panel, or run /progress-bar setup.`)
+    await $.fs.write(marker, `${off}\n`).catch(() => undefined)
+  } else if (act === 'clear') {
+    await $.process.run(['rm', '-f', marker]).catch(() => undefined)
+  }
+}
+
+/** The panel's copy of the status-line-off reason, from the marker noteStatusLine leaves. */
+async function readStatusOff($: EngineInterface, h: string) {
+  let statusOff = ''
+  try { statusOff = firstLine(String(await $.fs.read(`${h}/${STATUS_OFF_REL}`))) } catch { statusOff = '' }
+  if ((await read($, healthAtom)).statusOff !== statusOff) await update($, healthAtom, x => ({ ...x, statusOff }))
+}
+
+async function turnOn($: EngineInterface, h: string) {
+  let note = ''
+  try { note = await turnOnStatusLine($, h) } catch (err) { note = `Could not turn on the status line: ${firstLine(String(err))}` }
+  const on = note.startsWith('Status line on')
+  if (on && h) await $.process.run(['rm', '-f', `${h}/${STATUS_OFF_REL}`]).catch(() => undefined)
+  await update($, healthAtom, x => ({ ...x, note, statusOff: on ? '' : x.statusOff }))
+}
 const META_MS = 24 * 60 * 60_000
 
 /** Removes terminal colors and OSC 8 links. */
@@ -444,15 +508,23 @@ export async function sessionInput($: EngineInterface, h: string): Promise<strin
   return JSON.stringify({ session_id, cwd, workspace: { current_dir: cwd } })
 }
 
+async function setScriptNote($: EngineInterface, script: string) {
+  if ((await read($, healthAtom)).script !== script) await update($, healthAtom, x => ({ ...x, script }))
+}
+
 /** Runs the status line script in full, as this session, and keeps its lines. */
 export async function pollPanel($: EngineInterface, h: string) {
   if (!h) return
   try {
-    const { stdout } = await $.process.run(['/bin/sh', `${h}/${SCRIPT_REL}`], { stdin: await sessionInput($, h), env: { PB_FULL: '1' }, timeoutMs: 8000 })
-    const lines = stripAnsi(stdout).split('\n').filter(l => l.trim())
+    const r = await $.process.run(['/bin/sh', `${h}/${SCRIPT_REL}`], { stdin: await sessionInput($, h), env: { PB_FULL: '1' }, timeoutMs: 8000 })
+    const lines = stripAnsi(r.stdout).split('\n').filter(l => l.trim())
     const prev = await read($, linesAtom)
     if (prev.join('\n') !== lines.join('\n')) await update($, linesAtom, () => lines)
-  } catch { /* next tick */ }
+    await setScriptNote($, scriptNote(r))
+  } catch (err) {
+    await setScriptNote($, `Status script could not run: ${firstLine(String(err)) || 'unknown error'}`)
+  }
+  await readStatusOff($, h)
   await readFolded($, h)
   await readTodos($, h)
   await readMeta($, h)
@@ -709,6 +781,17 @@ export function registerPanel(on: On) {
     return <Box flexDirection="column">{await actionBox($, e, homeDir, Math.max(30, e.props.bodyColumns ?? 60), true)}</Box>
   })
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    // The panel never draws blank: a failure to draw shows why.
+    try { return await drawPane($, e) } catch (err) {
+      const { Text } = $.ui.resolve(e)
+      return <Text color="yellow">{`Status panel could not draw: ${firstLine(String(err)) || 'unknown error'}`}</Text>
+    }
+  })
+}
+
+/** The Status panel's List, Connectors, GitHub, Log and Chat tabs. */
+async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
+  {
     const { Box, Button, Text } = $.ui.resolve(e)
     const homeDir = await resolveHome($)
     const maxFile = `${homeDir}/${DIR_REL}/.state/max-usage.json`
@@ -1152,6 +1235,18 @@ export function registerPanel(on: On) {
     // "While you were away": a checkpoint 4 h old, or one the computer slept through.
     const recap = await read($, recapAtom)
     const cp = recap.cp
+    // Why the panel or status line may show nothing, and the fallback when the settings.read hook was skipped.
+    const health = await read($, healthAtom)
+    const healthBlock: RenderChildren[] = [
+      health.script ? <Text key="h-script" color="yellow">{health.script}</Text> : null,
+      health.statusOff
+        ? <Box key="h-off" flexDirection="column" marginBottom={1}>
+            <Text dimColor>{health.statusOff}</Text>
+            <Button key="h-turn-on" plain onPress={() => turnOn($, homeDir)}>{'▶ Turn on status line'}</Button>
+          </Box>
+        : null,
+      health.note ? <Text key="h-note" dimColor>{health.note}</Text> : null,
+    ].filter(Boolean)
     let banner: RenderChildren[] = []
     if (cp && recapDue(cp, nowS)) {
       const r = buildRecap(cp, log.events, lines, meta)
@@ -1236,6 +1331,7 @@ export function registerPanel(on: On) {
         {inboxBlock}
         {chanBlock}
         {banner}
+        {healthBlock}
         {openTodos === 0 && <Text key="no-todos" dimColor>{`No to-dos for ${project || 'this project'}. Add one with /progress-bar todo add`}</Text>}
         {sections.length === 0 && <Text dimColor>Nothing running.</Text>}
         {sections.map((sec, n) => {
@@ -1252,5 +1348,5 @@ export function registerPanel(on: On) {
         {other.map((l, i) => <Text key={`o${i}`} dimColor>{l}</Text>)}
       </Box>
     )
-  })
+  }
 }

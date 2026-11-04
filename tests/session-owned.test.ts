@@ -2,7 +2,8 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { CONN_CACHE_REL } from '../hooks/connectors'
-import { PANE } from '../hooks/panel'
+import { isProgressLine, scriptPaths } from '../hooks/chain'
+import { PANE, STATUS_OFF_REL, scriptNote, statusOffAction, statusOffReason } from '../hooks/panel'
 import { withStatusLine } from '../hooks/register'
 import { prevOf, statusScript } from '../hooks/render'
 import { reportBody, shellSlug, taskProgress, taskSlug } from '../hooks/report'
@@ -22,8 +23,9 @@ const CWD = '/home/u/code/shop'
 const SCRIPT = `${HOME}/.claude/progress-bar/statusline.sh`
 
 /** A world with files in memory, a fixed session id and folder, and timers that never fire. */
-function world(on: On, files: Record<string, string>, opts: { userStatusLine?: string; isPlaced?: boolean } = {}) {
+function world(on: On, files: Record<string, string>, opts: { userStatusLine?: string; projectStatusLine?: string; isPlaced?: boolean; script?: { exitCode: number; stdout: string; stderr: string } } = {}) {
   const opened: string[] = []
+  const runs: string[][] = []
   const toasts: string[] = []
   // A fresh connectors check, so an open panel starts no background check that outlives the test.
   files[`${HOME}/${CONN_CACHE_REL}`] ??= `#checked\t${Math.floor(NOW / 1000)}\n`
@@ -42,9 +44,14 @@ function world(on: On, files: Record<string, string>, opts: { userStatusLine?: s
   on('fs.write', (_, e) => { files[String(e.path)] = e.text; return { value: undefined } })
   on('fs.exists', (_, e) => ({ value: String(e.path) in files || Object.keys(files).some(f => f.startsWith(`${e.path}/`)) }))
   on('fs.stat', (_, e) => { if (!(String(e.path) in files)) throw new Error('ENOENT'); return { value: { size: 1, mtimeMs: NOW } as never } })
-  on('settings.read', (_, e) => ({ value: (e.source === 'user' && opts.userStatusLine ? { statusLine: { type: 'command', command: opts.userStatusLine } } : {}) as never }))
+  on('settings.read', (_, e) => {
+    const cmd = e.source === 'user' ? opts.userStatusLine : e.source === 'project' ? opts.projectStatusLine : undefined
+    return { value: (cmd ? { statusLine: { type: 'command', command: cmd } } : {}) as never }
+  })
   on('process.run', (_, e) => {
+    runs.push([...e.argv])
     if (e.argv[0] === 'rm') for (const f of e.argv.slice(2)) delete files[f]
+    if (opts.script && e.argv[0] === '/bin/sh' && e.argv[1] === SCRIPT) return { value: { ...opts.script, isStdoutTruncated: false, isStderrTruncated: false } }
     return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on('ui.open', (_, e) => { opened.push(e.id); return { value: opts.isPlaced === false ? { isPlaced: false, reason: 'narrow' } as never : { isPlaced: true } } })
@@ -52,7 +59,7 @@ function world(on: On, files: Record<string, string>, opts: { userStatusLine?: s
   on('classic.Stop', () => ({}))
   on('ui.panes', () => ({ value: [] as never }))
   on('ui.toast', (_, e) => { toasts.push(String((e as { text?: unknown }).text ?? e)); return { value: undefined } })
-  return { opened, toasts }
+  return { opened, toasts, runs }
 }
 
 const job = (extra: Record<string, unknown> = {}) => JSON.stringify({ done: 1, total: 4, step: 'add account', ...extra })
@@ -241,4 +248,82 @@ test('opting out in /config: no status line and no panel', { options: { statusLi
   await settle($ as never)
   expect(files[SCRIPT]).toBe(undefined)
   expect(opened).toEqual([])
+})
+
+// 0.22.1: never chain a status line that is itself a progress status line (doubled rows, poisoned group-seen files).
+const OLD_LOCAL = `${HOME}/label-logs/statusline.sh`
+const OLD_LOCAL_TEXT = '#!/bin/zsh\nfor x in ~/.claude-progress/.lines/*.txt(N); do awk 1 "$x"; done | python3 ~/.claude-progress/group.py\n'
+
+test('chain: a command or the script it names that prints progress lines is a progress status line', async () => {
+  expect(scriptPaths(`bash "~/a b/s.sh" $HOME/x.sh \${HOME}/y.sh jq`, HOME)).toEqual([`${HOME}/a b/s.sh`, `${HOME}/x.sh`, `${HOME}/y.sh`])
+  const files: Record<string, string> = { [OLD_LOCAL]: OLD_LOCAL_TEXT, [`${HOME}/plain.sh`]: 'echo hi\n' }
+  const readHead = async (p: string) => files[p]
+  expect(await isProgressLine('~/label-logs/statusline.sh', HOME, readHead)).toBe(true)
+  expect(await isProgressLine('python3 ~/bin/group.py', HOME, readHead)).toBe(true)
+  expect(await isProgressLine('$HOME/.claude/progress-bar/statusline.sh', HOME, readHead)).toBe(true)
+  expect(await isProgressLine('~/plain.sh', HOME, readHead)).toBe(false)
+  expect(await isProgressLine("jq -r '.model'", HOME, readHead)).toBe(false)
+})
+
+test('an old local progress status line in settings is never chained', async ($, on) => {
+  const files: Record<string, string> = { [OLD_LOCAL]: OLD_LOCAL_TEXT }
+  world(on, files, { userStatusLine: '~/label-logs/statusline.sh' })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await settle($ as never)
+  expect(prevOf(files[SCRIPT]!)).toBe(undefined)
+})
+
+test('an install that chained a progress status line (0.22.0) drops it on the next start', async ($, on) => {
+  const files: Record<string, string> = { [OLD_LOCAL]: OLD_LOCAL_TEXT, [SCRIPT]: statusScript('~/label-logs/statusline.sh') }
+  world(on, files)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await settle($ as never)
+  expect(prevOf(files[SCRIPT]!)).toBe(undefined)
+})
+
+test('status script notes: nothing to say when it printed or was quiet, the reason when it failed', () => {
+  expect(scriptNote({ exitCode: 0, stdout: '▾ ▶ RUNNING\n', stderr: '' })).toBe('')
+  expect(scriptNote({ exitCode: 0, stdout: '', stderr: '' })).toBe('')
+  expect(scriptNote({ exitCode: 0, stdout: '\n', stderr: 'python3: bad\nmore' })).toBe('Status script returned nothing: python3: bad')
+  expect(scriptNote({ exitCode: 2, stdout: '', stderr: 'sh: syntax error\n' })).toBe('Status script failed (exit 2): sh: syntax error')
+})
+
+test('the panel never draws blank: a failing status script shows why', async ($, on) => {
+  const files: Record<string, string> = {}
+  world(on, files, { script: { exitCode: 1, stdout: '', stderr: 'group.py: boom\n' } })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await settle($ as never)
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { title: 'Status', isFocused: false, bodyColumns: 52, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } })
+  expect((await ui.find({ type: 'Text', text: /Status script failed/ }))?.text).toBe('Status script failed (exit 1): group.py: boom')
+  await ui.unmount()
+})
+
+test('settings.read hook skipped: the reason, logged once, cleared once the script runs', () => {
+  const off = statusOffReason(false, '~/label-logs/statusline.sh')
+  expect(off).toBe("The status line was not switched over (it still runs ~/label-logs/statusline.sh). Another plugin's settings.read hook may run first.")
+  expect(statusOffReason(false, undefined)).toContain('not switched over.')
+  expect(statusOffReason(false, '~/.claude/progress-bar/statusline.sh')).toBe('')
+  expect(statusOffReason(true, '~/label-logs/statusline.sh')).toBe('')
+  expect(statusOffAction(off, false)).toBe('log')
+  expect(statusOffAction(off, true)).toBe('none')
+  expect(statusOffAction('', true)).toBe('clear')
+  expect(statusOffAction('', false)).toBe('none')
+})
+
+test('the panel offers Turn on status line, which writes the settings file holding the winning status line', async ($, on) => {
+  const off = statusOffReason(false, '~/label-logs/statusline.sh')
+  const files: Record<string, string> = { [OLD_LOCAL]: OLD_LOCAL_TEXT, [`${CWD}/.claude/settings.json`]: '{ "model": "opus" }', [`${HOME}/${STATUS_OFF_REL}`]: `${off}\n` }
+  world(on, files, { projectStatusLine: '~/label-logs/statusline.sh' })
+  // The pane reads the marker noteStatusLine leaves when the settings.read hook was skipped.
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await settle($ as never)
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { title: 'Status', isFocused: false, bodyColumns: 52, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } })
+  expect((await ui.find({ type: 'Text', text: /not switched over/ }))?.text).toBe(off)
+  await ui.press({ key: 'h-turn-on' })
+  expect(JSON.parse(files[`${CWD}/.claude/settings.json`]!)).toEqual({ model: 'opus', statusLine: { type: 'command', command: '~/.claude/progress-bar/statusline.sh', refreshInterval: 1 } })
+  expect(prevOf(files[SCRIPT]!)).toBe(undefined)
+  expect((await ui.find({ type: 'Text', text: /^Status line on/ }))?.text).toBe(`Status line on: ${CWD}/.claude/settings.json now runs ~/.claude/progress-bar/statusline.sh.`)
+  expect(await ui.find({ type: 'Text', text: /not switched over/ })).toBe(undefined)
+  expect(files[`${HOME}/${STATUS_OFF_REL}`]).toBe(undefined)
+  await ui.unmount()
 })

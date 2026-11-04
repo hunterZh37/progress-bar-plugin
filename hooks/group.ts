@@ -74,11 +74,55 @@ def is_job(l):
     return l[:1] in MARKS or '█' in l or '░' in l
 
 
+ANSI = re.compile(r'\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;]*m')
+STUCK = re.compile(r'^\s*[◐◓◑◒]?\s*⚠\s*stuck(\s+\S+)?\s+')
+OURS_HEAD = re.compile(r'^[▾▸]\s')
+OURS_ROW = re.compile(r'^  (?:[◐◓◑◒⚠✖■✔▶]|[A-Z][A-Z0-9 _-]*: )')
+OURS_BADGE = re.compile(r'^(?:⛔ \d+ actions? needed|✉ \d+ need you|📨 \d+ new)')
+
+
+def plain(l):
+    """The line without colors and links."""
+    return ANSI.sub('', l)
+
+
+def ours(lines):
+    """Drops lines this grouper printed (a section header, its indented rows, a badge), so a status line chained
+    twice can never feed grouped rows back in as jobs."""
+    out, inside = [], False
+    for l in lines:
+        p = plain(l)
+        if OURS_HEAD.match(p):
+            inside = True
+            continue
+        if inside and p[:1].isspace():
+            continue
+        inside = False
+        if OURS_ROW.match(p) or OURS_BADGE.match(p):
+            continue
+        out.append(l)
+    return out
+
+
 def name_of(l):
+    l = STUCK.sub('', plain(l))
     s = re.sub(r'^[▶✔✖■]\s*(error\s*|stopped\s*)?', '', l)
     n = re.split(r'\s+[█░]|\s+·\s+', s, 1)[0].strip()
     # A status word is not part of the name: "job starting…" and "job" are one job.
     return re.sub(r'\s+(working|pending|waiting|running|starting)(…|\.\.\.)?$', '', n)
+
+
+def ok_key(k):
+    """A seen key worth keeping: not empty, not a bare number, no stuck mark."""
+    return bool(k) and not k.isdigit() and 'stuck' not in k.split('-')[:1]
+
+
+def clean_seen(seen):
+    """Drops keys an older build saved from already grouped lines (a stuck mark, color codes, a bare number)."""
+    if not isinstance(seen, dict):
+        return {}
+    return {k: v for k, v in seen.items() if ok_key(k) and not re.search(r'(^|-)\d+m-stuck(-|$)', k)
+            and isinstance(v, dict) and not re.search('[\x1b⚠]', str(v.get('name', '')))}
 
 
 def is_starting(l):
@@ -307,6 +351,7 @@ def main(stdin, now, summary=False):
     # inbox.json is data for the Inbox block, not a job. Older plugin builds in other sessions still write an
     # "inbox" row to the shared jobs list, so drop it here by name, not only in collect().
     raw = [l for l in raw if not re.match(r'^\W*(?:\x1b\][^\x07]*\x07|\x1b\]8;;[^\x1b]*\x1b\\)*(?:inbox|actions|max-usage|channels)\b', re.sub(r'\x1b\[[0-9;]*m', '', l))]
+    raw = ours(raw)
     jobs = [l for l in raw if is_job(l) and not l.startswith('…')]
     other = [l for l in raw if l not in jobs]
 
@@ -321,7 +366,7 @@ def main(stdin, now, summary=False):
     try:
         state = state_file()
         fresh = not os.path.exists(state)
-        seen = json.loads(read(state) or '{}')
+        seen = clean_seen(json.loads(read(state) or '{}'))
     except Exception:
         state, fresh, seen = state_file(), False, {}
     ev = load_events()
@@ -334,6 +379,8 @@ def main(stdin, now, summary=False):
             # Stopped, but its log ends with a finish: a success, not a problem.
             k, l = 'done', re.sub(r'^■\s*(stopped\s*)?', '✔ ', l)
         groups[k].append(l)
+        if not ok_key(slugify(n)):
+            continue
         current.add(slugify(n))
         sig = signature(l)
         prev = seen.get(slugify(n)) or {}

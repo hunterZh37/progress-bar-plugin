@@ -52,6 +52,8 @@ That's it. Answer `y` to add the marketplace and pick a scope. From the next ses
 - Writes `~/.claude/progress-bar/statusline.sh`, with `group.py` (grouping), `events.py` (the events log) and `checkpoint.py` (the overnight recap) beside it. They need only the system `python3`. Without it the lines print ungrouped.
 - Points the status line at that script through the plugin, with `refreshInterval: 1` so bars move while Claude is idle. Your settings files are never edited.
 - Keeps a status line you already had: the script runs it after the bars, with the session JSON on stdin, so its lines print below the groups. A settings file that already names the script is left as it is.
+- Never chains another progress status line. A command that is this script, or names a script (read up to 64 KB) mentioning `.claude-progress/.lines` or `group.py`, is skipped, and an install that chained one drops it at the next start. If a chained status line still prints our section headers (`▾ ▶ RUNNING` and the like), the script drops its output. `group.py` also ignores lines it printed itself (headers, indented rows, `⚠ stuck` marks), so its seen state stays clean.
+- If another plugin's `settings.read` hook answers first, this plugin's hook is skipped and the status line is not switched over. The Log tab says so once (until it works again), and the Status panel shows **▶ Turn on status line**. That button writes the `statusLine` into the settings file that holds the winning one (local, then project, else `~/.claude/settings.json`).
 - Opens the Status panel. A terminal under 144 columns keeps it waiting, and a one-time toast says `Progress panel: /progress-bar`.
 - Each later session start rewrites the scripts with the plugin's version, so updates need nothing either.
 
@@ -270,6 +272,7 @@ The status line then reads:
 `✖ N errors` shows only while the Log tab has unseen errors.
 
 - **Runs the script:** the panel runs `~/.claude/progress-bar/statusline.sh` with `PB_FULL=1` every second while it is open. The first session writes that script, and `panel on` refreshes it and `group.py` and keeps your chained status line.
+- **Never blank:** when the script fails, or prints nothing but an error, the panel shows the reason (for example `Status script failed (exit 1): <first stderr line>`). A pane that cannot draw says why instead of nothing.
 - **Fold:** press a header, or its hotkey (`1` to-do, `2` running, `3` done, `4` waiting, `5` problems). It writes `~/.claude-progress/.state/folded.txt`, the same file `/progress-bar fold` uses.
 - **On by default:** the first session writes `~/.claude-progress/.state/panel-on`. With that file the pane opens at session start and the status line prints the summary. `panel off` deletes it, writes `.state/panel-off` so the default never turns it back on, and closes the pane. `panel on` undoes that. With **Open the Status panel** off in `/config`, nothing is written and `/progress-bar` opens it once.
 - **To-do menu:** click a to-do for Done, Up, Down, Start (a ready machine item), Delete or Move back to to-do (a checked-off one). It edits this project's list, on the line that still holds that item's text, so a line added since the panel drew never hits the wrong item. TO-DO lists open items only. Checked-off ones move to DONE under **Checked-off to-dos**, after finished jobs, and count there.

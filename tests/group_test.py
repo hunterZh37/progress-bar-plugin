@@ -55,6 +55,31 @@ class Group(unittest.TestCase):
     def run_(self, text, now=None):
         return [strip_links(l) for l in self.g.main(io.StringIO(text), now or T0)]
 
+    def test_already_grouped_input_is_dropped_and_never_saved(self):
+        # A status line chained twice feeds our own output back in: headers, indented rows, stuck marks, badges.
+        grouped = ('\033[31m⛔ 1 action needed\033[0m\n'
+                   '▾ ☐ TO-DO\n  YOU: review PR\n'
+                   '▾ ▶ RUNNING\n  \033[33m⚠ stuck 12m\033[0m build ████░░░░ 40.0% · 2/5\n  ◐ docs ██░░ 10.0% · 1/9\n'
+                   '▸ ✔ DONE (2)\n'
+                   '0\n')
+        out = self.run_('▶ build ████░░░░ 40.0% · 2/5\n' + grouped)
+        self.assertEqual(out, ['▾ ▶ RUNNING', '  ◐ build ████░░░░ 40.0% · 2/5 · in progress', '0'])
+        seen = json.loads(self.g.read(self.g.state_file()))
+        self.assertEqual(list(seen), ['build'])
+
+    def test_stuck_prefix_is_not_part_of_a_name(self):
+        self.assertEqual(self.g.name_of('\033[33m⚠ stuck 12m\033[0m build ████ 40% · 2/5'), 'build')
+        self.assertEqual(self.g.name_of('◐ ⚠ stuck 1h05m deploy · 3/4'), 'deploy')
+
+    def test_poisoned_seen_keys_are_dropped_on_load(self):
+        self.write('.state/group-seen.json', json.dumps({
+            '1': {'name': '1', 'at': T0, 'kind': 'running'},
+            '33m-stuck-12m-0m-build': {'name': '\u001b[33m⚠ stuck 12m\u001b[0m build', 'at': T0, 'kind': 'running'},
+            'real': {'name': 'real', 'at': T0, 'kind': 'running'}}))
+        out = self.run_('Opus · ~/repo\n', T0 + 60)
+        self.assertEqual(out, ['▾ ✔ DONE', '  real · finished ' + time.strftime('%H:%M', time.localtime(T0)), 'Opus · ~/repo'])
+        self.assertEqual(list(json.loads(self.g.read(self.g.state_file()))), ['real'])
+
     def test_sections_in_order_with_todo_first(self):
         self.write('todo.txt', '[you]\nreview PR\nx old thing\n[mac]\nrun import\n')
         out = self.run_(
@@ -488,14 +513,14 @@ class Checkpoint(unittest.TestCase):
 RENDER_SRC = open(os.path.join(os.path.dirname(__file__), '..', 'hooks', 'render.ts'), encoding='utf-8').read()
 
 
-def status_script():
-    """statusScript() from hooks/render.ts with no chained command: its single-quoted lines, JS escapes undone."""
+def status_script(prev=''):
+    """statusScript() from hooks/render.ts, chaining prev: its single-quoted lines, JS escapes undone."""
     body = re.search(r'export function statusScript\(prev\?: string\): string \{\n  return \[\n(.*?)\n  \]\.join', RENDER_SRC, re.S).group(1)
     out = []
     for l in body.split('\n'):
         l = l.strip()
         if l.startswith('`prev='):
-            out.append("prev=''")
+            out.append("prev='" + prev.replace("'", "'\\''") + "'")
             continue
         m = re.match(r"^'(.*)',$", l)
         if m:
@@ -644,6 +669,19 @@ class StatusScript(unittest.TestCase):
         every = ['▶ cyber-agent working', '▶ hunty gpu job', '▶ nombot-agent working', '▶ shared job']
         self.assertEqual(self.run_({}), every)
         self.assertEqual(self.run_({'session_id': 'bbbb', 'cwd': os.path.join(self.home, 'cyber')}, scope='all'), every)
+
+    def chained(self, prev):
+        with open(self.script, 'w') as f:
+            f.write(status_script(prev))
+        return self.run_({'session_id': 'bbbb', 'cwd': os.path.join(self.home, 'cyber')})
+
+    def test_chained_status_line_output_prints(self):
+        self.assertEqual(self.chained("echo 'Opus · ~/repo'"), ['Opus · ~/repo', '▶ cyber-agent working'])
+
+    def test_chained_progress_status_line_output_is_dropped(self):
+        # Its output holds our section headers: a second progress status line, never printed twice.
+        for head in ['▾ ▶ RUNNING', '▾ ☐ TO-DO', '▸ ✔ DONE (3)']:
+            self.assertEqual(self.chained("printf '%s\\n  ◐ x\\n' '" + head + "'"), ['▶ cyber-agent working'])
 
 
 if __name__ == '__main__':

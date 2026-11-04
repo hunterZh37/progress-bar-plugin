@@ -2,6 +2,8 @@
 export type Folded = string[]
 /** Status panel: the full status line output, colors and links removed. */
 export type Lines = string[]
+/** Why the panel or status line may show nothing: the status script's error, and the status line left off. */
+export type Health = { script: string; statusOff: string; note: string }
 /** Status panel: one todo.txt item; `line` is its 0-based line in the file. */
 export type Todo = { owner: string; text: string; done: boolean; line: number }
 /** Status panel: this session's project, the name of its to-do list (hooks/project.ts). */
@@ -69,6 +71,6 @@ export type ActionUi = { confirm: string; term: string; failId: string; fail: st
 
 declare module 'claude-code' {
   interface PluginState {
-    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; project: Project; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards; recap: Recap; inbox: Inbox; channel: Channel; chat: ChatState; actions: Action[]; actionUi: ActionUi }
+    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; project: Project; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards; recap: Recap; inbox: Inbox; channel: Channel; chat: ChatState; actions: Action[]; actionUi: ActionUi; health: Health }
   }
 }

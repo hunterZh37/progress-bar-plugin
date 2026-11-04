@@ -2,16 +2,15 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import { ACTION_TOOL, CHECK_EVERY, actionCommand, addFromClaude, gatePrompt, isGated, tickActions } from './actions'
 import { autonextCommand, ownJobs, tickAutonext } from './autonext'
-import { CHECKPOINT_PY } from './checkpoint'
-import { EVENTS_PY } from './events'
-import { GROUP_PY } from './group'
 import { backfillChat, sayCommand } from './chat'
 import { CHANNEL_EVERY, SEND_TOOL, channelCommand, pollChannel, sendCommand, sendFile } from './channel'
 import { inboxCommand } from './inbox'
+import { chainable } from './chain'
+import { SNIPPET, installedPrev, writeLib } from './setup'
 import { resolveHome } from './home'
 import { macClicks, parseMacClicks } from './mac'
-import { checkpointCommand, panelCommand, registerPanel, startPanel } from './panel'
-import { FRESH_MS, eta, expandHome, lines, parseProgress, parseWatch, prevOf, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
+import { checkpointCommand, noteStatusLine, panelCommand, registerPanel, startPanel } from './panel'
+import { FRESH_MS, eta, expandHome, lines, parseProgress, parseWatch, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
 import { PROJECTS_REL, gitRootOf, resolveProject, sessionProject } from './project'
 import { LONG_BASH_MS, PROGRESS_TOOL, endBackground, endShell, mirrorTasks, startShell, taskCreated, taskList, taskUpdated, touchShells, writeReport } from './report'
 import type { Task } from './report'
@@ -54,9 +53,6 @@ async function watchRow($: EngineInterface, h: string, dir: string, name: string
 
 const LIVE = new Set(['pending', 'running', 'waiting'])
 const SCRIPT_REL = '.claude/progress-bar/statusline.sh'
-const GROUP_REL = '.claude/progress-bar/group.py'
-const EVENTS_PY_REL = '.claude/progress-bar/events.py'
-const CHECKPOINT_PY_REL = '.claude/progress-bar/checkpoint.py'
 const DEMO = 'progress-bar-demo'
 const USAGE = [
   'Usage: /progress-bar [setup | demo | action | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | channel | send <file> to <name> | say <name> <text> | fold <section> | unfold <section> | toggle <section>]',
@@ -228,7 +224,7 @@ async function statusLineCommand($: EngineInterface): Promise<string | undefined
   } catch { return undefined }
 }
 
-const snippet = `"statusLine": { "type": "command", "command": "~/${SCRIPT_REL}", "refreshInterval": 1 }`
+const snippet = SNIPPET
 
 /** Plain `/progress-bar`: the bars as text, and the Status panel opens beside the chat once the script is installed. */
 async function showAndOpen($: EngineInterface): Promise<string> {
@@ -285,7 +281,7 @@ async function ensureInstalled($: EngineInterface) {
   if (!h) return
   const path = `${h}/${SCRIPT_REL}`
   const current = await ownStatusLine($)
-  const prev = current && !current.includes(SCRIPT_REL) ? current : await installedPrev($, path)
+  const prev = await chainable($, h, current) ?? await installedPrev($, h, path)
   const script = statusScript(prev)
   let old = ''
   try { old = String(await $.fs.read(path)) } catch { old = '' }
@@ -301,7 +297,7 @@ async function setup($: EngineInterface) {
   if (!h) return 'Could not find your home folder ($HOME is unset).'
   const current = await ownStatusLine($) ?? await statusLineCommand($)
   const path = `${h}/${SCRIPT_REL}`
-  const prev = current && !current.includes(SCRIPT_REL) ? current : await installedPrev($, path)
+  const prev = await chainable($, h, current) ?? await installedPrev($, h, path)
   await $.fs.write(path, statusScript(prev))
   await writeLib($, h)
   await $.process.run(['chmod', '+x', path]).catch(() => undefined)
@@ -312,24 +308,15 @@ async function setup($: EngineInterface) {
   return `Wrote ${path}, with group.py, events.py and checkpoint.py beside it.${chain}\n${done}\n"refreshInterval": 1 redraws the status line every second.`
 }
 
-/** Writes group.py, events.py (the Log tab's events log) and checkpoint.py (the overnight recap) beside the status line script. */
-async function writeLib($: EngineInterface, h: string) {
-  await $.fs.write(`${h}/${GROUP_REL}`, GROUP_PY)
-  await $.fs.write(`${h}/${EVENTS_PY_REL}`, EVENTS_PY)
-  await $.fs.write(`${h}/${CHECKPOINT_PY_REL}`, CHECKPOINT_PY)
-}
 
-/** The command an installed script chains, so running setup again keeps it. */
-async function installedPrev($: EngineInterface, path: string): Promise<string | undefined> {
-  try { return prevOf(String(await $.fs.read(path))) } catch { return undefined }
-}
+
 
 /** Rewrites an installed script and group.py with this version's, keeping the chained command. No-op when not installed. */
 async function refreshInstalled($: EngineInterface) {
   const h = await resolveHome($)
   const path = `${h}/${SCRIPT_REL}`
   if (!h || !(await $.fs.exists(path).catch(() => false))) return
-  await $.fs.write(path, statusScript(await installedPrev($, path)))
+  await $.fs.write(path, statusScript(await installedPrev($, h, path)))
   await writeLib($, h)
 }
 
@@ -434,6 +421,10 @@ async function clear($: EngineInterface) {
   return stale.length ? `Removed ${stale.length} stale file${stale.length === 1 ? '' : 's'}.` : 'Nothing stale.'
 }
 
+// Set when the settings.read hook runs on a merged read. Another plugin's hook that answers first skips it.
+let hookApplied = false
+const HOOK_CHECK_MS = 15_000
+
 export const register: Register = (on, options) => {
   registerPanel(on)
   // Zero setup: on by default, off from /config (progress-bar.statusLine, progress-bar.openPanel).
@@ -445,6 +436,7 @@ export const register: Register = (on, options) => {
   if (autoStatusLine) {
     on('settings.read', async ($, e, next) => {
       const s = await next(e)
+      if (!e.source) hookApplied = true
       return e.source ? s : withStatusLine(s)
     })
   }
@@ -535,6 +527,13 @@ export const register: Register = (on, options) => {
     // The status line script and group.py are written on the first run and follow the plugin version after that.
     // With the status line turned off in /config, only a script that is already installed is refreshed.
     await (autoStatusLine ? ensureInstalled($) : refreshInstalled($)).catch(() => undefined)
+    // The settings.read hook can be skipped by another plugin's hook that answers first: then the panel offers
+    // "Turn on status line" and the Log tab says why, once. The engine's merge runs around load, so check a bit later.
+    if (autoStatusLine) {
+      void $.clock.sleep(HOOK_CHECK_MS)
+        .then(async () => noteStatusLine($, await resolveHome($), hookApplied, await ownStatusLine($)))
+        .catch(() => undefined)
+    }
     void poll($)
     $.clock.every(5000, () => { void poll($); void tickAutonext($) })
     await startPanel($, await resolveHome($), autoPanel)
