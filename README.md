@@ -7,8 +7,8 @@ Live progress bars and a to-do list in the Claude Code status line. One line per
   YOU: Review the deploy PR · Sign in to the dashboard
   MAC: Load the 2026 batch
 ▾ ▶ RUNNING
-  build-docs ████████░░░░░░░░░░░░ 40.0% · 2/5 · render pages · 3m · 14 tools
-  nightly-import ████████████████░░░░ 80.0% · 4/5 · batch 4 · 12m
+  ⚠ stuck 14m nightly-import ████████████████░░░░ 80.0% · 4/5 · batch 4 · 31m
+  ⠹ build-docs ████████░░░░░░░░░░░░ 40.0% · 2/5 · render pages · 3m · 14 tools
 ▸ ✔ DONE (2)
 ```
 
@@ -19,6 +19,7 @@ Live progress bars and a to-do list in the Claude Code status line. One line per
 - **Bars from logs:** a job that only writes a log (psql, a vendor tool, a remote job) gets a bar from a watch file: done/total read from the log by regex, an ETA, and `■ stopped` or `✖ error` when it dies or fails.
 - **Skill:** `progress-reporting` tells Claude to write those files for multi-step work and to ask subagents to do the same.
 - **Groups:** lines sort into **TO-DO**, **PROBLEMS**, **RUNNING**, **WAITING** and **DONE**. A job that ends shows as `finished 14:05` for 30 minutes. Duplicate rows of one job merge.
+- **Spinner and stuck rows:** each RUNNING row gets a spinner (and `in progress` when it has no step). A row whose numbers have not moved for 10 minutes shows a yellow `⚠ stuck 14m` instead and sorts first. Change the 10 in `~/.claude-progress/.state/stuck-minutes`.
 - **To-dos:** `~/.claude-progress/todo.txt` shows first. Claude keeps it current.
 - **Links:** job names open their progress file, or a URL you set in `links.txt`.
 - **Status line:** a small script prints all this above your existing status line.
@@ -64,6 +65,7 @@ Already have a status line? Setup reads it and builds it into the script. The ba
 | --- | --- |
 | `/progress-bar` | Shows the current bars and whether the status line is set up |
 | `/progress-bar setup` | Writes the status line script |
+| `/progress-bar setup mac-clicks` | macOS: click a section header to fold it. `off` removes it |
 | `/progress-bar demo` | Runs a 20 second demo job so you can see a bar |
 | `/progress-bar clear` | Deletes stale progress files |
 | `/progress-bar todo` | Lists to-dos with numbers |
@@ -163,9 +165,24 @@ The first match wins. Clicking needs a terminal with link support (iTerm2, WezTe
 - `/progress-bar fold done` hides a section as `▸ ✔ DONE (3)`. An open one shows `▾`. `unfold` opens it, `toggle` flips it. Sections: `todo`, `running`, `waiting`, `done`, `problems`, `all`.
 - The choice is saved in `~/.claude-progress/.state/folded.txt`, which `group.py` reads.
 
+## Click to fold (macOS)
+
+Optional. Makes each section header a link that folds or unfolds that section.
+
+```
+/progress-bar setup mac-clicks
+```
+
+- **What it installs:** `~/Applications/ProgressBarToggle.app`, a tiny AppleScript app built with `osacompile`, signed ad hoc and registered for `progressbar://` URLs. Its source is at `~/.claude/progress-bar/ProgressBarToggle.applescript`. It runs only when you click and accepts only the five section names.
+- **Turns on header links** by writing `~/.claude-progress/.state/clicks-on`. Without that file the headers stay plain text.
+- **Needs a terminal that renders OSC 8 hyperlinks:** Ghostty, iTerm2, WezTerm or kitty. In Ghostty, ⌘-click the header.
+- **Inside tmux or herdr** links may be stripped. Try `FORCE_HYPERLINK=1`, or turn on tmux's `hyperlinks` feature (`set -as terminal-features ',*:hyperlinks'`).
+- **Remove it:** `/progress-bar setup mac-clicks off` unregisters and deletes the app and turns the links off.
+- **Other systems:** use `/progress-bar fold <section>`.
+
 ## Privacy
 
-Everything stays on your machine. The plugin reads and writes only files under `~/.claude-progress/` and `~/.claude/progress-bar/`. No network calls.
+Everything stays on your machine. The plugin reads and writes only files under `~/.claude-progress/` and `~/.claude/progress-bar/`, plus `~/Applications/ProgressBarToggle.app` if you run `setup mac-clicks`. No network calls.
 
 ## License
 

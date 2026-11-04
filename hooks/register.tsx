@@ -1,6 +1,7 @@
 import type { EngineInterface, Register } from 'claude-code'
 
 import { GROUP_PY } from './group'
+import { macClicks, parseMacClicks } from './mac'
 import { FRESH_MS, eta, expandHome, lines, parseProgress, parseWatch, readLog, slug, statusScript, todoAdd, todoClear, todoDone, todoList } from './render'
 import type { Progress, Row } from './render'
 
@@ -42,6 +43,7 @@ const GROUP_REL = '.claude/progress-bar/group.py'
 const DEMO = 'progress-bar-demo'
 const USAGE = [
   'Usage: /progress-bar [setup | demo | clear | todo | fold <section> | unfold <section> | toggle <section>]',
+  '  setup mac-clicks [off]: click a section header to fold it (macOS)',
   '  sections: todo, running, waiting, done, problems, all',
   '  todo: todo | todo add [name] <text> | todo done <n|text> | todo clear',
 ].join('\n')
@@ -197,6 +199,15 @@ async function setup($: EngineInterface) {
   return `Wrote ${path} and group.py beside it.${chain}\n${done}\n"refreshInterval": 1 redraws the status line every second.`
 }
 
+/** `/progress-bar setup mac-clicks [off]`: also refreshes group.py, which draws the header links. */
+async function setupMacClicks($: EngineInterface, mode: 'on' | 'off') {
+  const h = await resolveHome($)
+  if (!h) return 'Could not find your home folder ($HOME is unset).'
+  const text = await macClicks($, h, mode)
+  if (mode === 'on' && text.startsWith('Click to fold is on')) await $.fs.write(`${h}/${GROUP_REL}`, GROUP_PY)
+  return text
+}
+
 /** `/progress-bar todo ...`: list, add, done, clear in ~/.claude-progress/todo.txt. */
 async function todo($: EngineInterface, rest: string): Promise<string> {
   const h = await resolveHome($)
@@ -288,7 +299,7 @@ export const register: Register = on => {
   })
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup | demo | clear | todo | fold <section>]' })
+    await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup [mac-clicks [off]] | demo | clear | todo | fold <section>]' })
     void poll($)
     $.clock.every(5000, () => { void poll($) })
     return next(e)
@@ -300,6 +311,7 @@ export const register: Register = on => {
     const text =
       arg === '' ? await show($)
       : arg === 'setup' ? await setup($)
+      : arg.startsWith('setup ') && parseMacClicks(arg.slice(6)) ? await setupMacClicks($, parseMacClicks(arg.slice(6))!)
       : arg === 'demo' ? await demo($)
       : arg === 'clear' ? await clear($)
       : /^todo\b/.test(arg) ? await todo($, raw.slice(4).trim())

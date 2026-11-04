@@ -10,7 +10,11 @@ Reads status lines on stdin and prints:
   then any line that is not a job (your own status line) as is.
 Jobs that vanish show as "finished HH:MM" for 30 min. Duplicate rows of one job are merged.
 Folded sections (~/.claude-progress/.state/folded.txt) show as one line with a count.
+RUNNING rows get a spinner, or a yellow "stuck" mark when their numbers have not moved for
+~/.claude-progress/.state/stuck-minutes (default 10) minutes. Stuck rows sort first.
 Job names link to their progress file, or to a URL from ~/.claude-progress/links.txt ("<regex> | <url>").
+With ~/.claude-progress/.state/clicks-on (from /progress-bar setup mac-clicks), section headers link to
+progressbar://toggle/<section>, which the ProgressBarToggle app turns into a fold or unfold.
 """
 import json, os, re, sys, time
 
@@ -19,6 +23,8 @@ ROOT = os.environ.get('PROGRESS_DIR') or os.path.join(HOME, '.claude-progress')
 STATE = os.path.join(ROOT, '.state', 'group-seen.json')
 KEEP = 30 * 60
 MARKS = '▶✔✖■'
+SPIN = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+ELAPSED = re.compile(r'^(\d+h)?\d+m$|^\d+s$|^ETA ')
 
 
 def slugify(n):
@@ -45,8 +51,35 @@ def kind(l):
     return 'running'
 
 
+def signature(l):
+    """What counts as progress: the done/total numbers, else the line without elapsed-time fields."""
+    m = re.search(r'(\d+)/(\d+)', l)
+    if m:
+        return m.group(0)
+    return ' · '.join(p for p in l.split(' · ') if not ELAPSED.match(p.strip()))
+
+
+def has_step(l):
+    for p in l.split(' · ')[1:]:
+        p = p.strip()
+        if p and not ELAPSED.match(p) and not re.match(r'^\d+/\d+$|^\d+ tools?$', p):
+            return True
+    return False
+
+
+def ago(sec):
+    m = int(sec // 60)
+    return str(m // 60) + 'h' + str(m % 60).zfill(2) + 'm' if m >= 60 else str(m) + 'm'
+
+
 def link(text, url):
     return '\033]8;;' + url + '\033\\' + text + '\033]8;;\033\\' if url else text
+
+
+def header(text, key):
+    if not os.path.exists(os.path.join(ROOT, '.state', 'clicks-on')):
+        return text
+    return '\033]8;;progressbar://toggle/' + key + '\007' + text + '\033]8;;\007'
 
 
 def read(path):
@@ -117,7 +150,10 @@ def main(stdin, now):
         k = kind(l)
         groups[k].append(l)
         current.add(slugify(n))
-        seen[slugify(n)] = {'name': n, 'at': now, 'kind': k}
+        sig = signature(l)
+        prev = seen.get(slugify(n)) or {}
+        changed = prev.get('changed', now) if prev.get('sig') == sig else now
+        seen[slugify(n)] = {'name': n, 'at': now, 'kind': k, 'sig': sig, 'changed': changed}
     # Jobs that disappeared count as finished, kept 30 min.
     for s, v in list(seen.items()):
         if s in current:
@@ -153,25 +189,44 @@ def main(stdin, now):
     folded = set((read(os.path.join(ROOT, '.state', 'folded.txt')) or '').split())
     out = []
 
-    def sec(title, items, key, plain=False):
+    try:
+        stuck_after = float((read(os.path.join(ROOT, '.state', 'stuck-minutes')) or '10').strip()) * 60
+    except ValueError:
+        stuck_after = 600
+
+    def stuck_for(l):
+        v = seen.get(slugify(name_of(l))) or {}
+        d = now - v.get('changed', now)
+        return d if d >= stuck_after else None
+
+    def running_deco(i, body):
+        d = stuck_for(i)
+        mark = '\033[33m⚠ stuck ' + ago(d) + '\033[0m' if d is not None else SPIN[int(now) % 10]
+        return mark + ' ' + body + ('' if has_step(i) else ' · in progress')
+
+    groups['running'].sort(key=lambda l: stuck_for(l) is None)
+
+    def sec(title, items, key, plain=False, deco=None):
         if not items:
             return
         if key in folded:
-            out.append('▸ ' + title + ' (' + str(len(items)) + ')')
+            out.append(header('▸ ' + title + ' (' + str(len(items)) + ')', key))
             return
-        out.append('▾ ' + title)
-        out.extend('  ' + (i if plain else linked(re.sub(r'^[▶✔]\s*', '', i))) for i in items)
+        out.append(header('▾ ' + title, key))
+        for i in items:
+            body = i if plain else linked(re.sub(r'^[▶✔]\s*', '', i))
+            out.append('  ' + (deco(i, body) if deco else body))
 
     todo = parse_todo(read(os.path.join(ROOT, 'todo.txt')) or '')
     if todo:
         n_items = sum(len(v) for v in todo.values())
         if 'todo' in folded:
-            out.append('▸ ☐ TO-DO (' + str(n_items) + ')')
+            out.append(header('▸ ☐ TO-DO (' + str(n_items) + ')', 'todo'))
         else:
-            out.append('▾ ☐ TO-DO')
+            out.append(header('▾ ☐ TO-DO', 'todo'))
             out.extend('  ' + h.upper() + ': ' + ' · '.join(i) for h, i in todo.items())
     sec('✖ PROBLEMS', groups['problem'], 'problems')
-    sec('▶ RUNNING', groups['running'], 'running')
+    sec('▶ RUNNING', groups['running'], 'running', deco=running_deco)
     sec('⏸ WAITING', groups['waiting'], 'waiting')
     sec('✔ DONE', groups['done'], 'done')
     return out + other

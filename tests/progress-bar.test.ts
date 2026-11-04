@@ -3,6 +3,7 @@ import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { GROUP_PY } from '../hooks/group'
+import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
 import { eta, expandHome, line, lines, parseProgress, parseWatch, readLog, slug, statusScript, todoAdd, todoClear, todoDone, todoItems, todoList } from '../hooks/render'
 
 const NOW = 1_800_000_000_000
@@ -129,7 +130,7 @@ const run = async ($: Engine, args: string) => {
 }
 
 /** The world beneath the plugin: a home folder with one subagent and one job file. */
-function world(on: On, opts: { statusLine?: { type: string; command: string }; scriptExists?: boolean } = {}) {
+function world(on: On, opts: { statusLine?: { type: string; command: string }; scriptExists?: boolean; os?: string } = {}) {
   const written: Record<string, string> = {}
   const ran: string[][] = []
   mock.clock(on, { now: NOW })
@@ -158,7 +159,10 @@ function world(on: On, opts: { statusLine?: { type: string; command: string }; s
   on('fs.write', (_, e) => { written[e.path] = e.text; return { value: undefined } })
   on('fs.exists', () => ({ value: !!opts.scriptExists }))
   on('settings.read', () => ({ value: (opts.statusLine ? { statusLine: opts.statusLine } : {}) as never }))
-  on('process.run', (_, e) => { ran.push([...e.argv]); return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } })
+  on('process.run', (_, e) => {
+    ran.push([...e.argv])
+    return { value: { exitCode: 0, stdout: e.argv[0] === 'uname' ? `${opts.os ?? 'Darwin'}\n` : '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
   return { written, ran }
 }
 
@@ -248,4 +252,54 @@ test('/progress-bar todo add, list, done and clear write todo.txt', async ($, on
   expect((await run($, 'todo done sam')).text).toBe('Done: Call Sam')
   expect((await run($, 'todo clear')).text).toBe('Removed 2 done items.')
   expect(written[file]).not.toContain('Run Import')
+})
+
+test('mac-clicks parsing', async () => {
+  expect(parseMacClicks('mac-clicks')).toBe('on')
+  expect(parseMacClicks('--mac-clicks')).toBe('on')
+  expect(parseMacClicks('mac-clicks off')).toBe('off')
+  expect(parseMacClicks('--mac-clicks OFF')).toBe('off')
+  expect(parseMacClicks('mac-clicks maybe')).toBe(null)
+  expect(parseMacClicks('clicks')).toBe(null)
+})
+
+test('the toggle AppleScript only writes known section keys', async () => {
+  expect(TOGGLE_APPLESCRIPT).toContain('if sec is in {"todo", "running", "waiting", "done", "problems"} then')
+  expect(TOGGLE_APPLESCRIPT).toContain('.claude-progress/.state/folded.txt')
+})
+
+/** A world for setup mac-clicks: uname answers `os`, every other command succeeds. */
+const macWorld = (on: On, os: string) => world(on, { os })
+
+test('/progress-bar setup mac-clicks on Linux says it needs macOS and runs nothing else', async ($, on) => {
+  const { written, ran } = macWorld(on, 'Linux')
+  const { text } = await run($, 'setup mac-clicks')
+  expect(text).toBe(NOT_MAC)
+  expect(ran).toEqual([['uname']])
+  expect(written[`${HOME}/.claude-progress/.state/clicks-on`]).toBe(undefined)
+})
+
+test('/progress-bar setup --mac-clicks on macOS builds, signs and registers the app, then turns links on', async ($, on) => {
+  const { written, ran } = macWorld(on, 'Darwin')
+  const { text } = await run($, 'setup --mac-clicks')
+  const app = `${HOME}/Applications/ProgressBarToggle.app`
+  const script = `${HOME}/.claude/progress-bar/ProgressBarToggle.applescript`
+  expect(text).toContain('Click to fold is on.')
+  expect(written[script]).toBe(TOGGLE_APPLESCRIPT)
+  expect(ran).toContainEqual(['osacompile', '-o', app, script])
+  expect(ran).toContainEqual(['/usr/libexec/PlistBuddy', '-c', 'Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string progressbar', `${app}/Contents/Info.plist`])
+  expect(ran).toContainEqual(['/usr/libexec/PlistBuddy', '-c', 'Set :CFBundleIdentifier com.hunterzh37.progressbar-toggle', `${app}/Contents/Info.plist`])
+  expect(ran).toContainEqual(['codesign', '--force', '--deep', '-s', '-', app])
+  expect(ran).toContainEqual([LSREGISTER, '-f', app])
+  expect(written[`${HOME}/.claude-progress/.state/clicks-on`]).toBe('')
+  expect(written[`${HOME}/.claude/progress-bar/group.py`]).toBe(GROUP_PY)
+})
+
+test('/progress-bar setup mac-clicks off unregisters and removes the app and flag', async ($, on) => {
+  const { ran } = macWorld(on, 'Darwin')
+  const { text } = await run($, 'setup mac-clicks off')
+  const app = `${HOME}/Applications/ProgressBarToggle.app`
+  expect(text).toContain('Click to fold is off.')
+  expect(ran).toContainEqual([LSREGISTER, '-u', app])
+  expect(ran).toContainEqual(['rm', '-rf', app, `${HOME}/.claude/progress-bar/ProgressBarToggle.applescript`, `${HOME}/.claude-progress/.state/clicks-on`])
 })
