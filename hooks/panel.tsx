@@ -1137,22 +1137,22 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           </Box>
           {tail ? <Text color={stuck ? 'yellow' : undefined} dimColor={!stuck} wrap="truncate-end">{`  ${tail}`}</Text> : null}
         </Box>,
-        second(`rw${k}`, ind.length + 4, ar, why),
-        // Open: the full why first, wrapped under the title (the collapsed line cuts it), then the details.
-        ...(isOpen ? [why && why.length > Math.max(4, width - ind.length - 4 - ar.tag.length - 3) ? hang(`fw${k}`, pad, why) : null, ...details(r, k, pad, waitOn, tags, machineOf(full, title))].filter(Boolean) : []),
+        second(`rw${k}`, ind.length + 4, ar, why, isOpen),
+        ...(isOpen ? details(r, k, pad, waitOn, tags, machineOf(full, title)) : []),
       ].filter(Boolean)
     }
     const toggleCard = (key: string) => update($, openAtom, l => (l.includes(key) ? l.filter(x => x !== key) : [...l, key]))
     // A row's second line, under the title text: the area word (a step brighter), then " · <text>" dim. Both parts are
     // cut so the line fits the pane: it never wraps.
-    const second = (key: string, indent: number, ar: GoalArea, text: string) => {
+    // An open row shows the whole text instead, wrapped beside the area word (no second copy below).
+    const second = (key: string, indent: number, ar: GoalArea, text: string, full = false) => {
       const room = Math.max(4, width - indent)
       const tag = clip(ar.tag, room)
-      const rest = text && room - tag.length > 4 ? clip(` · ${text}`, room - tag.length) : ''
+      const rest = !text || room - tag.length <= 4 ? '' : full ? ` · ${text}` : clip(` · ${text}`, room - tag.length)
       return (
         <Box key={key} paddingLeft={indent}>
           <Box flexShrink={0}><Text>{tag}</Text></Box>
-          {rest ? <Text dimColor wrap="truncate-end">{rest}</Text> : null}
+          {rest ? <Text dimColor wrap={full ? 'wrap' : 'truncate-end'}>{rest}</Text> : null}
         </Box>
       )
     }
@@ -1241,10 +1241,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           <Button key={`dno-${d.key}`} plain onPress={press}>{clip(title, Math.max(4, width - 4 - (d.at ? 7 : 0)))}</Button>
           <Text dimColor>{d.at ? `  ${d.at}` : ''}</Text>
         </Box>,
-        second(`dni${i}`, 4, ar, impact),
+        second(`dni${i}`, 4, ar, impact, isOpen),
         ...(isOpen
           ? [
-              impact && impact.length > Math.max(4, width - 4 - ar.tag.length - 3) ? hang(`dfi${i}`, '    ', impact) : null,
               ...gainLines(tags).filter(g => !g.endsWith(`: ${impact}`)).map((g, j) => hang(`dg${i}-${j}`, '    ', g)),
               ...(impact && more[0] === 'no impact reported' ? more.slice(1) : more).map((t, j) => hang(`dd${i}-${j}`, '    ', t, !rec?.impact.length || !rec.impact.includes(t))),
             ]
