@@ -146,10 +146,12 @@ def kind(l):
 
 
 def signature(l):
-    """What counts as progress: the done/total numbers, else the line without elapsed-time fields."""
+    """What counts as progress: the done/total numbers and the step text, else the line without elapsed-time fields."""
     m = re.findall(r'\d+/\d+|\d+ tools', l)  # an agent making tool calls is not stuck
     if m:
-        return ' '.join(m)
+        # A new step text counts too: a long step whose job rewrites its step (items read, a time) is not stuck.
+        step = [p.strip() for p in l.split(' · ')[1:] if p.strip() and not ELAPSED.match(p.strip()) and not re.match(r'^\d+/\d+$|^\d+ tools?$', p.strip())]
+        return ' '.join(m) + ' | ' + ' · '.join(step)
     return ' · '.join(p for p in l.split(' · ') if not ELAPSED.match(p.strip()))
 
 
