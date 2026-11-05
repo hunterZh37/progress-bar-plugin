@@ -780,9 +780,12 @@ export const register: Register = (on, options) => {
       if (t) s.bg = [...(s.bg ?? []).filter(x => x.id !== t.id), t]
       if (stopped) dropTask(stopped)
       // The agent's final report: what it changed, kept in its done record.
-      if (e.tool === 'SubagentHandback' && typeof input.message === 'string' && input.message.trim()) {
-        handedBack.add(e.agentId)
-        await recordAgent($, e.agentId, input.message).catch(() => undefined)
+      // SubagentHandback is not in this build's typed tool list, so compare it as a plain string: a typed `===`
+      // narrows `e` to never and hides agentId.
+      const agentId = e.agentId
+      if (String(e.tool) === 'SubagentHandback' && typeof input.message === 'string' && input.message.trim()) {
+        handedBack.add(agentId)
+        await recordAgent($, agentId, input.message).catch(() => undefined)
       }
     }
     return r

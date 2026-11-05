@@ -2,6 +2,8 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
+declare const setTimeout: (fn: (...a: unknown[]) => void, ms: number) => unknown
+
 import { ACTION_PANE, ACTION_TOOL, GHOSTTY_SCRIPT, NOTIFY_SCRIPT, NOTIFY_TEXT, TERMINAL_SCRIPT, addAction, canRun, isSlashCommand, isTerminalFront, notifyArgv, runScriptPath, runScriptText, appliesTo, blockText, isGated, parseActions, parseAdd, parseGate } from '../hooks/actions'
 import * as actionsMod from '../hooks/actions'
 import { PANE } from '../hooks/panel'
