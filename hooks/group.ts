@@ -24,6 +24,8 @@ RUNNING rows get a spinner, or a yellow "stuck" mark when their numbers have not
 Job names link to their progress file, or to a URL from ~/.claude-progress/links.txt ("<regex> | <url>").
 A job with a "parent" (its progress file, or the 4th column of ~/.claude-progress/titles.txt) is that parent's child.
 A stuck parent whose child runs, or changed in the last 10 min, is not stuck: its row ends "· waiting on: <child>".
+A waiting watcher (its name says watcher, watch or monitor, and every other key word names a running job) folds into
+that job's row as "· watched by: <name>", so WAITING holds only jobs that really wait.
 With events.py beside this file, done, stuck and problem rows are logged once each to ~/.claude-progress/events.jsonl
 (the Status panel's Log tab), a scan of the log folders starts at most every 30 s, and --summary counts unseen errors.
 With ~/.claude-progress/.state/clicks-on (from /progress-bar setup mac-clicks), section headers link to
@@ -462,10 +464,12 @@ def main(stdin, now, summary=False):
 
     def running_deco(i, body):
         d = stuck_for(i)
+        w = watchers.get(slugify(name_of(i)))
+        by = ' · watched by: ' + ', '.join(w) if w else ''
         if d is None and now - (seen.get(slugify(name_of(i))) or {}).get('changed', now) >= stuck_after:
-            return SPIN[int(now) % len(SPIN)] + ' ' + body + ' · waiting on: ' + waiting_on(i)
+            return SPIN[int(now) % len(SPIN)] + ' ' + body + ' · waiting on: ' + waiting_on(i) + by
         mark = '\033[33m⚠ stuck ' + ago(d) + '\033[0m' if d is not None else SPIN[int(now) % len(SPIN)]
-        return mark + ' ' + body + ('' if has_step(i) else ' · in progress')
+        return mark + ' ' + body + ('' if has_step(i) else ' · in progress') + by
 
     if ev:
         log_events(ev, groups, seen, now, stuck_for)
@@ -476,6 +480,7 @@ def main(stdin, now, summary=False):
             pass
 
     groups['running'].sort(key=lambda l: stuck_for(l) is None)
+    watchers = fold_watchers(groups, tt)
 
     def sec(title, items, key, plain=False, deco=None):
         if not items:
@@ -526,6 +531,31 @@ def main(stdin, now, summary=False):
     sec('⏸ WAITING', groups['waiting'], 'waiting')
     sec('✔ DONE', groups['info'] + groups['done'], 'done')
     return out + other
+
+
+WATCHER = re.compile(r'\b(watcher|watching|watch|monitor|monitoring)\b', re.I)
+
+
+def fold_watchers(groups, tt):
+    """Takes waiting watcher rows out of WAITING. Returns {running job slug: [watcher names]}."""
+    out, keep = {}, []
+    for w in groups['waiting']:
+        n = name_of(w)
+        hit = ''
+        if WATCHER.search(n):
+            ks = key_words(WATCHER.sub(' ', n))
+            for r in groups['running']:
+                rn = name_of(r)
+                ws = set(re.split(r'[^a-z0-9]+', (rn + ' ' + nice(slugify(rn), rn, tt)).lower()))
+                if ks and all(k in ws for k in ks):
+                    hit = slugify(rn)
+                    break
+        if hit:
+            out.setdefault(hit, []).append(n)
+        else:
+            keep.append(w)
+    groups['waiting'] = keep
+    return out
 
 
 def progress_file(slug):

@@ -16,12 +16,13 @@ import { sessionProject } from './project'
 import { turnOnStatusLine } from './setup'
 import { parseSaved } from './usage'
 import type { UsageReading } from './usage'
-import { FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, slug } from './render'
+import { FEW_STEPS, FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, slug } from './render'
 import type { Action, ActionUi, Channel, ChatMsg, ChatState, Checkpoint, Conn, Ev, Health, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
 
 // The Status panel: the grouped status line, drawn in a docked pane beside the chat.
 // It runs the plugin's own status line script with PB_FULL=1 every second while the pane is open.
-// Section headers are buttons that fold or open the section through ~/.claude-progress/.state/folded.txt.
+// Section headers are buttons that fold or open the section through ~/.claude-progress/.state/folded.txt. Their hotkeys
+// are 1, 2, 3... in the order they show.
 // To-dos come straight from ~/.claude-progress/todo.txt: open ones under TO-DO, checked-off ones under DONE.
 // Pressing one opens a menu: mark as done (or move back to to-do), move up or down, start now, or delete.
 // Open to-dos show by priority ("N. " in todo.txt, see priority.ts) with their number. One that waits for a running
@@ -52,7 +53,6 @@ const FOLDED_REL = '.claude-progress/.state/folded.txt'
 export const SECTION_KEYS = ['todo', 'running', 'done', 'waiting', 'problems'] as const
 type Key = (typeof SECTION_KEYS)[number]
 const TITLES: Record<string, Key> = { 'TO-DO': 'todo', RUNNING: 'running', WAITING: 'waiting', DONE: 'done', PROBLEMS: 'problems' }
-const HOTKEYS: Record<Key, string> = { todo: '1', running: '2', done: '3', waiting: '4', problems: '5' }
 const ICON: Record<Key, string> = { todo: '☐', running: '▶', waiting: '⏸', done: '✔', problems: '✖' }
 
 const foldedAtom = atom({ plugin: 'progress-bar', key: 'folded' } as const, [])
@@ -137,8 +137,15 @@ async function turnOn($: EngineInterface, h: string) {
   try { note = await turnOnStatusLine($, h) } catch (err) { note = `Could not turn on the status line: ${firstLine(String(err))}` }
   const on = note.startsWith('Status line on')
   if (on && h) await $.process.run(['rm', '-f', `${h}/${STATUS_OFF_REL}`]).catch(() => undefined)
-  await update($, healthAtom, x => ({ ...x, note, statusOff: on ? '' : x.statusOff }))
+  const noteAt = await $.clock.now()
+  await update($, healthAtom, x => ({ ...x, note, noteAt, statusOff: on ? '' : x.statusOff }))
 }
+
+/** How long the answer to "Turn on status line" stays on the List tab. */
+export const NOTE_MS = 3 * 60_000
+
+/** Whether that answer still shows: set less than NOTE_MS ago (a note with no time is from an older build: stale). */
+export const noteShows = (h: { note: string; noteAt?: number }, now: number) => !!h.note && !!h.noteAt && now - h.noteAt < NOTE_MS
 const META_MS = 24 * 60 * 60_000
 
 /** Removes terminal colors and OSC 8 links. */
@@ -187,6 +194,8 @@ export type RunCard = {
   maxUsed: number | null
   /** "waiting on: X" from the grouper: the child job a quiet parent waits on. */
   waitOn: string
+  /** "watched by: X" from the grouper: a waiting watcher agent folded into the job it watches. */
+  watchedBy: string
   /** Time left (from "X left", "ETA X" or "done in X"), ps run time and time so far, for the one-line view. */
   left: string
   ran: string
@@ -214,15 +223,16 @@ export function runCard(row: string): RunCard {
     : host ? { icon: '🖥', text: `on ${host}` }
     : isAgent ? { icon: '🤖', text: 'Claude agent' }
     : { icon: '⚙', text: 'job' }
-  let count = '', step = '', elapsed = '', left = '', speed = '', actions = '', last = '', cores = '', ran = '', waitOn = ''
+  let count = '', step = '', elapsed = '', left = '', speed = '', actions = '', last = '', cores = '', ran = '', waitOn = '', watchedBy = ''
   let maxUsed: number | null = null
   for (const x of parts) {
     let m: RegExpExecArray | null
     if ((m = /^waiting on: (.+)$/.exec(x))) waitOn = m[1]!
+    else if ((m = /^watched by: (.+)$/.exec(x))) watchedBy = m[1]!
     else if ((m = /^(\d+(?:\.\d+)?)% CPU$/.exec(x))) cores = `${(Number(m[1]) / 100).toFixed(1)} cores busy`
     else if (/^(\d+-)?\d+:\d\d(:\d\d)?$/.test(x)) ran = x
     else if ((m = /^Max 7-day used (\d+)%$/.exec(x)) || (m = /^7d (\d+)%$/.exec(x))) maxUsed = Math.max(maxUsed ?? 0, Number(m[1]))
-    else if ((m = /^(\d+)\/(\d+)( batches)?$/.exec(x))) count = `${Number(m[1]).toLocaleString('en-US')} of ${Number(m[2]).toLocaleString('en-US')}${m[3] ? ' batches' : ' steps'}`
+    else if ((m = /^(\d+)\/(\d+)( batches)?$/.exec(x))) count = `${Number(m[1]).toLocaleString('en-US')} of ${Number(m[2]).toLocaleString('en-US')}${m[3] ? ' batches' : Number(m[2]) > FEW_STEPS ? ' items' : ' steps'}`
     else if ((m = /^done in (.+)$/.exec(x)) || (m = /^ETA (.+)$/.exec(x)) || (m = /^(.+) left$/.exec(x))) left = m[1]!
     else if (/\/min$/.test(x)) speed = x
     else if ((m = /^(\d+) tools?$/.exec(x))) actions = `${m[1]} actions`
@@ -244,10 +254,23 @@ export function runCard(row: string): RunCard {
     facts,
     maxUsed,
     waitOn,
+    watchedBy,
     left,
     ran,
     elapsed,
   }
+}
+
+/**
+ * Whether a job's raw name says what its title says: the same words, any case, a machine prefix ("Hunty: ") or a
+ * leading machine word left out. "Hunty: similar orgs" and "Hunty similar orgs" are the same, so is "mac-label-x" and
+ * "Mac: Mac label x".
+ */
+export function sameName(name: string, title: string): boolean {
+  const words = (x: string) => x.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+  const a = words(name), b = words(title)
+  const eq = (x: string[], y: string[]) => x.length === y.length && x.every((w, i) => w === y[i])
+  return eq(a, b) || eq(a, b.slice(1)) || eq(a.slice(1), b) || eq(a.slice(1), b.slice(1))
 }
 
 /**
@@ -273,9 +296,10 @@ const toMin = (t: string) => {
 const fmtMin = (n: number) => (n >= 60 ? `${Math.floor(n / 60)}h${String(Math.round(n % 60)).padStart(2, '0')}m` : `${Math.max(1, Math.round(n))}m`)
 
 /**
- * The time on a job's one-line card. A reported time left wins ("12m left"). A row with step counts and no time left
- * (an agent) gets an estimate from its time so far per step done ("~8m left", while 0 < done < total). Else its ps run
- * time ("12:50 running"), else "Nm so far".
+ * The time on a job's one-line card. A reported time left wins ("12m left"). An item count (over FEW_STEPS) with no
+ * time left gets an estimate from its time so far per item done ("~8m left", while 0 < done < total). A job of few
+ * steps gets none: its steps take uneven time, so no estimate beats a wrong one. Else its ps run time
+ * ("12:50 running"), else "Nm so far".
  */
 export function timeTail(r: Pick<RunCard, 'left' | 'ran' | 'elapsed' | 'count'>): string {
   if (r.left) return `${r.left} left`
@@ -283,7 +307,7 @@ export function timeTail(r: Pick<RunCard, 'left' | 'ran' | 'elapsed' | 'count'>)
   const done = c ? Number(c[1]!.replace(/,/g, '')) : 0
   const total = c ? Number(c[2]!.replace(/,/g, '')) : 0
   const so = toMin(r.elapsed)
-  if (so > 0 && done > 0 && done < total) return `~${fmtMin((so / done) * (total - done))} left`
+  if (so > 0 && done > 0 && done < total && total > FEW_STEPS) return `~${fmtMin((so / done) * (total - done))} left`
   if (r.ran) return `${r.ran} running`
   return r.elapsed ? `${r.elapsed} so far` : ''
 }
@@ -381,28 +405,48 @@ export function slide(nowMs: number, barW: number): [number, number] {
   return [at, barW - 3 - at]
 }
 
-/** The shared Claude Max meter: 10 cells, green under 50%, yellow under 80%, else red. */
+/** A saved reading younger than this shows no time: it is current enough. */
+export const STALE_READING_MS = 35 * 60_000
+
 /**
- * The Max meter's value: the live reading while a job reports one, else the last saved reading (up to 7 days) with
- * its time ("as of 12:39"). `save` is set when the saved reading should be updated.
+ * The usage meter's value: the live reading while a job reports one, else the last saved reading (up to 7 days),
+ * with its time ("as of 12:39") once it is over STALE_READING_MS old. `save` is set when the saved reading should be
+ * updated.
  */
 export function maxReading(live: number | null, saved: { pct: number; at: number } | null, now: number): { used: number | null; asOf: string; save: boolean } {
   if (live !== null) return { used: live, asOf: '', save: !saved || saved.pct !== live || now - saved.at > 60_000 }
   if (saved && typeof saved.pct === 'number' && now - saved.at < 7 * 86_400_000) {
     const t = new Date(saved.at)
-    return { used: saved.pct, asOf: `as of ${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`, save: false }
+    const asOf = now - saved.at > STALE_READING_MS ? `as of ${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}` : ''
+    return { used: saved.pct, asOf, save: false }
   }
   return { used: null, asOf: '', save: false }
 }
 
-/** "Claude Team this week" for the saved plan, "Claude Max this week" when the plan is not known. */
+/** The meter's name: the saved plan ("Team"), "Max" when the plan is not known. */
 export function meterLabel(plan?: string): string {
-  return `Claude ${plan && /^[A-Za-z][A-Za-z0-9 ]{0,19}$/.test(plan) ? plan : 'Max'} this week`
+  return plan && /^[A-Za-z][A-Za-z0-9 ]{0,19}$/.test(plan) ? plan : 'Max'
 }
 
-export function maxMeter(used: number): { filled: number; color: 'green' | 'yellow' | 'red' } {
-  return { filled: Math.round((Math.min(100, used) / 100) * 10), color: used >= 80 ? 'red' : used >= 50 ? 'yellow' : 'green' }
+/** The usage meter's cells: `cells` wide, green under 50%, yellow under 80%, else red. */
+export function maxMeter(used: number, cells = 10): { filled: number; color: 'green' | 'yellow' | 'red' } {
+  return { filled: Math.round((Math.min(100, used) / 100) * cells), color: used >= 80 ? 'red' : used >= 50 ? 'yellow' : 'green' }
 }
+
+/** The compact meter's cells. */
+export const METER_CELLS = 5
+
+/** The compact meter's text, "Team 48% ▰▰▰▱▱ 7d", with " · as of 07:38" for an old reading. */
+export function meterText(plan: string | undefined, used: number, asOf: string): string {
+  const f = maxMeter(used, METER_CELLS).filled
+  return `${meterLabel(plan)} ${used}% ${'▰'.repeat(f)}${'▱'.repeat(METER_CELLS - f)} 7d${asOf ? ` · ${asOf}` : ''}`
+}
+
+/** The tab row's text width: the tab labels and the " │ " between them. */
+export const tabsWidth = (labels: string[]) => labels.reduce((a, l) => a + l.length, 0) + 3 * Math.max(0, labels.length - 1)
+
+/** Where the meter goes: on the tab row when it fits after the tabs with two spaces to spare, else its own line. */
+export const meterOnTabRow = (tabsW: number, meterW: number, width: number) => tabsW + 2 + meterW <= width
 
 /** Titles, why and parent per job slug: titles.txt, then progress files changed in the last day (they win). */
 async function readMeta($: EngineInterface, h: string) {
@@ -548,6 +592,8 @@ export async function pollPanel($: EngineInterface, h: string) {
     await setScriptNote($, `Status script could not run: ${firstLine(String(err)) || 'unknown error'}`)
   }
   await readStatusOff($, h)
+  const hl = await read($, healthAtom)
+  if (hl.note && !noteShows(hl, await $.clock.now())) await update($, healthAtom, x => ({ ...x, note: '' }))
   await readFolded($, h)
   await readTodos($, h)
   await readMeta($, h)
@@ -911,8 +957,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const short = (t: string) => t.split(' · ')[0]!
     const mach = machines(sections.filter(x => x.key === 'running' || x.key === 'waiting').flatMap(x => x.rows).map(x => runCard(x).name), todos.map(t => t.owner))
     const MINI = 10
-    // `wait` is a WAITING row's reason ('' when it gives none): a dim yellow ⏸ mark and a "waiting: <reason>" note.
-    const card = (r: RunCard, k: string, ind: string, child: boolean, kid: string, wait: string | null = null) => {
+    // A detail line under an open card: wrapped with a hanging indent, so long text never runs back to column 0.
+    const hang = (key: string, pad: string, text: string, dim = true) => (
+      <Box key={key} paddingLeft={pad.length}><Text dimColor={dim}>{text}</Text></Box>
+    )
+    const card = (r: RunCard, k: string, ind: string, child: boolean, kid: string) => {
       const m0 = metaOf(r.name)
       const key = slug(r.name)
       const isOpen = openCards.has(key)
@@ -921,24 +970,24 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const frac = r.pct === null ? null : Math.min(1, r.pct / 100)
       const filled = frac === null ? 0 : Math.round(frac * MINI)
       const [before, after] = slide(nowMs, MINI)
-      const isWait = wait !== null
-      const mark = isWait ? '⏸' : stuck ? '⚠' : child ? '↳' : r.mark === '⚠' ? '•' : r.mark
+      const mark = stuck ? '⚠' : child ? '↳' : r.mark === '⚠' ? '•' : r.mark
       const pad = `${ind}    `
       const why = m0.why ? `unlocks: ${m0.why.replace(/^unlocks:?\s*/i, '')}` : ''
       const col = labelCol(width, ind.length)
-      const label = fitLabel(machineTitle(r.name, m0.title || r.name, mach), col)
+      const full = machineTitle(r.name, m0.title || r.name, mach)
+      const label = fitLabel(full, col)
       // Room left on the line after mark, label and bar (4 + 2 + col + 17) and the note's two spaces.
       const room = width - ind.length - col - 25
       const fit = (x: string) => (x.length > room ? (room > 1 ? `${x.slice(0, room - 1)}…` : '') : x)
-      const tail = isWait ? fit(room >= 14 ? (wait ? `waiting: ${wait}` : 'waiting') : wait || 'waiting')
-        : fit(stuck ? `⚠ stuck ${stuck}` : waitOn ? `waiting on ${short(waitOn)}` : timeTail(r))
+      const tail = fit(stuck ? `⚠ stuck ${stuck}` : waitOn ? `waiting on ${short(waitOn)}` : timeTail(r))
+      // The id line names the job only when the title does not already say it: the full title when the label was cut,
+      // else the raw name when it differs. The badge always shows.
+      const idName = full.length > col ? full : sameName(r.name, full) ? '' : r.name
       return [
         <Box key={`r${k}`}>
           <Box flexShrink={0}>
-          {isWait
-            ? <Text color="yellow" dimColor>{`${ind}  ${mark} `}</Text>
-            : <Text color={stuck ? 'yellow' : 'cyan'}>{`${ind}  ${mark} `}</Text>}
-          <Button key={`open-${key}`} plain onPress={() => update($, openAtom, l => (l.includes(key) ? l.filter(x => x !== key) : [...l, key]))}>
+          <Text color={stuck ? 'yellow' : 'cyan'}>{`${ind}  ${mark} `}</Text>
+          <Button key={`open-${key}`} plain onPress={() => toggleCard(key)}>
             {`${isOpen ? '▾' : '▸'} ${label}`}
           </Button>
           {frac === null
@@ -956,17 +1005,19 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           </Box>
           {tail ? <Text color={stuck ? 'yellow' : undefined} dimColor={!stuck} wrap="truncate-end">{`  ${tail}`}</Text> : null}
         </Box>,
-        ...(isOpen
-          ? [
-              <Text key={`id${k}`} dimColor>{`${pad}${r.name}   ${badge(r.kind)}`}</Text>,
-              r.count || frac === null ? <Text key={`c${k}`} dimColor>{`${pad}${r.count || 'steps not reported'}`}</Text> : null,
-              waitOn ? <Text key={`t${k}`}>{`${pad}▸ waiting on: ${waitOn}`}</Text> : r.step ? <Text key={`t${k}`}>{`${pad}▸ ${r.step}`}</Text> : null,
-              r.facts ? <Text key={`f${k}`} dimColor>{`${pad}${r.facts}`}</Text> : null,
-              why ? <Text key={`w${k}`} dimColor>{`${pad}${why}`}</Text> : null,
-            ].filter(Boolean)
-          : []),
+        ...(isOpen ? details(r, k, pad, waitOn, why, idName) : []),
       ].filter(Boolean)
     }
+    const toggleCard = (key: string) => update($, openAtom, l => (l.includes(key) ? l.filter(x => x !== key) : [...l, key]))
+    // An open card's details: id and badge, count, step, facts, watcher and what it unlocks, each wrapped under its indent.
+    const details = (r: RunCard, k: string, pad: string, waitOn: string, why: string, idName: string) => [
+      hang(`id${k}`, pad, idName ? `${idName}   ${badge(r.kind)}` : badge(r.kind)),
+      r.count || r.pct === null ? hang(`c${k}`, pad, r.count || 'steps not reported') : null,
+      waitOn ? hang(`t${k}`, pad, `waiting on: ${waitOn}`, false) : r.step ? hang(`t${k}`, pad, r.step, false) : null,
+      r.facts ? hang(`f${k}`, pad, r.facts) : null,
+      r.watchedBy ? hang(`wb${k}`, pad, `watched by ${r.watchedBy}`) : null,
+      why ? hang(`w${k}`, pad, why) : null,
+    ].filter(Boolean)
     const runRows = (rows: string[]) => {
       const cards = rows.map(runCard)
       const out = nestRows(cards.map(c => c.name), meta).flatMap(({ i, kids }) => {
@@ -979,10 +1030,23 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       return out
     }
 
-    // Waiting rows: the same one-line card as a running job, with a ⏸ mark and "waiting: <reason>" for its note.
+    // Waiting rows draw no bar: "⏸ <title> · waiting on <what>", one line. Pressing the title opens the same details.
     const waitRows = (rows: string[]) => rows.flatMap((row, i) => {
       const c = runCard(row)
-      return card(c, `w${i}`, '', false, '', waitReason(c, row))
+      const key = slug(c.name)
+      const isOpen = openCards.has(key)
+      const reason = waitReason(c, row)
+      const title = machineTitle(c.name, metaOf(c.name).title || c.name, mach)
+      const m0 = metaOf(c.name)
+      const why = m0.why ? `unlocks: ${m0.why.replace(/^unlocks:?\s*/i, '')}` : ''
+      return [
+        <Box key={`rw${i}`}>
+          <Text color="yellow" dimColor>{'  ⏸ '}</Text>
+          <Button key={`open-${key}`} plain onPress={() => toggleCard(key)}>{title}</Button>
+          <Text dimColor wrap="truncate-end">{` · ${reason ? `waiting on ${reason}` : 'waiting'}`}</Text>
+        </Box>,
+        ...(isOpen ? details(c, `w${i}`, '    ', '', why, sameName(c.name, title) ? '' : c.name) : []),
+      ]
     })
 
     // Done rows: "✓ <title>  14:05" for a finished job, one dim line "✓ <title>  finishing · a/b" for a row at 100% that
@@ -1013,38 +1077,46 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       .reduce<number | null>((a, c) => (c.maxUsed === null ? a : Math.max(a ?? 0, c.maxUsed)), null)
     const reading = maxReading(liveUsed, maxSaved, nowMs)
     if (reading.save && liveUsed !== null) void $.fs.write(maxFile, JSON.stringify({ pct: liveUsed, at: nowMs, ...(maxSaved?.plan ? { plan: maxSaved.plan } : {}) })).catch(() => undefined)
-    const meterLine = (() => {
+    // The tab labels, then the usage meter: on the tab row's right end when it fits, else right-aligned on its own line.
+    const tabLabels = [
+      `${mark('list')}List`,
+      `${mark('connectors')}Connectors${badN ? ` !${badN}` : ''}`,
+      `${mark('github')}GitHub`,
+      `${mark('log')}Log${unseen ? ` !${unseen}` : ''}`,
+      `${mark('chat')}Chat${chatUnread ? ` ${chatUnread}` : ''}`,
+    ]
+    const meter = (() => {
       const used = reading.used
       if (used === null) return null
-      const m = maxMeter(used)
-      const label = `${meterLabel(maxSaved?.plan)}  `
-      const pct = `  ${used}% used`
-      const asOf = reading.asOf ? `  · ${reading.asOf}` : ''
-      const pad = Math.max(0, width - (label.length + 10 + pct.length + asOf.length))
-      return (
-        <Box key="maxmeter">
-          <Text>{' '.repeat(pad)}</Text>
-          <Text dimColor>{label}</Text>
-          <Text color={m.color}>{'█'.repeat(m.filled)}</Text>
-          <Text dimColor>{'░'.repeat(10 - m.filled)}</Text>
-          <Text>{pct}</Text>
-          {asOf ? <Text dimColor>{asOf}</Text> : null}
-        </Box>
-      )
+      const m = maxMeter(used, METER_CELLS)
+      const text = meterText(maxSaved?.plan, used, reading.asOf)
+      return {
+        width: text.length,
+        parts: [
+          <Text key="mt-n" dimColor>{`${meterLabel(maxSaved?.plan)} `}</Text>,
+          <Text key="mt-p">{`${used}% `}</Text>,
+          <Text key="mt-f" color={m.color}>{'▰'.repeat(m.filled)}</Text>,
+          <Text key="mt-e" dimColor>{`${'▱'.repeat(METER_CELLS - m.filled)} 7d${reading.asOf ? ` · ${reading.asOf}` : ''}`}</Text>,
+        ],
+      }
     })()
+    const tabsW = tabsWidth(tabLabels)
+    const inline = !!meter && meterOnTabRow(tabsW, meter.width, width)
     const tabBar = (
       <Box key="tabs" flexDirection="column" marginBottom={1}>
-      {meterLine}
+      {meter && !inline ? <Box key="maxmeter"><Text>{' '.repeat(Math.max(0, width - meter.width))}</Text>{meter.parts}</Box> : null}
       <Box key="tabrow">
-        <Button key="tab-list" plain onPress={() => update($, tabAtom, () => 'list')}>{`${mark('list')}List`}</Button>
+        <Button key="tab-list" plain onPress={() => update($, tabAtom, () => 'list')}>{tabLabels[0]!}</Button>
         {sep('sep-1')}
-        <Button key="tab-connectors" plain onPress={() => update($, tabAtom, () => 'connectors')}>{`${mark('connectors')}Connectors${badN ? ` !${badN}` : ''}`}</Button>
+        <Button key="tab-connectors" plain onPress={() => update($, tabAtom, () => 'connectors')}>{tabLabels[1]!}</Button>
         {sep('sep-2')}
-        <Button key="tab-github" plain onPress={async () => { await update($, tabAtom, () => 'github'); await readGh($, homeDir) }}>{`${mark('github')}GitHub`}</Button>
+        <Button key="tab-github" plain onPress={async () => { await update($, tabAtom, () => 'github'); await readGh($, homeDir) }}>{tabLabels[2]!}</Button>
         {sep('sep-3')}
-        <Button key="tab-log" plain onPress={async () => { await update($, tabAtom, () => 'log'); await markSeen($, homeDir) }}>{`${mark('log')}Log${unseen ? ` !${unseen}` : ''}`}</Button>
+        <Button key="tab-log" plain onPress={async () => { await update($, tabAtom, () => 'log'); await markSeen($, homeDir) }}>{tabLabels[3]!}</Button>
         {sep('sep-4')}
-        <Button key="tab-chat" plain onPress={async () => { await update($, tabAtom, () => 'chat'); await readChat($, homeDir) }}>{`${mark('chat')}Chat${chatUnread ? ` ${chatUnread}` : ''}`}</Button>
+        <Button key="tab-chat" plain onPress={async () => { await update($, tabAtom, () => 'chat'); await readChat($, homeDir) }}>{tabLabels[4]!}</Button>
+        {meter && inline ? <Text key="mt-gap">{' '.repeat(Math.max(2, width - tabsW - meter.width))}</Text> : null}
+        {meter && inline ? meter.parts : null}
       </Box>
       </Box>
     )
@@ -1283,7 +1355,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
             <Button key="h-turn-on" plain onPress={() => turnOn($, homeDir)}>{'▶ Turn on status line'}</Button>
           </Box>
         : null,
-      health.note ? <Text key="h-note" dimColor>{health.note}</Text> : null,
+      noteShows(health, nowMs) ? <Text key="h-note" dimColor>{health.note}</Text> : null,
     ].filter(Boolean)
     let banner: RenderChildren[] = []
     if (cp && recapDue(cp, nowS)) {
@@ -1376,7 +1448,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           const isFolded = folded.has(sec.key) || sec.folded
           return (
             <Box key={`s-${sec.key}`} flexDirection="column" marginBottom={n < sections.length - 1 || other.length ? 1 : 0}>
-              <Button key={`h-${sec.key}`} hotkey={HOTKEYS[sec.key]} plain onPress={() => flip($, homeDir, sec.key)}>
+              <Button key={`h-${sec.key}`} hotkey={String(n + 1)} plain onPress={() => flip($, homeDir, sec.key)}>
                 {`${isFolded ? '▸' : '▾'} ${ICON[sec.key]} ${sec.title}  ${sec.key === 'todo' ? openTodos : sec.key === 'done' ? sec.count + doneTodos.length : sec.key === 'running' && sec.rows.length ? runCount(sec.rows.map(r => runCard(r).name), meta) : sec.count}`}
               </Button>
               {!isFolded && (sec.key === 'todo' ? todoRows() : sec.key === 'running' ? runRows(sec.rows) : sec.key === 'waiting' ? waitRows(sec.rows) : sec.key === 'done' ? doneRows(sec.rows) : plainRows(sec.rows, sec.key))}

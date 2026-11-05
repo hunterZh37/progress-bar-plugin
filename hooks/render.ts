@@ -112,6 +112,54 @@ export function eta(elapsedMs: number, done: number | null, total: number | null
   return ago((elapsedMs / done) * (total - done))
 }
 
+/**
+ * What the poll remembers per job slug (~/.claude-progress/.state/job-track.json): `start`, when the job began (its
+ * file's birth time, else when it was first seen), and a rate base, `at` and `done` when it was first seen, so the time
+ * left comes from the rate (done since then over the time since then), never from a file's last write.
+ * `seen` is when it was last seen, to drop old entries.
+ */
+export type Track = { start: number; at: number; done: number; seen: number }
+
+/** Jobs with more steps than this are item counts, so a rate tells their time left. Fewer steps are uneven. */
+export const FEW_STEPS = 20
+/** The rate base must be this old before its rate counts. */
+export const RATE_MIN_MS = 5 * 60_000
+
+/** The job's track after this poll: new (born from `born` ms when known), reset when its count went back, else kept. */
+export function trackJob(prev: Track | undefined, now: number, done: number | null, born?: number): Track {
+  const d = done ?? 0
+  if (!prev || d < prev.done) {
+    const start = !prev && born && born > 0 && born <= now ? born : now
+    return { start, at: now, done: d, seen: now }
+  }
+  return now - prev.seen > 3_600_000 ? { ...prev, seen: now } : prev
+}
+
+const UNIT_MS: Record<string, number> = { s: 1000, sec: 1000, m: 60_000, min: 60_000, h: 3_600_000, hr: 3_600_000, hour: 3_600_000 }
+
+/** A rate the step text states, as items per ms ("7,196/h", "31/min"), or 0. */
+export function stepRate(step: string): number {
+  const m = /([\d,]+(?:\.\d+)?)\s*\/\s*(sec|s|min|m|hour|hr|h)\b/.exec(step)
+  if (!m) return 0
+  const n = Number(m[1]!.replace(/,/g, ''))
+  return n > 0 ? n / UNIT_MS[m[2]!]! : 0
+}
+
+/**
+ * Time left for an item-count job (over FEW_STEPS steps), or '' when it can't be told. By the rate since the track's
+ * base (at least RATE_MIN_MS old), else a rate in the step text, else the average since a reported start.
+ * A job of few steps gets none: its steps take uneven time, so no estimate beats a wrong one.
+ */
+export function rateLeft(t: Track | undefined, now: number, done: number | null, total: number | null, step = '', startedAt?: number): string {
+  if (done === null || total === null || done >= total || total <= FEW_STEPS) return ''
+  const left = total - done
+  if (t && now - t.at >= RATE_MIN_MS && done > t.done) return ago((left * (now - t.at)) / (done - t.done))
+  const r = stepRate(step)
+  if (r > 0) return ago(left / r)
+  if (startedAt && done > 0 && now > startedAt) return ago((left * (now - startedAt)) / done)
+  return ''
+}
+
 /** Expands a leading `~/` to the home folder. */
 export const expandHome = (p: string, home: string) => (p === '~' ? home : p.startsWith('~/') ? home + p.slice(1) : p)
 

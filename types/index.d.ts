@@ -2,8 +2,11 @@
 export type Folded = string[]
 /** Status panel: the full status line output, colors and links removed. */
 export type Lines = string[]
-/** Why the panel or status line may show nothing: the status script's error, and the status line left off. */
-export type Health = { script: string; statusOff: string; note: string }
+/**
+ * Why the panel or status line may show nothing: the status script's error, and the status line left off. `note` is
+ * the answer to "Turn on status line", shown until `noteAt` (epoch ms) is NOTE_MS old.
+ */
+export type Health = { script: string; statusOff: string; note: string; noteAt?: number }
 /** Status panel: one todo.txt item; `line` is its 0-based line in the file. */
 export type Todo = { owner: string; text: string; done: boolean; line: number }
 /** Status panel: this session's project, the name of its to-do list (hooks/project.ts). */

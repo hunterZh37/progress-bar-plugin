@@ -6,12 +6,12 @@ import { CONN_CACHE_REL, connUrl, connName, connSummary, formatCache, parseAccou
 import { CHECKPOINT_PY } from '../hooks/checkpoint'
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
-import { PANE, maxReading, waitReason, badge, evId, fitLabel, labelCol, machineTitle, machines, maxMeter, nestRows, runCount, shortTitle, parseSections, runCard, shortAge, timeTail, slide, stripAnsi } from '../hooks/panel'
+import { PANE, maxReading, noteShows, NOTE_MS, sameName, waitReason, badge, evId, fitLabel, labelCol, machineTitle, machines, maxMeter, nestRows, runCount, shortTitle, parseSections, runCard, shortAge, timeTail, slide, stripAnsi } from '../hooks/panel'
 import { EVENTS_PY, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from '../hooks/events'
 import { REPOS_REL, parseBranches, parseCommits, webUrl } from '../hooks/github'
 import { blocker, clip, doneEvents, isRunningRow, jobMachine, keyWords, moveItem, nextPrompt, nextReady, parseCaps, parseItem, parseMode, rankTodos, ranked, rowName, shortJob, todoRows } from '../hooks/priority'
 import { fileOf, parseProjects, projectSlug, resolveProject } from '../hooks/project'
-import { eta, expandHome, line, lines, parseProgress, parseTitles, pickMeta, parseWatch, prevOf, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoItems, todoList } from '../hooks/render'
+import { FEW_STEPS, RATE_MIN_MS, eta, expandHome, line, rateLeft, stepRate, trackJob, lines, parseProgress, parseTitles, pickMeta, parseWatch, prevOf, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoItems, todoList } from '../hooks/render'
 
 const NOW = 1_800_000_000_000
 const HOME = '/home/u'
@@ -250,6 +250,97 @@ test('/progress-bar shows a watched log, and stopped when its process is gone', 
   expect((await run($, '')).text.split('\n')[0]).toBe('No running jobs. Try `/progress-bar demo`.')
 })
 
+test('a progress file with no startedAt: elapsed from the file birth, time left from the rate, not the last write', async ($, on) => {
+  const written: Record<string, string> = {}
+  const BORN = NOW - (13 * 60 + 24) * 60_000
+  mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  on('command.register', () => ({ value: { command: 'progress-bar' } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('agent.list', () => ({ value: [] as never }))
+  // Written a minute ago: the old build showed "1m" so far and a time left from that minute.
+  on('fs.list', (_, e) => ({ value: e.path === DIR ? [{ name: 'label-top-ups.json', kind: 'file', size: 10, mtimeMs: NOW - 60_000, isLink: false }] : [] }))
+  on('fs.read', (_, e) => {
+    const files: Record<string, string> = { [`${DIR}/label-top-ups.json`]: '{"done":108108,"total":201041,"step":"youth: 4,199 of 14967 done, 7,196/h"}', ...written }
+    if (files[e.path] === undefined) throw new Error('ENOENT')
+    return { value: files[e.path]! }
+  })
+  on('fs.write', (_, e) => { written[e.path] = e.text; return { value: undefined } })
+  on('fs.exists', () => ({ value: false }))
+  on('settings.read', () => ({ value: {} as never }))
+  on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: e.argv[0] === 'stat' ? `${BORN / 1000}\n` : e.argv[0] === 'uname' ? 'Darwin\n' : '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  // 92,933 left at the step's 7,196/h is 12h55m (no rate base 5 min old yet).
+  expect((await run($, '')).text.split('\n')[0]).toBe('▶ label-top-ups ███████████░░░░░░░░░ 53.8% · 108108/201041 · youth: 4,199 of 14967 done, 7,196/h · 13h24m · ETA 12h55m')
+  expect(JSON.parse(written[`${DIR}/.state/job-track.json`]!)['label-top-ups']).toEqual({ start: BORN, at: NOW, done: 108108, seen: NOW })
+})
+
+test('finished agents never linger as waiting: a handback is remembered across reloads, a long silent wait is over', async ($, on) => {
+  const written: Record<string, string> = {}
+  mock.clock(on, { now: NOW })
+  mock.env(on, { HOME })
+  on('command.register', () => ({ value: { command: 'progress-bar' } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('agent.list', () => ({ value: [
+    { id: 'done1', description: 'Rebuild finance trends', status: 'waiting' },
+    { id: 'old0', description: 'Rebuild board links', status: 'waiting' },
+    { id: 'live', description: 'Label top-ups watcher', status: 'waiting' },
+  ] as never }))
+  on('fs.list', () => ({ value: [] }))
+  const seenFile = JSON.stringify({
+    done1: { startedAt: NOW - 3_600_000, tools: 12, lastTool: 'SubagentHandback' },
+    old0: { startedAt: NOW - 9 * 3_600_000, tools: 0, lastTool: '' },
+    live: { startedAt: NOW - 9 * 3_600_000, tools: 9, lastTool: 'Bash' },
+  })
+  on('fs.read', (_, e) => {
+    if (/\.state\/seen-[^/]*\.json$/.test(e.path)) return { value: seenFile }
+    throw new Error('ENOENT')
+  })
+  on('fs.write', (_, e) => { written[e.path] = e.text; return { value: undefined } })
+  on('fs.exists', () => ({ value: false }))
+  on('settings.read', () => ({ value: {} as never }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const { text } = await run($, '')
+  expect(text.split('\n')[0]).toBe('▶ Label top-ups watcher waiting · 9h00m · 9 tools · Bash')
+  expect(text).not.toContain('Rebuild')
+  // The saved list keeps the finished one, so the next reload still knows it handed back.
+  const saved = Object.entries(written).find(([k]) => /\.state\/seen-[^/]*\.json$/.test(k))![1]
+  expect(Object.keys(JSON.parse(saved)).sort()).toEqual(['done1', 'live', 'old0'])
+})
+
+test('job tracks: start, reset, and time left from the rate since first seen', () => {
+  const t = trackJob(undefined, NOW, 100, NOW - 3_600_000)
+  expect(t).toEqual({ start: NOW - 3_600_000, at: NOW, done: 100, seen: NOW })
+  // Unknown birth: first seen. A count that went back is a new run.
+  expect(trackJob(undefined, NOW, 5).start).toBe(NOW)
+  expect(trackJob(t, NOW + 60_000, 50)).toEqual({ start: NOW + 60_000, at: NOW + 60_000, done: 50, seen: NOW + 60_000 })
+  expect(trackJob(t, NOW + 60_000, 120)).toBe(t)
+  // 100 done in the 10 min since first seen, 900 left: 1h30m.
+  expect(rateLeft(t, NOW + 10 * 60_000, 200, 1100)).toBe('1h30m')
+  // Under RATE_MIN_MS of history: the step's own rate, else the average since a known start, else nothing.
+  expect(RATE_MIN_MS).toBe(5 * 60_000)
+  expect(rateLeft(t, NOW + 60_000, 110, 1100, '60/min')).toBe('17m')
+  expect(rateLeft(t, NOW + 60_000, 110, 1100, '', NOW - 110 * 60_000)).toBe('16h39m')
+  expect(rateLeft(t, NOW + 60_000, 110, 1100)).toBe('')
+  // Few steps take uneven time: none.
+  expect(FEW_STEPS).toBe(20)
+  expect(rateLeft(t, NOW + 10 * 60_000, 6, 8, '', NOW - 13 * 3_600_000)).toBe('')
+  expect(stepRate('done, 7,196/h')).toBe(7196 / 3_600_000)
+  expect(stepRate('31/min')).toBe(31 / 60_000)
+  expect(stepRate('2021/22 grants')).toBe(0)
+})
+
+test('the id line drops a name the title already says, and the turn-on note clears after a few minutes', () => {
+  expect(sameName('Hunty: similar orgs and NTEE suggestions', 'Hunty: Similar orgs and NTEE suggestions')).toBe(true)
+  expect(sameName('Hunty: similar orgs and NTEE suggestions', 'Hunty similar orgs and NTEE suggestions')).toBe(true)
+  expect(sameName('mac-label-top-ups-2021-23', 'Mac: Mac label top-ups 2021-23')).toBe(true)
+  expect(sameName('box: train.py', 'Box: Train the model')).toBe(false)
+  expect(noteShows({ note: 'Status line on', noteAt: NOW }, NOW + NOTE_MS - 1)).toBe(true)
+  expect(noteShows({ note: 'Status line on', noteAt: NOW }, NOW + NOTE_MS)).toBe(false)
+  expect(noteShows({ note: 'Status line on' }, NOW)).toBe(false)
+})
+
 test('/progress-bar with an unknown argument prints usage', async ($, on) => {
   world(on)
   const { text } = await run($, 'nope')
@@ -379,7 +470,7 @@ test('the panel parser: sections, counts, folded headers and trailing lines', as
   expect(other).toEqual(['opus 4 · main'])
   expect(runCard(sections[1]!.rows[0]!)).toEqual({
     mark: '⚠', stuck: '12m', name: 'nightly-import', pct: 80, count: '4 of 5 steps', kind: { icon: '⚙', text: 'job' },
-    step: 'batch 4', facts: '⏱ 12m so far', maxUsed: null, waitOn: '', left: '', ran: '', elapsed: '12m',
+    step: 'batch 4', facts: '⏱ 12m so far', maxUsed: null, waitOn: '', watchedBy: '', left: '', ran: '', elapsed: '12m',
   })
   expect(runCard(sections[1]!.rows[1]!).mark).toBe('◐')
 })
@@ -410,12 +501,14 @@ test('running cards: facts, step, count and the status word left out of the name
   expect(b.facts).toBe('⏱ 3m so far   🔧 12 actions · last: Edit')
 })
 
-test('one-line card time: a real time left, else an estimate from steps, else time so far', async () => {
+test('one-line card time: a real time left, else an estimate from an item count, else time so far', async () => {
   // Labeling rows keep their reported time left.
   expect(timeTail(runCard('◐ healthcare-classify ████░░ 64.0% · 1234/2000 batches · 1h19m left · 42m · 31/min'))).toBe('1h19m left')
-  // An agent with steps and no rate: (12m / 3 done) x 5 left = ~20m.
-  expect(timeTail(runCard('◐ Build docs working ██░░ 37.5% · 3/8 · 12m · 9 tools'))).toBe('~20m left')
-  expect(timeTail(runCard('◐ Build docs working ██░░ 50.0% · 2/4 · 1h10m · 9 tools'))).toBe('~1h10m left')
+  // An item count with no rate: (12m / 30 done) x 50 left = ~20m.
+  expect(timeTail(runCard('◐ Build docs working ██░░ 37.5% · 30/80 · 12m · 9 tools'))).toBe('~20m left')
+  // Few steps take uneven time: no estimate (6 of 8 steps after 13h52m once said ~4h37m while the last step was nearly done).
+  expect(timeTail(runCard('◐ Build docs working ██░░ 37.5% · 3/8 · 12m · 9 tools'))).toBe('12m so far')
+  expect(timeTail(runCard('◐ Hunty: similar orgs ███░ 75.0% · 6/8 · codes: 15163 of 15,180 · 13h52m · 77 tools'))).toBe('13h52m so far')
   // No steps done yet, all done, or no counts: time so far, never a bare "12m".
   expect(timeTail(runCard('◐ Build docs working · 0/8 · 12m · 9 tools'))).toBe('12m so far')
   expect(timeTail(runCard('◐ Build docs working ████ 100.0% · 8/8 · 12m · 9 tools'))).toBe('12m so far')
@@ -433,6 +526,7 @@ test('running cards: Claude Max weekly use is pulled out, not the bar %', async 
   expect(maxMeter(42)).toEqual({ filled: 4, color: 'green' })
   expect(maxMeter(65)).toEqual({ filled: 7, color: 'yellow' })
   expect(maxMeter(80)).toEqual({ filled: 8, color: 'red' })
+  expect(maxMeter(48, 5)).toEqual({ filled: 2, color: 'green' })
 })
 
 test('the sliding piece moves one cell a second and wraps', async () => {
@@ -495,10 +589,12 @@ test('the panel draws sections and rows, and a header press writes folded.txt', 
   expect(await ui.find({ type: 'Text', text: /🤖/ })).toBe(undefined)
   await ui.press({ key: 'open-nightly-import' })
   expect((await ui.find({ type: 'Button', key: 'open-nightly-import' }))?.text).toMatch(/^▾ nightly-import/)
-  expect((await ui.find({ type: 'Text', text: /4 of 5 steps/ }))?.text).toBe('    4 of 5 steps')
-  expect((await ui.find({ type: 'Text', text: /▸ batch 4/ }))?.text).toBe('    ▸ batch 4')
-  expect((await ui.find({ type: 'Text', text: /so far/ }))?.text).toBe('    ⏱ 12m so far')
-  expect((await ui.find({ type: 'Text', text: /⚙  job/ }))?.text).toBe('    nightly-import   ⚙  job')
+  // Details sit in a box indented 4, so long text wraps under its indent, not back to column 0.
+  expect((await ui.find({ type: 'Text', text: /4 of 5 steps/ }))?.text).toBe('4 of 5 steps')
+  expect((await ui.find({ type: 'Text', text: /^batch 4$/ }))?.text).toBe('batch 4')
+  expect((await ui.find({ type: 'Text', text: /so far/ }))?.text).toBe('⏱ 12m so far')
+  // The id says nothing the title already says: the badge alone.
+  expect((await ui.find({ type: 'Text', text: /⚙  job/ }))?.text).toBe('⚙  job')
   expect(await ui.find({ type: 'Text', text: /🤖/ })).toBe(undefined)
   await ui.press({ key: 'open-nightly-import' })
   expect(await ui.find({ type: 'Text', text: /4 of 5 steps/ })).toBe(undefined)
@@ -509,7 +605,7 @@ test('the panel draws sections and rows, and a header press writes folded.txt', 
   await ui.unmount()
 })
 
-test('the panel draws an indeterminate bar without a %, and one Claude Max meter in the top right corner', async ($, on) => {
+test('the panel draws an indeterminate bar without a %, and one compact usage meter at the top right', async ($, on) => {
   const full = ['▾ ▶ RUNNING', '  ◐ Build docs working · 3m · 12 tools · Edit', '  ◓ orgs-judge ███░░░░░░░ 30.0% · 3/10 · 7d 62%', '  ◑ orgs-verify ██░░ 20.0% · Max 7-day used 55%'].join('\n')
   const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n' }
   panelWorld(on, files, full)
@@ -518,13 +614,22 @@ test('the panel draws an indeterminate bar without a %, and one Claude Max meter
   expect((await ui.find({ type: 'Text', text: /^███$/ }))?.text).toBe('███')
   expect(await ui.find({ type: 'Text', text: /steps not reported/ })).toBe(undefined)
   await ui.press({ key: 'open-build-docs' })
-  expect((await ui.find({ type: 'Text', text: /steps not reported/ }))?.text).toBe('    steps not reported')
-  expect((await ui.find({ type: 'Text', text: /Claude Max/ }))?.text).toBe('Claude Max this week  ')
-  expect((await ui.find({ type: 'Text', text: /% used/ }))?.text).toBe('  62% used')
-  expect((await ui.find({ type: 'Text', text: /^█{6}$/ }))?.text).toBe('█'.repeat(6))
+  expect((await ui.find({ type: 'Text', text: /steps not reported/ }))?.text).toBe('steps not reported')
+  // At 52 columns the meter ("Max 62% ▰▰▰▱▱ 7d", 16) does not fit after the tabs (44): its own line, right-aligned.
+  const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  const at = texts.indexOf('Max ')
+  expect(texts.slice(at - 1, at + 4)).toEqual([' '.repeat(52 - 16), 'Max ', '62% ', '▰▰▰', '▱▱ 7d'])
+  // Above the tabs, not after them.
+  expect(at).toBeLessThan(texts.indexOf(' │ '))
   await ui.press({ key: 'open-orgs-judge' })
-  expect((await ui.find({ type: 'Text', text: /3 of 10 steps/ }))?.text).toBe('    3 of 10 steps')
+  expect((await ui.find({ type: 'Text', text: /3 of 10 steps/ }))?.text).toBe('3 of 10 steps')
   await ui.unmount()
+  // A wider pane: the meter sits on the tab row's right end.
+  const wide = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 80 } })
+  const wt = (await wide.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(wt.indexOf('Max ')).toBeGreaterThan(wt.lastIndexOf(' │ '))
+  expect(wt[wt.indexOf('Max ') - 1]).toBe(' '.repeat(80 - 44 - 16))
+  await wide.unmount()
 })
 
 test('/progress-bar panel on and off: the flag file, and setup first', { options: { openPanel: false, statusLine: false } }, async ($, on) => {
@@ -901,21 +1006,21 @@ test('the panel: titles, ids with badges, unlocks, a nested child, waiting on an
   expect(texts.some(t => /unlocks/.test(t))).toBe(false)
   for (const k of ['open-big-batch', 'open-box-train-py', 'open-other']) await ui.press({ key: k })
   texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  expect(texts).toContain('    big-batch   🤖  Claude agent')
-  expect(texts).toContain('    6 of 8 steps')
-  expect(texts).toContain('    unlocks: the weekly report')
-  expect(texts).toContain('    ▸ waiting on: Child step')
+  expect(texts).toContain('🤖  Claude agent')
+  expect(texts).toContain('6 of 8 steps')
+  expect(texts).toContain('unlocks: the weekly report')
+  expect(texts).toContain('waiting on: Child step')
   // The child shows under its open parent, marked ↳, with its own one line.
   expect(await buttons()).toContain(`▾ ${'Big batch'.padEnd(22)}`)
   expect(await buttons()).toContain(`▸ ${'Child step'.padEnd(18)}`)
   expect(texts).toContain('      ↳ ')
   // A busy process: no bar at 540%, cores and run time instead.
-  expect(texts).toContain('    box: train.py   🖥  on box')
+  expect(texts).toContain('box: train.py   🖥  on box')
   expect(texts.some(t => /540/.test(t))).toBe(false)
-  expect(texts).toContain('    ⚙ 5.4 cores busy   ⏱ 12:50 running')
-  expect(texts).toContain('    unlocks: better search')
+  expect(texts).toContain('⚙ 5.4 cores busy   ⏱ 12:50 running')
+  expect(texts).toContain('unlocks: better search')
   // The grouper already said what it waits on.
-  expect(texts).toContain('    ▸ waiting on: Child job')
+  expect(texts).toContain('waiting on: Child job')
   // The open details never repeat the % or the time left.
   expect(texts.filter(t => /%/.test(t)).every(t => /^\s*\d+%$/.test(t))).toBe(true)
   // DONE: one dim line for a row at 100%, titles for finished jobs.
@@ -1015,45 +1120,52 @@ test('running jobs: one aligned line each, a press opens the details', async ($,
   await ui.press({ key: 'open-hunty-rebuild' })
   expect(await lines()).toEqual([`▾ ${'hunty-rebuild'.padEnd(14)}`, '▸ hunty: em…', '▸ a-much-longer…'])
   texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  expect(texts).toContain('    2 of 5 steps')
+  expect(texts).toContain('2 of 5 steps')
   expect(texts.filter(t => /1h left/.test(t))).toEqual(['  1h left'])
   expect(texts.filter(t => /40%/.test(t))).toEqual(['  40%'])
   expect(texts).toContain('  3:10 running')
   await ui.unmount()
 })
 
-test('waiting rows: the running card with a ⏸ mark and a short reason, one line at 60 columns', async ($, on) => {
+test('waiting rows: no bar, one line "⏸ <title> · waiting on <what>", a press opens the details', async ($, on) => {
   const row = 'Hunty Schedule O places grant rematch ████████░░ 75.0% · 6/8 · graded 50/50 x4, waiting on 2021-22 grant adds before load · 1h08m · 88 tools'
   expect(waitReason(runCard(row), row)).toBe('2021-22 grant adds before load')
   expect(waitReason(runCard('deploy waits for build · 1m'))).toBe('build')
   expect(waitReason(runCard('arts-verify · waiting on: Arts labels'))).toBe('Arts labels')
   expect(waitReason(runCard('import pending'))).toBe('')
-  const full = ['▾ ⏸ WAITING', `  ${row}`].join('\n')
+  const full = ['▾ ⏸ WAITING', `  ${row}`, '  Mac: rebuild trends waiting · 3h · 4 tools'].join('\n')
   const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [TODO_FILE]: '[mac]\nx a\n[hunty]\nx b\n' }
   panelWorld(on, files, full)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  for (const cols of [60, 90]) {
-    const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: cols } })
-    const key = 'open-hunty-schedule-o-places-grant-rematch'
-    const btn = (await ui.find({ type: 'Button', key }))?.text ?? ''
-    expect(btn).toMatch(/^▸ Hunty: Schedule O/)
-    const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
-    expect(texts).toContain('  ⏸ ')
-    expect(texts).toContain('  75%')
-    expect(texts.some(t => t.includes('█'.repeat(8)))).toBe(true)
-    const note = texts.find(t => /^  (waiting|20)/.test(t)) ?? ''
-    // One line: mark, label, 10-cell bar, % and the note fit the pane width.
-    expect(4 + btn.length + 2 + 10 + 5 + note.length).toBeLessThanOrEqual(cols)
-    expect(texts.some(t => /graded 50\/50/.test(t))).toBe(false)
-    if (cols === 90) expect(note).toBe('  waiting: 2021-22 grant adds be…')
-    else expect(note).toBe('  2021-22 gran…')
-    await ui.press({ key })
-    const open = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
-    expect(open).toContain('    6 of 8 steps')
-    expect(open).toContain('    ▸ graded 50/50 x4, waiting on 2021-22 grant adds before load')
-    await ui.press({ key })
-    await ui.unmount()
-  }
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 60 } })
+  const key = 'open-hunty-schedule-o-places-grant-rematch'
+  expect((await ui.find({ type: 'Button', key }))?.text).toBe('Hunty: Schedule O places grant rematch')
+  let texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(texts.filter(t => t === '  ⏸ ').length).toBe(2)
+  expect(texts).toContain(' · waiting on 2021-22 grant adds before load')
+  expect(texts).toContain(' · waiting')
+  // No bar, no % on a waiting row.
+  expect(texts.some(t => /[█░]/.test(t) || /^\s*\d+%$/.test(t))).toBe(false)
+  await ui.press({ key })
+  texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(texts).toContain('6 of 8 steps')
+  expect(texts).toContain('graded 50/50 x4, waiting on 2021-22 grant adds before load')
+  await ui.unmount()
+})
+
+test('section hotkeys follow the display order, and a watcher shows on the job it watches', async ($, on) => {
+  const full = ['▾ ▶ RUNNING', '  ◐ label-top-ups ██░░ 40.0% · 2/5 · watched by: Label top-ups watcher', '▾ ⏸ WAITING', '  deploy waits for build · 1m', '▾ ✔ DONE', '  old · finished 10:12'].join('\n')
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [TODO_FILE]: '[mac]\nrun import\n' }
+  panelWorld(on, files, full)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  const heads = (await ui.findAll({ type: 'Button' })).filter(b => /^h-/.test(b.key ?? ''))
+  expect(heads.map(b => [b.key, (b as unknown as { props?: { hotkey?: string } }).props?.hotkey ?? (b as unknown as { hotkey?: string }).hotkey])).toEqual([['h-todo', '1'], ['h-running', '2'], ['h-waiting', '3'], ['h-done', '4']])
+  await ui.press({ key: 'open-label-top-ups' })
+  expect((await ui.find({ type: 'Text', text: /watched by/ }))?.text).toBe('watched by Label top-ups watcher')
+  // The step stays clean: the watcher is not part of it.
+  expect(await ui.find({ type: 'Text', text: /^watched by: / })).toBe(undefined)
+  await ui.unmount()
 })
 
 test('the RUNNING count: top-level lines, nested ones noted', async () => {
@@ -1164,7 +1276,10 @@ test('to-do rows: one line each, ▶ next, ⏸ blocked, one waits for line per r
 test('the Max meter keeps the last reading when no job reports one', () => {
   const at = new Date(2026, 10, 4, 12, 39).getTime()
   expect(maxReading(30, null, at)).toEqual({ used: 30, asOf: '', save: true })
-  expect(maxReading(null, { pct: 22, at }, at + 60_000)).toEqual({ used: 22, asOf: 'as of 12:39', save: false })
+  // A fresh reading (under 35 min) shows no time, an older one says when it was read.
+  expect(maxReading(null, { pct: 22, at }, at + 60_000)).toEqual({ used: 22, asOf: '', save: false })
+  expect(maxReading(null, { pct: 22, at }, at + 34 * 60_000).asOf).toBe('')
+  expect(maxReading(null, { pct: 22, at }, at + 36 * 60_000)).toEqual({ used: 22, asOf: 'as of 12:39', save: false })
   expect(maxReading(null, { pct: 22, at }, at + 8 * 86_400_000).used).toBe(null)
   expect(maxReading(null, null, at).used).toBe(null)
 })

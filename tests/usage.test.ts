@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { meterLabel } from '../hooks/panel'
+import { meterLabel, meterOnTabRow, meterText, tabsWidth } from '../hooks/panel'
 import { PROBE_SCRIPT, USAGE_EVERY, parsePlan, parseProbe, parseSaved, probeDue, probeWith } from '../hooks/usage'
 import type { ProbeIo } from '../hooks/usage'
 
@@ -38,11 +38,18 @@ test('probeDue: only a reading over 30 min old, and not while another session pr
   expect(parseSaved('{"pct":3}')).toBeNull()
 })
 
-test('meterLabel: named by the plan, Max when unknown', () => {
-  expect(meterLabel('Team')).toBe('Claude Team this week')
-  expect(meterLabel()).toBe('Claude Max this week')
-  expect(meterLabel('x;y')).toBe('Claude Max this week')
-  expect(meterLabel('Team').match(/[;—]/)).toBeNull()
+test('meterLabel and meterText: named by the plan, Max when unknown, compact, the time only when old', () => {
+  expect(meterLabel('Team')).toBe('Team')
+  expect(meterLabel()).toBe('Max')
+  expect(meterLabel('x;y')).toBe('Max')
+  expect(meterText('Team', 48, '')).toBe('Team 48% ▰▰▱▱▱ 7d')
+  expect(meterText(undefined, 85, 'as of 07:38')).toBe('Max 85% ▰▰▰▰▱ 7d · as of 07:38')
+  expect(meterText('Team', 48, 'as of 07:38').match(/[;—]/)).toBeNull()
+  // On the tab row only when it fits with two spaces to spare.
+  expect(tabsWidth(['▌List', ' Connectors !2', ' GitHub', ' Log', ' Chat'])).toBe(47)
+  expect(meterOnTabRow(47, 18, 80)).toBe(true)
+  expect(meterOnTabRow(47, 18, 66)).toBe(false)
+  expect(meterOnTabRow(47, 18, 67)).toBe(true)
 })
 
 test('PROBE_SCRIPT: no API key, default login, empty folder, cheapest call, never nests', () => {

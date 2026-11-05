@@ -67,6 +67,20 @@ class Group(unittest.TestCase):
         seen = json.loads(self.g.read(self.g.state_file()))
         self.assertEqual(list(seen), ['build'])
 
+    def test_a_waiting_watcher_folds_into_the_job_it_watches(self):
+        self.write('mac-label-top-ups-2021-23.json', json.dumps({'done': 5, 'total': 9, 'title': 'Mac label top-ups 2021-23'}))
+        out = self.run_('▶ mac-label-top-ups-2021-23 ██░░ 53.8% · 5/9 · youth · 8m\n'
+                        '▶ Mac label top-ups watcher waiting · 13h19m · 9 tools · Bash\n'
+                        '▶ Hunty: rebuild trends waiting · 9h · 4 tools\n')
+        self.assertEqual(out, ['▾ ▶ RUNNING',
+                               '  ◐ mac-label-top-ups-2021-23 ██░░ 53.8% · 5/9 · youth · 8m · watched by: Mac label top-ups watcher',
+                               '▾ ⏸ WAITING', '  Hunty: rebuild trends waiting · 9h · 4 tools'])
+        # A watcher whose job is not running, or a waiting row that is not a watcher, stays in WAITING.
+        out = self.run_('▶ Deploy watcher waiting · 1m · 2 tools\n', T0 + 1)
+        self.assertEqual(out[:2], ['▾ ⏸ WAITING', '  Deploy watcher waiting · 1m · 2 tools'])
+        line = self.g.main(io.StringIO('▶ import-x ██░░ 1/9\n▶ import x monitor waiting · 1m\n'), T0 + 2, summary=True)[0]
+        self.assertNotIn('waiting', line)
+
     def test_stuck_prefix_is_not_part_of_a_name(self):
         self.assertEqual(self.g.name_of('\033[33m⚠ stuck 12m\033[0m build ████ 40% · 2/5'), 'build')
         self.assertEqual(self.g.name_of('◐ ⚠ stuck 1h05m deploy · 3/4'), 'deploy')

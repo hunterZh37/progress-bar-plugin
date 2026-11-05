@@ -11,12 +11,13 @@ import { resolveHome } from './home'
 import { USAGE_CHECK, probeUsage } from './usage'
 import { macClicks, parseMacClicks } from './mac'
 import { checkpointCommand, noteStatusLine, panelCommand, registerPanel, startPanel } from './panel'
-import { FRESH_MS, eta, expandHome, lines, parseProgress, parseWatch, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
+import { FRESH_MS, eta, expandHome, rateLeft, trackJob, lines, parseProgress, parseWatch, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
 import { PROJECTS_REL, gitRootOf, resolveProject, sessionProject } from './project'
 import { LONG_BASH_MS, PROGRESS_TOOL, endBackground, endShell, mirrorTasks, startShell, taskCreated, taskList, taskUpdated, touchShells, writeReport } from './report'
 import type { Task } from './report'
 import { PROJECT_LINE, pickOwner, routeOf, sessionKeyOf as keyOf } from './route'
-import type { Progress, Row } from './render'
+import type { Progress, Row, Track } from './render'
+import { isDarwin } from './mac'
 
 const WATCH = '.watch.json'
 // Data files in ~/.claude-progress that are never jobs.
@@ -43,7 +44,8 @@ async function watchRow($: EngineInterface, h: string, dir: string, name: string
   const finished = state === 'done'
   // A running job shows while its process lives or its log keeps changing; an ended one for FRESH_MS after its last write.
   if (!(alive === true && !finished) && now - st.mtimeMs > FRESH_MS) return null
-  const startedAt = w.startedAt ?? st.mtimeMs
+  // No startedAt: trackRows starts it when first seen, never at the log's last write.
+  const startedAt = w.startedAt ?? 0
   const label = w.label ?? name.slice(0, -WATCH.length)
   return { id: `watch:${label}`, description: label, status: 'running', startedAt, tools: 0, lastTool: '', done: p.done, total: p.total, step: p.step, state, eta: w.startedAt ? eta(now - w.startedAt, p.done, p.total) : '' }
 }
@@ -74,6 +76,28 @@ type Seen = { startedAt: number; tools: number; lastTool: string }
 
 const seen = new Map<string, Seen>()
 const dirOf = (h: string) => `${h}/.claude-progress`
+// A background agent that sits waiting with no tool call seen for this long is over: its report went back before a
+// plugin reload, so the reload never saw its SubagentHandback.
+const STALE_WAIT_MS = 30 * 60_000
+const TRACK_REL = '.state/job-track.json'
+const TRACK_KEEP_MS = 2 * 86_400_000
+
+/** job-track.json: each job's real start and rate base (render.ts Track). Shared by every session on this machine. */
+async function readTracks($: EngineInterface, dir: string): Promise<Record<string, Track>> {
+  try {
+    const t = JSON.parse(String(await $.fs.read(`${dir}/${TRACK_REL}`))) as Record<string, Track>
+    return t && typeof t === 'object' ? t : {}
+  } catch { return {} }
+}
+
+/** A file's birth time in ms (stat %B on macOS, %W on Linux), or 0 when the system does not keep one. */
+async function bornOf($: EngineInterface, path: string): Promise<number> {
+  try {
+    const r = await $.process.run((await isDarwin($)) ? ['stat', '-f', '%B', path] : ['stat', '-c', '%W', path], { timeoutMs: 3000 })
+    const s = Number(r.stdout.trim())
+    return r.exitCode === 0 && s > 0 ? s * 1000 : 0
+  } catch { return 0 }
+}
 
 async function readP($: EngineInterface, path: string): Promise<Progress | null> {
   try { return parseProgress(String(await $.fs.read(path))) } catch { return null }
@@ -106,13 +130,16 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
   let agents: Awaited<ReturnType<typeof $.agent.list>> = []
   try { agents = await $.agent.list() } catch { agents = [] }
   const rows: Row[] = []
+  const liveIds: string[] = []
   for (const a of agents) {
     if (!LIVE.has(a.status)) continue
     const s = seen.get(a.id) ?? { startedAt: now, tools: 0, lastTool: '' }
     seen.set(a.id, s)
+    liveIds.push(a.id)
     // An agent that handed its report back is finished, even while the harness still lists it as waiting.
     ownJobs.add(slug(a.description))
     if (s.lastTool === 'SubagentHandback') continue
+    if (a.status === 'waiting' && s.tools === 0 && now - s.startedAt > STALE_WAIT_MS) continue
     const p = h ? await readP($, `${dir}/${slug(a.description)}.json`) : null
     rows.push({ id: a.id, description: a.description, status: a.status, startedAt: s.startedAt, tools: s.tools, lastTool: s.lastTool, done: p?.done ?? null, total: p?.total ?? null, step: p?.step ?? '' })
   }
@@ -126,7 +153,8 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
   // Remember this session's agents (start time, tools) so a plugin reload keeps them, and claim their progress files.
   // The claims file's first line names this session's project, so other sessions know where a cwd-owned job shows.
   try {
-    const live = Object.fromEntries(rows.map(r => [r.id, seen.get(r.id)!]))
+    // Every live agent, the finished ones too, so a reload still knows which ones handed their report back.
+    const live = Object.fromEntries(liveIds.map(id => [id, seen.get(id)!]))
     await $.fs.write(`${dir}/.state/seen-${key}.json`, JSON.stringify(live))
     await $.fs.write(`${dir}/.state/claims-${key}.txt`, [`${PROJECT_LINE}${project}`, ...used].join('\n'))
   } catch { /* next poll */ }
@@ -170,9 +198,36 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
     if (route === 'skip') continue
     const id = `file:${name}`
     if (route === 'shared') shared.add(id)
-    rows.push({ id, description: name, status: 'running', startedAt: p.startedAt ?? f.mtimeMs, tools: 0, lastTool: '', done: p.done, total: p.total, step: p.step })
+    rows.push({ id, description: name, status: 'running', startedAt: p.startedAt ?? 0, tools: 0, lastTool: '', done: p.done, total: p.total, step: p.step })
   }
+  await trackRows($, dir, rows, now)
   return { rows, now, shared }
+}
+
+/**
+ * Real elapsed time and time left for every row with a count: a progress file without its own startedAt starts at
+ * the file's birth (else when first seen), never at its last write. Time left comes from the rate (rateLeft).
+ */
+async function trackRows($: EngineInterface, dir: string, rows: Row[], now: number) {
+  const counted = rows.filter(r => r.done !== null || !r.startedAt)
+  if (!counted.length) return
+  const tracks = await readTracks($, dir)
+  let changed = false
+  for (const r of counted) {
+    const k = slug(r.description)
+    const prev = tracks[k]
+    const born = !prev && r.id.startsWith('file:') && !r.startedAt ? await bornOf($, `${dir}/${k}.json`) : 0
+    const t = trackJob(prev, now, r.done, born)
+    if (t !== prev) { tracks[k] = t; changed = true }
+    // A start the job reported, or its file's birth, can average a rate. First seen cannot (it was already part done),
+    // and an agent's start is the agent's, not its count's.
+    const base = r.startedAt || (t.start < t.at ? t.start : 0)
+    if (!r.startedAt) r.startedAt = t.start
+    const left = rateLeft(t, now, r.done, r.total, r.step, /^(file|watch):/.test(r.id) && base ? base : undefined)
+    if (left) r.eta = left
+  }
+  for (const [k, t] of Object.entries(tracks)) if (now - t.seen > TRACK_KEEP_MS) { delete tracks[k]; changed = true }
+  if (changed) await $.fs.write(`${dir}/${TRACK_REL}`, JSON.stringify(tracks)).catch(() => undefined)
 }
 
 /** Folds or unfolds status line sections; the grouped status line shows a folded one as "▸ NAME (count)". */

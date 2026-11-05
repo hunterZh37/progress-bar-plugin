@@ -101,7 +101,7 @@ Easiest: Claude calls the plugin's `progress_report` tool (title, why, done, tot
 | --- | --- |
 | `done`, `total` | Draw the bar. Leave them out and the line says `working` |
 | `step` | A few words on the current step |
-| `startedAt` | Optional, ms. The file's time otherwise |
+| `startedAt` | Optional, ms. Otherwise the file's birth time, else when the plugin first saw it |
 | `title` | Optional plain-language name. The job's line shows the part before ` · ` or `: `, and the open card shows the id and badge. The part before ` · ` names the job in the Log tab and in `waiting on:` |
 | `why` | Optional. What the job unlocks, shown dim as `unlocks: …` |
 | `parent` | Optional slug of the job this one is part of. While both run, this job shows under the parent's line when the parent is open, marked `↳` |
@@ -273,47 +273,54 @@ The status line then reads:
 
 - **Runs the script:** the panel runs `~/.claude/progress-bar/statusline.sh` with `PB_FULL=1` every second while it is open. The first session writes that script, and `panel on` refreshes it and `group.py` and keeps your chained status line.
 - **Never blank:** when the script fails, or prints nothing but an error, the panel shows the reason (for example `Status script failed (exit 1): <first stderr line>`). A pane that cannot draw says why instead of nothing.
-- **Fold:** press a header, or its hotkey (`1` to-do, `2` running, `3` done, `4` waiting, `5` problems). It writes `~/.claude-progress/.state/folded.txt`, the same file `/progress-bar fold` uses.
+- **Fold:** press a header, or its hotkey. Hotkeys count `1`, `2`, `3`... in the order the sections show (to-do, problems, running, waiting, done, whichever are there). It writes `~/.claude-progress/.state/folded.txt`, the same file `/progress-bar fold` uses.
 - **On by default:** the first session writes `~/.claude-progress/.state/panel-on`. With that file the pane opens at session start and the status line prints the summary. `panel off` deletes it, writes `.state/panel-off` so the default never turns it back on, and closes the pane. `panel on` undoes that. With **Open the Status panel** off in `/config`, nothing is written and `/progress-bar` opens it once.
 - **To-do menu:** click a to-do for Done, Up, Down, Start (a ready machine item), Delete or Move back to to-do (a checked-off one). It edits this project's list, on the line that still holds that item's text, so a line added since the panel drew never hits the wrong item. TO-DO lists open items only. Checked-off ones move to DONE under **Checked-off to-dos**, after finished jobs, and count there.
 - **Rows:** to-dos one per line under each owner, running jobs one line each, a press opening the details (see **Running cards**), done jobs dimmed with their finish time.
+- **Status line on:** after **▶ Turn on status line**, the answer (`Status line on: ...`) shows for 3 minutes, then clears.
 - **Tabs:** `▌List  │   Connectors  │   GitHub  │   Log`, the shown one marked `▌`. **List** (the default) shows the sections above. **Connectors** shows your connectors, its label adding `!N` when N need attention. **GitHub** shows your repos. **Log** shows the events log, its label adding `!N` for unseen errors.
 
 ## Running cards
 
 Each RUNNING job in the Status panel is one line: title, bar, percent and time left. The bars line up in one column. Press a title to open its card with the details, press it again to close it.
 
-WAITING jobs use the same one-line card, with a dim yellow `⏸` in place of the spinner and a dim `waiting: <reason>` note (the text after "waiting on" or "waiting" in its step), cut with `…` so the line never wraps. Press it for the same details card. Machine labels (`Mac:`, `Hunty:`) show there too.
+WAITING jobs draw no bar: one line, `⏸ <title> · waiting on <reason>` (the text after "waiting on" or "waiting" in its step), or `· waiting` with no reason, cut with `…`. Press the title for the same details card.
+
+- **Finished agents leave:** an agent that handed its report back never shows as waiting, even after a plugin reload (the plugin remembers it). An agent the harness still lists as waiting with no tool call seen for 30 minutes is over too.
+- **Watchers fold in:** a waiting agent whose name says `watcher`, `watch` or `monitor`, and whose other words name a running job (`Mac label top-ups watcher` and `mac-label-top-ups-2021-23`), leaves WAITING. Its job's card says `watched by Mac label top-ups watcher`.
 
 ```
+▌List │ Connectors │ GitHub │ Log │ Chat           Max 62% ▰▰▰▱▱ 7d
+
 ◐ ▾ Health care labels       ████████░░  64%  1h19m left
     healthcare-classify   🏷  labeling
     1,234 of 2,000 batches
-    ▸ scoring
+    scoring
     ⏱ 42m so far   ⚡ 31/min
-    unlocks: the health care filter
+    unlocks: the health care filter, wrapped under
+    its indent when it is long
 ◓ ▾ Release prep             ████████░░  75%  waiting on Train the model
-    release-prep   🤖  Claude agent
+    🤖  Claude agent
     6 of 8 steps
     ⏱ 22m so far   🔧 52 actions
       ↳ ▸ Train the model    ░░███░░░░░       12:50 running
 ⚠ ▸ Nightly import           ████████░░  80%  ⚠ stuck 14m
-
-Claude Max this week  ██████░░░░  62% used
 ```
 
-- **Usage meter:** `Claude Max this week` sits in the panel's top right corner on every tab, even with nothing running. It reads `Max 7-day used N%` (or `7d N%`) from running lines. With no job reporting it, the last reading stays for up to 7 days with its time, like `22% used · as of 12:39` (saved in `~/.claude-progress/.state/max-usage.json`).
+- **Usage meter:** a compact `Team 48% ▰▰▱▱▱ 7d` (the plan's name, `Max` when unknown) sits at the right end of the tab row on every tab, even with nothing running. In a pane too narrow for both it gets its own line above the tabs, right-aligned. It reads `Max 7-day used N%` (or `7d N%`) from running lines. With no job reporting it, the last reading stays for up to 7 days (saved in `~/.claude-progress/.state/max-usage.json`). Once that reading is over 35 minutes old it adds its time, like `· as of 12:39`.
 - **Fresh every 30 min:** when the saved reading is over 30 minutes old, the plugin takes its own. At session start and every 5 minutes it checks the age. One session per machine does the check (a lock folder, `.state/max-usage.probe`).
   - **How:** one tiny Haiku call, `claude -p` with `--tools ""`, `--strict-mcp-config`, `--setting-sources ""` and `--no-session-persistence`, run in an empty temp folder. It reads the 7-day and 5-hour use from the reply's rate limit event.
   - **Login only:** it uses your default login. `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `CLAUDE_CONFIG_DIR` are unset for the call, and a run that reports an API key is thrown away. It counts toward your plan's use, about 3.5k tokens a call (about $0.0006 at API prices), so about 48 calls a day at most.
-  - **Plan name:** `claude auth status` gives the plan, so the meter reads `Claude Team this week`, `Claude Pro this week` and so on. No token is read.
+  - **Plan name:** `claude auth status` gives the plan, so the meter reads `Team`, `Pro` and so on. No token is read.
   - **Failure:** offline or logged out, the old reading stays and nothing is shown.
 - **Count:** the RUNNING header counts top-level lines and notes nested ones, as `RUNNING  4 (+3 sub-jobs)`.
 - **Machine:** each line starts with its machine, like `Hunty: Similar orgs` or `Mac: Health care`. Remote machines come from `<host>: name` rows and the to-do headings. The local one is the `[mac]` or `[local]` heading. With no remote machine, lines show the plain title.
-- **Line:** a mark, `▸ <short title>`, a 10-cell bar, the percent, then one dim note: `N left`, the run time, `Nm so far`, `waiting on X`, or a yellow `⚠ stuck Nm`. The note is cut with `…` to fit; the bar never wraps. A job that reports steps but no time left (an agent) shows an estimate, `~Nm left`, from its time so far per step done.
+- **Line:** a mark, `▸ <short title>`, a 10-cell bar, the percent, then one dim note: `N left`, the run time, `Nm so far`, `waiting on X`, or a yellow `⚠ stuck Nm`. The note is cut with `…` to fit, and the bar never wraps.
+- **Time so far:** from the job's real start: `startedAt` in its progress file, else the file's birth time, else when the plugin first saw it (kept in `~/.claude-progress/.state/job-track.json`). Never from the file's last write.
+- **Time left:** a reported time left wins. An item count (over 20) gets one from its rate: items done since the plugin first saw it over the time since (once that is 5 minutes old), else a rate in its step (`7,196/h`), else its average since a known start. A job of 20 steps or fewer gets no estimate, since its steps take uneven time and no estimate beats a wrong one.
 - **Short title:** `title` from the progress file or `titles.txt`, cut at ` · ` or `: `. A remote job keeps `<host>: name` whole. Without a title the job id is used.
 - **Aligned bars:** the title column is 14 to 34 characters wide by pane width, keeping 13 columns for the note (fewer in a pane under 37). Longer titles end in `…`.
-- **Open card:** the job id and kind badge, `a of b steps` (or `batches`, or `steps not reported`), `▸ step`, the facts and `unlocks: …`. It never repeats the percent or the time left. Open cards stay open while the session runs.
+- **Open card:** the kind badge, `a of b steps` (`a of b items` over 20, or `batches`, or `steps not reported`), the step, the facts, a watcher and `unlocks: …`. Each line wraps under its own indent. The job id shows before the badge only when it says something the title does not (any case, machine prefix left out), and the full title shows there when the line cut it. It never repeats the percent or the time left. Open cards stay open while the session runs.
 - **Children:** a job whose `parent` is also running shows under the parent's line, marked `↳`, only while the parent is open. One level only: a parent that has a running parent of its own keeps its own line.
 - **Remote jobs:** a `<host>: name` job without a `parent` nests under the one running job whose id starts with `<host>-` (such as `gpu-box: train.py` under `gpu-box-train`). With none or several such jobs it keeps its own line.
 - **Waiting on:** a parent whose numbers have not moved is not stuck while a child runs or changed in the last 10 minutes. Its line reads `waiting on <child title>` instead of `⚠ stuck`. The grouper does the same in the status line.
@@ -322,7 +329,7 @@ Claude Max this week  ██████░░░░  62% used
 - **Name:** a trailing status word (`working`, `running`, `pending`, `waiting`, `starting`) is left out.
 - **No percent:** a 3-block piece slides along the bar, so it still reads as working.
 - **Facts:** `⚙ N cores busy`, `⏱ 12:50 running`, `⏱ Y so far`, `⚡ N/min`, `🔧 N actions · last: Tool`.
-- **Usage meter:** one shared meter in the top right corner of every tab, above the tab bar, from a row detail `7d N%` or `Max 7-day used N%` (the highest one). Green under 50%, yellow under 80%, red above.
+- **Usage meter:** one shared meter on the tab row (or above it in a narrow pane), from a row detail `7d N%` or `Max 7-day used N%` (the highest one). Green under 50%, yellow under 80%, red above.
 - **Done at 100%:** a row that reached 100% but still reports shows under DONE as one dim line, `✓ <title>  finishing · 7/7`, without a bar.
 
 ## Log tab
