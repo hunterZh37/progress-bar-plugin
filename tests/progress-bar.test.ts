@@ -509,7 +509,7 @@ test('the panel draws sections and rows, and a header press writes folded.txt', 
   await ui.unmount()
 })
 
-test('the panel draws an indeterminate bar without a %, and one Claude Max meter under RUNNING', async ($, on) => {
+test('the panel draws an indeterminate bar without a %, and one Claude Max meter in the top right corner', async ($, on) => {
   const full = ['▾ ▶ RUNNING', '  ◐ Build docs working · 3m · 12 tools · Edit', '  ◓ orgs-judge ███░░░░░░░ 30.0% · 3/10 · 7d 62%', '  ◑ orgs-verify ██░░ 20.0% · Max 7-day used 55%'].join('\n')
   const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n' }
   panelWorld(on, files, full)
@@ -519,7 +519,7 @@ test('the panel draws an indeterminate bar without a %, and one Claude Max meter
   expect(await ui.find({ type: 'Text', text: /steps not reported/ })).toBe(undefined)
   await ui.press({ key: 'open-build-docs' })
   expect((await ui.find({ type: 'Text', text: /steps not reported/ }))?.text).toBe('    steps not reported')
-  expect((await ui.find({ type: 'Text', text: /Claude Max/ }))?.text).toBe('  Claude Max this week  ')
+  expect((await ui.find({ type: 'Text', text: /Claude Max/ }))?.text).toBe('Claude Max this week  ')
   expect((await ui.find({ type: 'Text', text: /% used/ }))?.text).toBe('  62% used')
   expect((await ui.find({ type: 'Text', text: /^█{6}$/ }))?.text).toBe('█'.repeat(6))
   await ui.press({ key: 'open-orgs-judge' })

@@ -302,7 +302,7 @@ WAITING jobs use the same one-line card, with a dim yellow `⏸` in place of the
 Claude Max this week  ██████░░░░  62% used
 ```
 
-- **Usage meter:** `Claude Max this week` reads `Max 7-day used N%` (or `7d N%`) from running lines. With no job reporting it, the last reading stays for up to 7 days with its time, like `22% used · as of 12:39` (saved in `~/.claude-progress/.state/max-usage.json`).
+- **Usage meter:** `Claude Max this week` sits in the panel's top right corner on every tab, even with nothing running. It reads `Max 7-day used N%` (or `7d N%`) from running lines. With no job reporting it, the last reading stays for up to 7 days with its time, like `22% used · as of 12:39` (saved in `~/.claude-progress/.state/max-usage.json`).
 - **Fresh every 30 min:** when the saved reading is over 30 minutes old, the plugin takes its own. At session start and every 5 minutes it checks the age. One session per machine does the check (a lock folder, `.state/max-usage.probe`).
   - **How:** one tiny Haiku call, `claude -p` with `--tools ""`, `--strict-mcp-config`, `--setting-sources ""` and `--no-session-persistence`, run in an empty temp folder. It reads the 7-day and 5-hour use from the reply's rate limit event.
   - **Login only:** it uses your default login. `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `CLAUDE_CONFIG_DIR` are unset for the call, and a run that reports an API key is thrown away. It counts toward your plan's use, about 3.5k tokens a call (about $0.0006 at API prices), so about 48 calls a day at most.
@@ -322,7 +322,7 @@ Claude Max this week  ██████░░░░  62% used
 - **Name:** a trailing status word (`working`, `running`, `pending`, `waiting`, `starting`) is left out.
 - **No percent:** a 3-block piece slides along the bar, so it still reads as working.
 - **Facts:** `⚙ N cores busy`, `⏱ 12:50 running`, `⏱ Y so far`, `⚡ N/min`, `🔧 N actions · last: Tool`.
-- **Usage meter:** one shared meter under RUNNING, from a row detail `7d N%` or `Max 7-day used N%` (the highest one). Green under 50%, yellow under 80%, red above.
+- **Usage meter:** one shared meter in the top right corner of every tab, above the tab bar, from a row detail `7d N%` or `Max 7-day used N%` (the highest one). Green under 50%, yellow under 80%, red above.
 - **Done at 100%:** a row that reached 100% but still reports shows under DONE as one dim line, `✓ <title>  finishing · 7/7`, without a bar.
 
 ## Log tab

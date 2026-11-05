@@ -969,10 +969,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     }
     const runRows = (rows: string[]) => {
       const cards = rows.map(runCard)
-      const live = cards.reduce<number | null>((a, c) => (c.maxUsed === null ? a : Math.max(a ?? 0, c.maxUsed)), null)
-      const reading = maxReading(live, maxSaved, nowMs)
-      if (reading.save && live !== null) void $.fs.write(maxFile, JSON.stringify({ pct: live, at: nowMs, ...(maxSaved?.plan ? { plan: maxSaved.plan } : {}) })).catch(() => undefined)
-      const used = reading.used
       const out = nestRows(cards.map(c => c.name), meta).flatMap(({ i, kids }) => {
         const c = cards[i]!
         const k0 = kids.length ? cards[kids[0]!]! : undefined
@@ -980,18 +976,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         const open = openCards.has(slug(c.name))
         return [...card(c, `${i}`, '', false, kid), ...(open ? kids.flatMap(j => card(cards[j]!, `${i}c${j}`, '    ', true, '')) : [])]
       })
-      if (used === null) return out
-      const m = maxMeter(used)
-      return [
-        ...out,
-        <Box key="maxmeter" marginTop={1}>
-          <Text dimColor>{`  ${meterLabel(maxSaved?.plan)}  `}</Text>
-          <Text color={m.color}>{'█'.repeat(m.filled)}</Text>
-          <Text dimColor>{'░'.repeat(10 - m.filled)}</Text>
-          <Text>{`  ${used}% used`}</Text>
-          {reading.asOf ? <Text dimColor>{`  · ${reading.asOf}`}</Text> : null}
-        </Box>,
-      ]
+      return out
     }
 
     // Waiting rows: the same one-line card as a running job, with a ⏸ mark and "waiting: <reason>" for its note.
@@ -1023,8 +1008,34 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const chat = await read($, chatAtom)
     const chatUnread = chat.msgs.filter(m => m.unread).length
     const sep = (k: string) => <Text key={k} dimColor>{' │ '}</Text>
+    // The usage meter sits in the top right corner on every tab: a running job's live reading, else the saved one.
+    const liveUsed = (sections.find(x => x.key === 'running')?.rows ?? []).map(runCard)
+      .reduce<number | null>((a, c) => (c.maxUsed === null ? a : Math.max(a ?? 0, c.maxUsed)), null)
+    const reading = maxReading(liveUsed, maxSaved, nowMs)
+    if (reading.save && liveUsed !== null) void $.fs.write(maxFile, JSON.stringify({ pct: liveUsed, at: nowMs, ...(maxSaved?.plan ? { plan: maxSaved.plan } : {}) })).catch(() => undefined)
+    const meterLine = (() => {
+      const used = reading.used
+      if (used === null) return null
+      const m = maxMeter(used)
+      const label = `${meterLabel(maxSaved?.plan)}  `
+      const pct = `  ${used}% used`
+      const asOf = reading.asOf ? `  · ${reading.asOf}` : ''
+      const pad = Math.max(0, width - (label.length + 10 + pct.length + asOf.length))
+      return (
+        <Box key="maxmeter">
+          <Text>{' '.repeat(pad)}</Text>
+          <Text dimColor>{label}</Text>
+          <Text color={m.color}>{'█'.repeat(m.filled)}</Text>
+          <Text dimColor>{'░'.repeat(10 - m.filled)}</Text>
+          <Text>{pct}</Text>
+          {asOf ? <Text dimColor>{asOf}</Text> : null}
+        </Box>
+      )
+    })()
     const tabBar = (
-      <Box key="tabs" marginBottom={1}>
+      <Box key="tabs" flexDirection="column" marginBottom={1}>
+      {meterLine}
+      <Box key="tabrow">
         <Button key="tab-list" plain onPress={() => update($, tabAtom, () => 'list')}>{`${mark('list')}List`}</Button>
         {sep('sep-1')}
         <Button key="tab-connectors" plain onPress={() => update($, tabAtom, () => 'connectors')}>{`${mark('connectors')}Connectors${badN ? ` !${badN}` : ''}`}</Button>
@@ -1034,6 +1045,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         <Button key="tab-log" plain onPress={async () => { await update($, tabAtom, () => 'log'); await markSeen($, homeDir) }}>{`${mark('log')}Log${unseen ? ` !${unseen}` : ''}`}</Button>
         {sep('sep-4')}
         <Button key="tab-chat" plain onPress={async () => { await update($, tabAtom, () => 'chat'); await readChat($, homeDir) }}>{`${mark('chat')}Chat${chatUnread ? ` ${chatUnread}` : ''}`}</Button>
+      </Box>
       </Box>
     )
 
