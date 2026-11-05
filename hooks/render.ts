@@ -18,6 +18,8 @@ export type Row = {
   state?: 'running' | 'done' | 'stopped' | 'error'
   /** Watched jobs only: time left at the rate so far, e.g. `4m`. */
   eta?: string
+  /** Waiting or pending agents only: why it waits and for how long (waiting.ts waitSegs). */
+  wait?: string[]
 }
 
 /**
@@ -232,7 +234,8 @@ export function line(r: Row, now: number): string {
   }
   if (r.state && r.state !== 'running') return `${mark} ${r.description}${step}${meta}`
   const state = r.status === 'running' ? 'working' : r.status
-  return `▶ ${r.description} ${state}${step}${meta}${r.lastTool ? ` · ${r.lastTool}` : ''}`
+  const wait = r.wait?.length ? ` · ${r.wait.join(' · ')}` : ''
+  return `▶ ${r.description} ${state}${wait}${step}${meta}${r.lastTool ? ` · ${r.lastTool}` : ''}`
 }
 
 /** Rendered lines, capped; the overflow is summed up on the last line. */

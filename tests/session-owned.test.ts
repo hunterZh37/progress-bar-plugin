@@ -23,7 +23,7 @@ const CWD = '/home/u/code/shop'
 const SCRIPT = `${HOME}/.claude/progress-bar/statusline.sh`
 
 /** A world with files in memory, a fixed session id and folder, and timers that never fire. */
-function world(on: On, files: Record<string, string>, opts: { userStatusLine?: string; projectStatusLine?: string; isPlaced?: boolean; script?: { exitCode: number; stdout: string; stderr: string } } = {}) {
+function world(on: On, files: Record<string, string>, opts: { agents?: unknown[]; onRun?: (argv: readonly string[]) => { exitCode: number; stdout: string } | undefined; userStatusLine?: string; projectStatusLine?: string; isPlaced?: boolean; script?: { exitCode: number; stdout: string; stderr: string } } = {}) {
   const opened: string[] = []
   const runs: string[][] = []
   const toasts: string[] = []
@@ -36,7 +36,7 @@ function world(on: On, files: Record<string, string>, opts: { userStatusLine?: s
   on('session.id', () => ({ value: SID }))
   on('session.cwd', () => ({ value: CWD }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('agent.list', () => ({ value: [] as never }))
+  on('agent.list', () => ({ value: (opts.agents ?? []) as never }))
   on('command.register', () => ({ value: { command: 'progress-bar' } }))
   on('tool.register', (_, e) => ({ value: { tool: `mcp__progress-bar__${e.name}` } }))
   on('fs.list', (_, e) => ({ value: Object.keys(files).filter(f => f.startsWith(`${e.path}/`) && !f.slice(e.path.length + 1).includes('/')).map(f => ({ name: f.slice(e.path.length + 1), kind: 'file' as const, size: 1, mtimeMs: NOW, isLink: false })) }))
@@ -50,6 +50,8 @@ function world(on: On, files: Record<string, string>, opts: { userStatusLine?: s
   })
   on('process.run', (_, e) => {
     runs.push([...e.argv])
+    const own = opts.onRun?.(e.argv)
+    if (own) return { value: { ...own, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     if (e.argv[0] === 'rm') for (const f of e.argv.slice(2)) delete files[f]
     if (opts.script && e.argv[0] === '/bin/sh' && e.argv[1] === SCRIPT) return { value: { ...opts.script, isStdoutTruncated: false, isStderrTruncated: false } }
     return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
@@ -326,4 +328,37 @@ test('the panel offers Turn on status line, which writes the settings file holdi
   expect(await ui.find({ type: 'Text', text: /not switched over/ })).toBe(undefined)
   expect(files[`${HOME}/${STATUS_OFF_REL}`]).toBe(undefined)
   await ui.unmount()
+})
+
+test('a waiting agent says what it waits on: its background task, else its last action', { options: { openPanel: false } }, async ($, on) => {
+  const agents = [{ id: 'ag1', description: 'Mac Jev first pass for labels', status: 'running' }]
+  const files: Record<string, string> = { [`${P}/mac-label-top-ups-2021-23.json`]: JSON.stringify({ done: 90, total: 100, step: 'batch 9', title: 'Mac label top-ups 2021-23', session: SID }) }
+  world(on, files, { agents })
+  on('tool.call', () => ({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bg9' } as never }))
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'Bash', agentId: 'ag1', command: 'while pgrep -f after_load.sh; do sleep 600; done', description: 'Wait for the top-up run to finish', run_in_background: true } as never)
+  agents[0]!.status = 'waiting'
+  await settle($ as never)
+  const row = () => files[`${L}/agents-${KEY}.txt`]!.split('\n')[0]
+  // Its background task, and the running job the task's words name.
+  expect(row()).toBe('▶ Mac Jev first pass for labels waiting · waiting on: Wait for the top-up run to finish (Mac label top-ups 2021-23 90%) · waiting 0m · 0m · 1 tools · Bash')
+  // A stop that no longer lists the task: it is over, so the row falls back to the agent's last action.
+  await $.classic.Stop({ stop_hook_active: false, background_tasks: [] } as never)
+  await settle($ as never)
+  expect(row()).toBe('▶ Mac Jev first pass for labels waiting · last action 0m ago: Bash, Wait for the top-up run to finish · waiting 0m · 0m · 1 tools · Bash')
+  // The tasks and times are saved, so a reload keeps them.
+  expect(JSON.parse(files[`${P}/.state/seen-${KEY}.json`]!).ag1).toMatchObject({ lastWhat: 'Wait for the top-up run to finish', lastAt: NOW, waitSince: NOW })
+})
+
+test('after a reload: a task the stop lists is found in the waiting agent transcript by its id', { options: { openPanel: false } }, async ($, on) => {
+  const agents = [{ id: 'ag2', description: 'Label checker', status: 'waiting' }]
+  const TX = `${HOME}/.claude/projects/x/${SID}`
+  const files: Record<string, string> = { [`${P}/.state/seen-${KEY}.json`]: JSON.stringify({ ag2: { startedAt: NOW, tools: 5, lastTool: 'Bash' } }) }
+  const onRun = (argv: readonly string[]) => (argv[0] === 'grep' ? { exitCode: 0, stdout: argv.at(-1) === `${TX}/subagents/agent-ag2.jsonl` ? 'bk7\n' : '' } : undefined)
+  const { runs } = world(on, files, { agents, onRun })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.classic.Stop({ stop_hook_active: false, transcript_path: `${TX}.jsonl`, background_tasks: [{ id: 'bk7', type: 'shell', status: 'running', description: 'One long wait, 10 min checks' }, { id: 'zz1', type: 'shell', status: 'running', description: 'Someone else' }] } as never)
+  await settle($ as never)
+  expect(files[`${L}/agents-${KEY}.txt`]!.split('\n')[0]).toBe('▶ Label checker waiting · waiting on: One long wait, 10 min checks · waiting 0m · 0m · 5 tools · Bash')
+  expect(runs.filter(r => r[0] === 'grep').length).toBe(1)
 })

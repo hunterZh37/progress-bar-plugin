@@ -6,11 +6,12 @@ import { CONN_CACHE_REL, connUrl, connName, connSummary, formatCache, parseAccou
 import { CHECKPOINT_PY } from '../hooks/checkpoint'
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
-import { PANE, maxReading, noteShows, NOTE_MS, sameName, waitReason, badge, evId, fitLabel, labelCol, machineTitle, machines, maxMeter, nestRows, runCount, shortTitle, parseSections, runCard, shortAge, timeTail, slide, stripAnsi } from '../hooks/panel'
+import { PANE, maxReading, noteShows, NOTE_MS, sameName, waitPhrase, waitReason, badge, evId, fitLabel, labelCol, machineTitle, machines, maxMeter, nestRows, runCount, shortTitle, parseSections, runCard, shortAge, timeTail, slide, stripAnsi } from '../hooks/panel'
 import { EVENTS_PY, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from '../hooks/events'
 import { REPOS_REL, parseBranches, parseCommits, webUrl } from '../hooks/github'
 import { blocker, clip, doneEvents, isRunningRow, jobMachine, keyWords, moveItem, nextPrompt, nextReady, parseCaps, parseItem, parseMode, rankTodos, ranked, rowName, shortJob, todoRows } from '../hooks/priority'
 import { fileOf, parseProjects, projectSlug, resolveProject } from '../hooks/project'
+import { aliveTasks, bgLaunch, idsIn, jobText, oneLine, snapOf, toolWhat, waitSegs, watchedJob } from '../hooks/waiting'
 import { FEW_STEPS, RATE_MIN_MS, eta, expandHome, line, rateLeft, stepRate, trackJob, lines, parseProgress, parseTitles, pickMeta, parseWatch, prevOf, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoItems, todoList } from '../hooks/render'
 
 const NOW = 1_800_000_000_000
@@ -302,7 +303,8 @@ test('finished agents never linger as waiting: a handback is remembered across r
   on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const { text } = await run($, '')
-  expect(text.split('\n')[0]).toBe('▶ Label top-ups watcher waiting · 9h00m · 9 tools · Bash')
+  // No task, job or step known, and no time saved by the old build: its last tool, and waiting since now.
+  expect(text.split('\n')[0]).toBe('▶ Label top-ups watcher waiting · last action: Bash · waiting 0m · 9h00m · 9 tools · Bash')
   expect(text).not.toContain('Rebuild')
   // The saved list keeps the finished one, so the next reload still knows it handed back.
   const saved = Object.entries(written).find(([k]) => /\.state\/seen-[^/]*\.json$/.test(k))![1]
@@ -470,7 +472,7 @@ test('the panel parser: sections, counts, folded headers and trailing lines', as
   expect(other).toEqual(['opus 4 · main'])
   expect(runCard(sections[1]!.rows[0]!)).toEqual({
     mark: '⚠', stuck: '12m', name: 'nightly-import', pct: 80, count: '4 of 5 steps', kind: { icon: '⚙', text: 'job' },
-    step: 'batch 4', facts: '⏱ 12m so far', maxUsed: null, waitOn: '', watchedBy: '', left: '', ran: '', elapsed: '12m',
+    step: 'batch 4', facts: '⏱ 12m so far', maxUsed: null, waitOn: '', watchedBy: '', waited: '', note: '', left: '', ran: '', elapsed: '12m',
   })
   expect(runCard(sections[1]!.rows[1]!).mark).toBe('◐')
 })
@@ -1282,4 +1284,60 @@ test('the Max meter keeps the last reading when no job reports one', () => {
   expect(maxReading(null, { pct: 22, at }, at + 36 * 60_000)).toEqual({ used: 22, asOf: 'as of 12:39', save: false })
   expect(maxReading(null, { pct: 22, at }, at + 8 * 86_400_000).used).toBe(null)
   expect(maxReading(null, null, at).used).toBe(null)
+})
+
+test('why an agent waits: its tasks, a job it watches, its step, then its last action', () => {
+  const sh = bgLaunch('Bash', { command: 'sleep 9', description: 'Wait for the top-up run to finish', run_in_background: true }, { backgroundTaskId: 'b1' }, NOW)!
+  expect(sh).toEqual({ id: 'b1', desc: 'Wait for the top-up run to finish', kind: 'shell', at: NOW })
+  const mon = bgLaunch('Monitor', { description: 'deploy goes green', timeout_ms: 300_000, command: 'until x; do sleep 5; done' }, { taskId: 'm1', timeoutMs: 300_000 }, NOW)!
+  expect(mon).toEqual({ id: 'm1', desc: 'deploy goes green', kind: 'monitor', at: NOW, until: NOW + 300_000 })
+  expect(bgLaunch('Monitor', { description: 'd', timeout_ms: 0 }, { taskId: 'm2', timeoutMs: 0, persistent: true }, NOW)!.until).toBe(undefined)
+  expect(bgLaunch('Bash', { command: 'ls' }, { stdout: '' }, NOW)).toBe(null)
+  // Alive: before a Monitor's deadline, and listed by any snapshot taken after it began.
+  const snap = snapOf([{ id: 'b1', type: 'shell', status: 'running', description: 'x' }, { id: 'zz', status: 'completed' }], NOW + 1)!
+  expect(snap.tasks.map(t => t.id)).toEqual(['b1'])
+  expect(aliveTasks([sh, mon], snap, NOW + 1).map(t => t.id)).toEqual(['b1'])
+  expect(aliveTasks([sh, mon], null, NOW + 400_000).map(t => t.id)).toEqual(['b1'])
+  expect(snapOf(undefined, NOW)).toBe(null)
+  const jobs = [{ name: 'mac-label-top-ups-2021-23', title: 'Mac label top-ups 2021-23', pct: 99.6, parent: '' }, { name: 'arts-verify', title: '', pct: null, parent: 'release-prep' }]
+  expect(watchedJob('Mac label top-ups watcher', jobs)?.name).toBe('mac-label-top-ups-2021-23')
+  expect(watchedJob('Mac Jev first pass for labels', jobs)).toBe(null)
+  expect(jobText(jobs[0]!)).toBe('Mac label top-ups 2021-23 (99%)')
+  const base = { desc: 'Release prep', status: 'waiting', tasks: [], kids: [], jobs, step: '', lastTool: 'Bash', lastWhat: 'check log', lastAt: NOW - 4 * 60_000, waitSince: NOW - 12 * 60_000 }
+  expect(waitSegs({ ...base, tasks: [sh, mon], kids: ['Grade the sample'] }, NOW)).toEqual(['waiting on: Wait for the top-up run to finish (Mac label top-ups 2021-23 99%), monitor: deploy goes green, agent: Grade the sample', 'waiting 12m'])
+  // A job whose parent is this agent.
+  expect(waitSegs(base, NOW)).toEqual(['waiting on: arts-verify', 'waiting 12m'])
+  expect(waitSegs({ ...base, desc: 'Label top-ups watcher' }, NOW)[0]).toBe('waiting on: Mac label top-ups 2021-23 (99%)')
+  // Its own step says it, so nothing is added but the time.
+  expect(waitSegs({ ...base, desc: 'Other', step: 'waiting for review' }, NOW)).toEqual(['waiting 12m'])
+  expect(waitSegs({ ...base, desc: 'Other' }, NOW)).toEqual(['last action 4m ago: Bash, check log', 'waiting 12m'])
+  expect(waitSegs({ ...base, desc: 'Other', lastTool: '', waitSince: 0 }, NOW)).toEqual([])
+  expect(waitSegs({ ...base, status: 'pending' }, NOW)).toEqual(['not started yet'])
+  expect(waitSegs({ ...base, status: 'running' }, NOW)).toEqual([])
+  expect(toolWhat({ file_path: '/a/b/log.txt' })).toBe('log.txt')
+  expect(toolWhat({ command: 'tail -5 x.log\nmore' })).toBe('tail -5 x.log')
+  expect(oneLine('a · b\nc')).toBe('a, b c')
+  expect(idsIn('bk7\nbk7\n', ['bk7', 'zz'])).toEqual(['bk7'])
+})
+
+test('a waiting row says why with how long, and the open row says it in full', async ($, on) => {
+  const jev = 'Mac Jev first pass for labels waiting · last action 4m ago: Bash, check log · waiting 12m · 59m · 54 tools · Bash'
+  const c = runCard(jev)
+  expect([c.name, c.note, c.waited, c.step, c.elapsed]).toEqual(['Mac Jev first pass for labels', 'last action 4m ago: Bash, check log', '12m', '', '59m'])
+  expect(waitPhrase(c, jev)).toBe('last action 4m ago: Bash, check log')
+  expect(waitPhrase(runCard('Mac Jev waiting · waiting on: Wait for the run · waiting 3m · 9m · 4 tools'))).toBe('waiting on Wait for the run')
+  expect(waitPhrase(runCard('scraper waiting · rate limited, resumes 14:05 · 3m'))).toBe('paused by a rate limit: rate limited, resumes 14:05')
+  expect(waitPhrase(runCard('import pending · batch 3'))).toBe('last step: batch 3')
+  expect(waitPhrase(runCard('helper waiting · not started yet · 0m · 0 tools'))).toBe('not started yet')
+  expect(waitPhrase(runCard('import pending'))).toBe('')
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [TODO_FILE]: '[mac]\nx a\n' }
+  panelWorld(on, files, ['▾ ⏸ WAITING', `  ${jev}`].join('\n'))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 60 } })
+  let texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(texts).toContain(' · 12m · last action 4m ago: Bash, check log')
+  await ui.press({ key: 'open-mac-jev-first-pass-for-labels' })
+  texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(texts).toContain('last action 4m ago: Bash, check log · for 12m')
+  await ui.unmount()
 })

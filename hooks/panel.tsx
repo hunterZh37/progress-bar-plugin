@@ -196,6 +196,10 @@ export type RunCard = {
   waitOn: string
   /** "watched by: X" from the grouper: a waiting watcher agent folded into the job it watches. */
   watchedBy: string
+  /** A waiting agent's "waiting 12m": how long it has waited. */
+  waited: string
+  /** A waiting agent's "last action 4m ago: Bash, check log", or a pending one's "not started yet". */
+  note: string
   /** Time left (from "X left", "ETA X" or "done in X"), ps run time and time so far, for the one-line view. */
   left: string
   ran: string
@@ -223,12 +227,14 @@ export function runCard(row: string): RunCard {
     : host ? { icon: '🖥', text: `on ${host}` }
     : isAgent ? { icon: '🤖', text: 'Claude agent' }
     : { icon: '⚙', text: 'job' }
-  let count = '', step = '', elapsed = '', left = '', speed = '', actions = '', last = '', cores = '', ran = '', waitOn = '', watchedBy = ''
+  let count = '', step = '', elapsed = '', left = '', speed = '', actions = '', last = '', cores = '', ran = '', waitOn = '', watchedBy = '', waited = '', note = ''
   let maxUsed: number | null = null
   for (const x of parts) {
     let m: RegExpExecArray | null
     if ((m = /^waiting on: (.+)$/.exec(x))) waitOn = m[1]!
     else if ((m = /^watched by: (.+)$/.exec(x))) watchedBy = m[1]!
+    else if ((m = /^waiting ((?:\d+h)?\d+m)$/.exec(x))) waited = m[1]!
+    else if (/^last action\b.+$|^not started yet$/.test(x)) note = x
     else if ((m = /^(\d+(?:\.\d+)?)% CPU$/.exec(x))) cores = `${(Number(m[1]) / 100).toFixed(1)} cores busy`
     else if (/^(\d+-)?\d+:\d\d(:\d\d)?$/.test(x)) ran = x
     else if ((m = /^Max 7-day used (\d+)%$/.exec(x)) || (m = /^7d (\d+)%$/.exec(x))) maxUsed = Math.max(maxUsed ?? 0, Number(m[1]))
@@ -236,7 +242,7 @@ export function runCard(row: string): RunCard {
     else if ((m = /^done in (.+)$/.exec(x)) || (m = /^ETA (.+)$/.exec(x)) || (m = /^(.+) left$/.exec(x))) left = m[1]!
     else if (/\/min$/.test(x)) speed = x
     else if ((m = /^(\d+) tools?$/.exec(x))) actions = `${m[1]} actions`
-    else if (/^(\d+h)?\d+m$|^\d+s$/.test(x)) elapsed = x
+    else if (/^(\d+h)?\d+m$|^\d+[sh]$/.test(x)) elapsed = x
     else if (isAgent && /^[A-Z][A-Za-z]+$/.test(x)) last = x
     else step = step ? `${step} · ${x}` : x
   }
@@ -255,6 +261,8 @@ export function runCard(row: string): RunCard {
     maxUsed,
     waitOn,
     watchedBy,
+    waited,
+    note,
     left,
     ran,
     elapsed,
@@ -284,6 +292,20 @@ export function waitReason(r: Pick<RunCard, 'waitOn' | 'step' | 'name'>, row = '
     if (m && m[1]!.trim()) return m[1]!.trim()
   }
   return ''
+}
+
+/**
+ * The whole reason a WAITING row waits, as it reads on the row: a rate limit pause, "waiting on X" (waitReason), a
+ * waiting agent's last action, its step, or '' when nothing is known.
+ */
+export function waitPhrase(r: Pick<RunCard, 'waitOn' | 'step' | 'name' | 'note'>, row = ''): string {
+  const rate = /\b(rate[- ]?limit\w*|429|throttl\w*)/i
+  if (rate.test(r.step)) return `paused by a rate limit: ${r.step}`
+  if (rate.test(row)) return 'paused by a rate limit'
+  const on = waitReason(r, row)
+  if (on) return `waiting on ${on}`
+  if (r.note) return r.note
+  return r.step ? `last step: ${r.step}` : ''
 }
 
 /** Minutes in "1h05m", "12m" or "45s", else 0. */
@@ -1035,17 +1057,21 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const c = runCard(row)
       const key = slug(c.name)
       const isOpen = openCards.has(key)
-      const reason = waitReason(c, row)
+      const phrase = waitPhrase(c, row)
       const title = machineTitle(c.name, metaOf(c.name).title || c.name, mach)
       const m0 = metaOf(c.name)
       const why = m0.why ? `unlocks: ${m0.why.replace(/^unlocks:?\s*/i, '')}` : ''
+      // Open: the whole reason with how long it has waited, then the card's details (its step only when not said yet).
+      const full = `${phrase || 'waiting, no reason reported'}${c.waited ? ` · for ${c.waited}` : ''}`
+      const said = phrase.replace(/^(waiting on |last step: |paused by a rate limit: )/, '')
+      const inStep = !c.waited && !!said && c.step.includes(said)
       return [
         <Box key={`rw${i}`}>
           <Text color="yellow" dimColor>{'  ⏸ '}</Text>
           <Button key={`open-${key}`} plain onPress={() => toggleCard(key)}>{title}</Button>
-          <Text dimColor wrap="truncate-end">{` · ${reason ? `waiting on ${reason}` : 'waiting'}`}</Text>
+          <Text dimColor wrap="truncate-end">{` · ${c.waited ? `${c.waited} · ` : ''}${phrase || 'waiting'}`}</Text>
         </Box>,
-        ...(isOpen ? details(c, `w${i}`, '    ', '', why, sameName(c.name, title) ? '' : c.name) : []),
+        ...(isOpen ? [inStep ? null : hang(`wr${i}`, '    ', full, false), ...details(c, `w${i}`, '    ', '', why, sameName(c.name, title) ? '' : c.name)].filter(Boolean) : []),
       ]
     })
 

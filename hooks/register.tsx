@@ -11,13 +11,15 @@ import { resolveHome } from './home'
 import { USAGE_CHECK, probeUsage } from './usage'
 import { macClicks, parseMacClicks } from './mac'
 import { checkpointCommand, noteStatusLine, panelCommand, registerPanel, startPanel } from './panel'
-import { FRESH_MS, eta, expandHome, rateLeft, trackJob, lines, parseProgress, parseWatch, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
+import { FRESH_MS, eta, pickMeta, expandHome, rateLeft, trackJob, lines, parseProgress, parseWatch, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
 import { PROJECTS_REL, gitRootOf, resolveProject, sessionProject } from './project'
 import { LONG_BASH_MS, PROGRESS_TOOL, endBackground, endShell, mirrorTasks, startShell, taskCreated, taskList, taskUpdated, touchShells, writeReport } from './report'
 import type { Task } from './report'
 import { PROJECT_LINE, pickOwner, routeOf, sessionKeyOf as keyOf } from './route'
 import type { Progress, Row, Track } from './render'
 import { isDarwin } from './mac'
+import { aliveTasks, bgLaunch, idsIn, snapOf, toolWhat, waitSegs } from './waiting'
+import type { BgSnap, BgTask, Job } from './waiting'
 
 const WATCH = '.watch.json'
 // Data files in ~/.claude-progress that are never jobs.
@@ -72,7 +74,11 @@ const USAGE = [
 ].join('\n')
 const SECTIONS = ['todo', 'running', 'waiting', 'done', 'problems']
 
-type Seen = { startedAt: number; tools: number; lastTool: string }
+/**
+ * What the plugin remembers per agent, saved so a reload keeps it: start, tool count and last tool, plus what its last
+ * tool call was about and when it ended, when it began to wait, and the background tasks it started (waiting.ts).
+ */
+type Seen = { startedAt: number; tools: number; lastTool: string; lastWhat?: string; lastAt?: number; waitSince?: number; bg?: BgTask[] }
 
 const seen = new Map<string, Seen>()
 const dirOf = (h: string) => `${h}/.claude-progress`
@@ -81,6 +87,63 @@ const dirOf = (h: string) => `${h}/.claude-progress`
 const STALE_WAIT_MS = 30 * 60_000
 const TRACK_REL = '.state/job-track.json'
 const TRACK_KEEP_MS = 2 * 86_400_000
+
+// The session's in-flight background tasks from the last Stop or SubagentStop, saved beside seen-<session>.json.
+let snap: BgSnap | null = null
+// Where this session's transcripts are (the main one's path without .jsonl), and each agent's own, from SubagentStop.
+let txBase = ''
+const txOf = new Map<string, string>()
+// Agents already searched for a snapshot's unowned task ids, so each transcript is searched once per snapshot.
+const searched = new Set<string>()
+
+/** Removes a stopped task from every agent. */
+function dropTask(id: string) {
+  for (const s of seen.values()) if (s.bg?.some(t => t.id === id)) s.bg = s.bg.filter(t => t.id !== id)
+}
+
+/** An agent's transcript path, or '' when no Stop or SubagentStop has named one yet. */
+const txPath = (id: string) => txOf.get(id) ?? (txBase ? `${txBase}/subagents/agent-${id}.jsonl` : '')
+
+/**
+ * Why each waiting or pending agent waits (waiting.ts waitSegs). A task the last snapshot lists that no agent is known
+ * to own (it started before a reload) is looked up by its id in the waiting agent's transcript.
+ */
+async function explainWaits($: EngineInterface, agents: Awaited<ReturnType<EngineInterface['agent']['list']>>, rows: Row[], jobs: Job[], now: number) {
+  const owned = new Set([...seen.values()].flatMap(s => (s.bg ?? []).map(t => t.id)))
+  for (const r of rows) {
+    const a = agents.find(x => x.id === r.id)
+    const s = seen.get(r.id)
+    if (!a || !s) continue
+    // Tasks past a Monitor's deadline, or missing from a newer snapshot, are over.
+    let alive = aliveTasks(s.bg ?? [], snap, now)
+    if (s.bg) s.bg = alive
+    if (a.status !== 'waiting') { s.waitSince = undefined; if (a.status !== 'pending') continue }
+    const path = txPath(a.id)
+    const loose = (snap?.tasks ?? []).filter(t => !owned.has(t.id))
+    if (a.status === 'waiting' && !alive.length && loose.length && path && !searched.has(`${a.id}@${snap!.at}`)) {
+      searched.add(`${a.id}@${snap!.at}`)
+      try {
+        const ids = loose.map(t => t.id)
+        const out = (await $.process.run(['grep', '-o', '-F', ...ids.flatMap(i => ['-e', i]), path], { timeoutMs: 5000 })).stdout
+        for (const id of idsIn(out, ids)) {
+          const t = loose.find(x => x.id === id)!
+          s.bg = [...(s.bg ?? []), { id, desc: t.desc, kind: t.kind === 'monitor' ? 'monitor' : 'shell', at: snap!.at }]
+          owned.add(id)
+        }
+        alive = aliveTasks(s.bg ?? [], snap, now)
+      } catch { /* no transcript */ }
+    }
+    if (a.status === 'waiting' && !s.waitSince) {
+      // Unknown after a reload: the agent's transcript was last written when its turn ended.
+      let at = s.lastAt ?? 0
+      if (!at && path) { try { at = (await $.fs.stat(path)).mtimeMs } catch { at = 0 } }
+      if (at && !s.lastAt) s.lastAt = at
+      s.waitSince = at || now
+    }
+    const kids = agents.filter(k => k.parentId === a.id && LIVE.has(k.status) && seen.get(k.id)?.lastTool !== 'SubagentHandback').map(k => k.description)
+    r.wait = waitSegs({ desc: a.description, status: a.status, tasks: alive, kids, jobs, step: r.step, lastTool: s.lastTool, lastWhat: s.lastWhat ?? '', lastAt: s.lastAt ?? 0, waitSince: s.waitSince ?? 0 }, now)
+  }
+}
 
 /** job-track.json: each job's real start and rate base (render.ts Track). Shared by every session on this machine. */
 async function readTracks($: EngineInterface, dir: string): Promise<Record<string, Track>> {
@@ -126,6 +189,18 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
       const saved = JSON.parse(String(await $.fs.read(`${dir}/.state/seen-${key}.json`))) as Record<string, { startedAt: number; tools: number; lastTool: string }>
       for (const [id, v] of Object.entries(saved)) if (!seen.has(id)) seen.set(id, v)
     } catch { /* first run */ }
+    try {
+      const b = JSON.parse(String(await $.fs.read(`${dir}/.state/bg-${key}.json`))) as { snap?: BgSnap; txBase?: string }
+      if (!snap && b.snap && Array.isArray(b.snap.tasks)) snap = b.snap
+      if (!txBase && typeof b.txBase === 'string') txBase = b.txBase
+    } catch { /* none yet */ }
+    // Before any Stop names it: the session's transcript folder, ~/.claude/projects/<folder with - for each symbol>/<session id>.
+    if (!txBase) {
+      try {
+        const base = `${h}/.claude/projects/${(await $.session.cwd()).replace(/[^A-Za-z0-9]/g, '-')}/${await $.session.id()}`
+        if (await $.fs.exists(`${base}/subagents`)) txBase = base
+      } catch { /* a Stop names it later */ }
+    }
   }
   let agents: Awaited<ReturnType<typeof $.agent.list>> = []
   try { agents = await $.agent.list() } catch { agents = [] }
@@ -144,7 +219,7 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
     rows.push({ id: a.id, description: a.description, status: a.status, startedAt: s.startedAt, tools: s.tools, lastTool: s.lastTool, done: p?.done ?? null, total: p?.total ?? null, step: p?.step ?? '' })
   }
   const shared = new Set<string>()
-  if (!h) return { rows, now, shared }
+  if (!h) { await explainWaits($, agents, rows, [], now); return { rows, now, shared } }
   const used = new Set(rows.map(r => slug(r.description)))
   let projectsText = ''
   try { projectsText = String(await $.fs.read(`${h}/${PROJECTS_REL}`)) } catch { projectsText = '' }
@@ -157,6 +232,7 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
     const live = Object.fromEntries(liveIds.map(id => [id, seen.get(id)!]))
     await $.fs.write(`${dir}/.state/seen-${key}.json`, JSON.stringify(live))
     await $.fs.write(`${dir}/.state/claims-${key}.txt`, [`${PROJECT_LINE}${project}`, ...used].join('\n'))
+    if (snap || txBase) await $.fs.write(`${dir}/.state/bg-${key}.json`, JSON.stringify({ snap, txBase }))
   } catch { /* next poll */ }
   // Progress files another open session's agent already shows are skipped here, so no bar appears twice.
   const live = new Map<string, string>()
@@ -174,12 +250,14 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
     } catch { /* gone */ }
   }
   const projects = new Map<string, string>()
+  const jobs: Job[] = []
   let files: Awaited<ReturnType<typeof $.fs.list>> = []
   try { files = await $.fs.list(dir) } catch { files = [] }
   for (const f of files) {
     if (f.kind === 'file' && f.name.endsWith(WATCH)) {
       const r = await watchRow($, h, dir, f.name, now)
       if (r) rows.push(r)
+      if (r?.state === 'running') jobs.push({ name: r.description, title: '', pct: r.done !== null && r.total ? (100 * r.done) / r.total : null, parent: '' })
       continue
     }
     if (f.kind !== 'file' || !f.name.endsWith('.json')) continue
@@ -199,7 +277,11 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
     const id = `file:${name}`
     if (route === 'shared') shared.add(id)
     rows.push({ id, description: name, status: 'running', startedAt: p.startedAt ?? 0, tools: 0, lastTool: '', done: p.done, total: p.total, step: p.step })
+    const m = pickMeta(raw)
+    const pct = p.done !== null && p.total ? (100 * p.done) / p.total : null
+    if (pct === null || pct < 100) jobs.push({ name, title: m.title ?? '', pct, parent: m.parent ? slug(m.parent) : '' })
   }
+  await explainWaits($, agents, rows, jobs, now)
   await trackRows($, dir, rows, now)
   return { rows, now, shared }
 }
@@ -556,8 +638,19 @@ export const register: Register = (on, options) => {
 
   // At each stop, background shells the session no longer lists as running are over.
   on('classic.Stop', async ($, e, next) => {
-    const running = (e as unknown as { background_tasks?: { id: string; status?: string }[] }).background_tasks
+    const i = e as unknown as { background_tasks?: { id: string; status?: string }[]; transcript_path?: unknown }
+    const running = i.background_tasks
     if (Array.isArray(running)) await endBackground($, running).catch(() => undefined)
+    if (typeof i.transcript_path === 'string' && i.transcript_path.endsWith('.jsonl')) txBase = i.transcript_path.slice(0, -6)
+    snap = snapOf(running, await $.clock.now()) ?? snap
+    return next(e)
+  })
+
+  // A subagent's turn ended: the session's in-flight tasks then, and where its transcript is.
+  on('classic.SubagentStop', async ($, e, next) => {
+    const i = e as unknown as { agent_id?: unknown; agent_transcript_path?: unknown; background_tasks?: unknown }
+    if (typeof i.agent_id === 'string' && typeof i.agent_transcript_path === 'string' && i.agent_transcript_path) txOf.set(i.agent_id, i.agent_transcript_path)
+    snap = snapOf(i.background_tasks, await $.clock.now()) ?? snap
     return next(e)
   })
 
@@ -566,13 +659,27 @@ export const register: Register = (on, options) => {
     const i = e as unknown as { file_path?: unknown; path?: unknown; command?: unknown }
     const text = [i.file_path, i.path, i.command].filter(x => typeof x === 'string').join(' ')
     if (/(^|[\s/"'])\.claude-progress\/channel\/keys(\/|\b)|channel\/keys\/(enc|sign)\.pem/.test(text)) return { deny: 'progress-bar: the secure channel private keys stay private. Nothing may read them.' }
-    if (e.agentId) {
-      const s = seen.get(e.agentId) ?? { startedAt: await $.clock.now(), tools: 0, lastTool: '' }
-      s.tools += 1
-      s.lastTool = String(e.tool)
-      seen.set(e.agentId, s)
+    const input = e as unknown as Record<string, unknown>
+    const stopped = e.tool === 'TaskStop' ? String(input.task_id ?? input.shell_id ?? '') : ''
+    if (!e.agentId) {
+      const r = await next(e)
+      if (stopped && !('deny' in r && r.deny)) dropTask(stopped)
+      return r
     }
-    return next(e)
+    const s = seen.get(e.agentId) ?? { startedAt: await $.clock.now(), tools: 0, lastTool: '' }
+    s.tools += 1
+    s.lastTool = String(e.tool)
+    s.lastWhat = toolWhat(input)
+    seen.set(e.agentId, s)
+    const r = await next(e)
+    // When its last call ended, and a background task it started (a background Bash, a Monitor).
+    s.lastAt = await $.clock.now()
+    if (!('deny' in r && r.deny)) {
+      const t = bgLaunch(String(e.tool), input, r.result, s.lastAt)
+      if (t) s.bg = [...(s.bg ?? []).filter(x => x.id !== t.id), t]
+      if (stopped) dropTask(stopped)
+    }
+    return r
   })
 
   on('session.start', async ($, e, next) => {

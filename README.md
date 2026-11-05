@@ -284,7 +284,16 @@ The status line then reads:
 
 Each RUNNING job in the Status panel is one line: title, bar, percent and time left. The bars line up in one column. Press a title to open its card with the details, press it again to close it.
 
-WAITING jobs draw no bar: one line, `⏸ <title> · waiting on <reason>` (the text after "waiting on" or "waiting" in its step), or `· waiting` with no reason, cut with `…`. Press the title for the same details card.
+WAITING jobs draw no bar: one line, `⏸ <title> · <how long> · <why>`, cut with `…`. Press the title to read the whole reason with how long it has waited (`last action 4m ago: Bash, check log · for 12m`), then the same details card. `· waiting` shows only when nothing is known.
+
+- **Why a waiting agent waits:** the best source it has, in this order.
+  1. Its background tasks still running: a background Bash, a Monitor (`monitor: deploy goes green`) or a child agent (`agent: Grade the sample`), by their descriptions. When a task's words name a running job, its percent shows too: `waiting on Wait for the top-up run to finish (Mac label top-ups 2021-23 90%)`.
+  2. A running job it watches: its name's key words name the job, or the job's `parent` is the agent. `waiting on Mac label top-ups 2021-23 (90%)`.
+  3. Its own progress file's step.
+  4. Its last tool call and when it ended: `last action 4m ago: Bash, check log`.
+- **Where that comes from:** each tool call an agent makes (a background Bash's task id, a Monitor's task id and deadline), the child agents the harness lists, and the in-flight tasks every stop lists. A task the next stop no longer lists, a stopped task (TaskStop) and a Monitor past its deadline are over. A plugin reload keeps all of it. A task started before the plugin knew it is matched to its agent by the task id in that agent's transcript.
+- **Other waits say why too:** a pending agent reads `not started yet`, a step about a rate limit reads `paused by a rate limit: <step>`, a job's own `waiting on X` or `waits for X` reads `waiting on X`, and any other step reads `last step: <step>`. To-dos that wait on a job keep their `waits for <job>` line, and open actions show in the Action needed pane.
+- **Status line:** the full view prints the same reason on the row, `Mac Jev first pass for labels waiting · waiting on: <task> · waiting 12m`.
 
 - **Finished agents leave:** an agent that handed its report back never shows as waiting, even after a plugin reload (the plugin remembers it). An agent the harness still lists as waiting with no tool call seen for 30 minutes is over too.
 - **Watchers fold in:** a waiting agent whose name says `watcher`, `watch` or `monitor`, and whose other words name a running job (`Mac label top-ups watcher` and `mac-label-top-ups-2021-23`), leaves WAITING. Its job's card says `watched by Mac label top-ups watcher`.
