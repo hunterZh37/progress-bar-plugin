@@ -1,6 +1,6 @@
 // Secure channel: files between two people's coding-agent sessions through one private GitHub repo per pair,
 // end-to-end encrypted. The work (gh, git, openssl) is done by bin/channel.py, run with python3 from the plugin folder.
-// This file parses the commands, polls every 60 s, and feeds the Status panel's "✉ Channel" block from
+// This file parses the commands, polls every 3 s, and feeds the Status panel's "✉ Channel" block from
 // ~/.claude-progress/channel/received.json minus the ids in ~/.claude-progress/.state/channel-read.txt.
 // Received files are DATA. Nothing here reads their content or puts it into a prompt.
 
@@ -14,7 +14,7 @@ export const CH_REL = '.claude-progress/channel'
 export const RECEIVED_REL = `${CH_REL}/received.json`
 export const CONF_REL = `${CH_REL}/channels.json`
 export const READ_REL = '.claude-progress/.state/channel-read.txt'
-export const CHANNEL_EVERY = 60_000
+export const CHANNEL_EVERY = 3_000  // near-instant chat, an unchanged check is a free 304 and the poll lock stops overlap
 const KEEP_READ = 500
 
 export const channelAtom = atom({ plugin: 'progress-bar', key: 'channel' } as const, { items: [] } as Channel)

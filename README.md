@@ -467,7 +467,7 @@ Values run to the next `--flag`. `--global` makes it hold prompts in every proje
 
 ## Secure channel
 
-Send files between two people's Claude Code sessions. Say "send this plan to Sam" in the chat, and it lands in Sam's Status panel a minute later.
+Send files between two people's Claude Code sessions. Say "send this plan to Sam" in the chat, and it lands in Sam's Status panel within seconds.
 
 ```
 ✉ Channel  1 new
@@ -499,7 +499,7 @@ Or just tell Claude "send this to Sam". The `secure-channel` skill has Claude ca
 
 ### Receiving
 
-- Every open session checks each channel every 60 seconds. When nothing changed, GitHub answers 304 (no rate limit cost).
+- Every open session checks each channel every 3 seconds (one check at a time across sessions). When nothing changed, GitHub answers 304 (no rate limit cost).
 - A new file is verified, decrypted and saved to `~/.claude-progress/channel/<name>/<file>`. It never overwrites: a second `plan.md` becomes `plan-2.md`.
 - It shows in the Status panel List tab as `✉ Channel  N new`. Press a file to open it with your default app. **✓ read** hides it (`~/.claude-progress/.state/channel-read.txt`).
 - The status line shows a cyan `📨 N new`, kept apart from the inbox `✉ N need you` because a received file is not a task.
