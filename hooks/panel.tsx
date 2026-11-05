@@ -444,7 +444,13 @@ export async function openLog($: EngineInterface, path: string, dirs: string[]) 
 }
 
 /** A row's id in the Log tab. */
-export const evId = (e: Ev) => `${e.ts}-${slug(e.source)}-${slug(e.title)}`.slice(0, 80)
+/** A stable, unique key for a Log event: readable head plus a hash of the whole event, so long titles never collide. */
+export const evId = (e: Ev) => {
+  const full = `${e.ts}|${e.level}|${e.source}|${e.title}|${e.detail ?? ''}`
+  let h = 5381
+  for (let i = 0; i < full.length; i++) h = ((h << 5) + h + full.charCodeAt(i)) >>> 0
+  return `${`${e.ts}-${slug(e.source)}-${slug(e.title)}`.slice(0, 60)}-${h.toString(36)}`
+}
 
 async function readFolded($: EngineInterface, h: string): Promise<string[]> {
   let keys: string[] = []
@@ -1191,8 +1197,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
             ]).filter(Boolean)}
           </Box>
           {shown.length === 0 && <Text dimColor>{'  Nothing logged yet.'}</Text>}
-          {shown.flatMap(ev => {
-            const id = evId(ev)
+          {shown.flatMap((ev, n) => {
+            const id = `${evId(ev)}-${n}`
             const [icon, color] = ICONS[ev.level] ?? ['•', 'cyan']
             const canOpen = !!ev.path && insideDirs(ev.path, log.dirs)
             return [

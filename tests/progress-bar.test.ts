@@ -841,7 +841,8 @@ test('events: parsing, unseen errors, log folders and the open-log check', async
   expect(insideDirs(`${HOME}/logsx/a.log`, [`${HOME}/logs`])).toBe(false)
   expect(insideDirs('/etc/passwd', [`${HOME}/logs`])).toBe(false)
   expect(insideDirs(`${HOME}/logs/a.log`, [])).toBe(false)
-  expect(evId(evs[0]!)).toBe('300-y-y-note')
+  expect(evId(evs[0]!)).toMatch(/^300-y-y-note-[0-9a-z]+$/)
+  expect(evId({ ...evs[0]!, title: 'x'.repeat(200) + 'a' })).not.toBe(evId({ ...evs[0]!, title: 'x'.repeat(200) + 'b' }))
   expect(hhmm(0).length).toBe(5)
 })
 
