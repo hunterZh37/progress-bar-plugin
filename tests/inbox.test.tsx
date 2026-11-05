@@ -48,6 +48,11 @@ test('parseInbox: drops handled, missing ids and non-https urls, bad JSON gives 
   expect(parseInbox(JSON.stringify({ items: [{ from: 'x' }, 'y'] }), new Set()).items).toEqual([])
 })
 
+test('parseInbox: hides secure channel invites', () => {
+  const t = JSON.stringify({ items: [{ id: 'inv1', subject: 'hunterZh37 invited you to hunterZh37/pb-channel-a-b' }, { id: 'ok1', subject: 'Invoice due' }] })
+  expect(parseInbox(t, new Set()).items.map(i => i.id)).toEqual(['ok1'])
+})
+
 test('Inbox block: first on the List tab, opens https links, ✓ handled hides and records the id', async ($, on) => {
   const files: Record<string, string> = { [SCRIPT]: statusScript(), [`${P}/.state/panel-on`]: 'on\n', [`${P}/inbox.json`]: INBOX, [`${P}/.state/inbox-handled.txt`]: 'ccc333\n' }
   const ran = world(on, files)

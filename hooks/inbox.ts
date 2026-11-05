@@ -21,6 +21,9 @@ export const inboxAtom = atom({ plugin: 'progress-bar', key: 'inbox' } as const,
 
 const str = (v: unknown, n: number) => (typeof v === 'string' || typeof v === 'number' ? String(v) : '').replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, n)
 
+/** GitHub invites to a secure channel repo (each email is its own thread, so "✓ handled" alone kept showing the next one). */
+export const CHANNEL_INVITE = /invited you to \S*\/pb-channel-/
+
 /** inbox.json text and the handled ids -> the items still open. Bad JSON gives none. */
 export function parseInbox(text: string, handled: Set<string>): Inbox {
   let raw: unknown
@@ -34,6 +37,8 @@ export function parseInbox(text: string, handled: Set<string>): Inbox {
     const id = str(o.id, 200)
     if (!id || handled.has(id) || seen.has(id)) return []
     seen.add(id)
+    // Secure channel invites are accepted when you join the channel, so they are never a to-do.
+    if (CHANNEL_INVITE.test(str(o.subject, 160))) return []
     const url = str(o.url, 2000)
     const it: InboxItem = { id, from: str(o.from, 80), subject: str(o.subject, 160) || '(no subject)', why: str(o.why, 120), url: /^https:\/\/[^\s"'`]+$/.test(url) ? url : '' }
     const due = str(o.due, 60)
@@ -168,6 +173,7 @@ for it in data["items"]:
     tid = str(it.get("id", "")).strip().split(":")[-1]
     if not re.fullmatch(r"[0-9A-Za-z]{8,24}", tid) or tid in handled or tid in seen: continue
     seen.add(tid)
+    if re.search(r"invited you to \S*/pb-channel-", str(it.get("subject", ""))): continue
     row = {"id": tid, "from": clean(it.get("from"), 60), "subject": clean(it.get("subject"), 120) or "(no subject)",
            "why": clean(it.get("why"), 80), "url": "https://mail.google.com/mail/?authuser=" + sys.argv[2] + "#all/" + tid}
     if it.get("due"): row["due"] = clean(it["due"], 40)
