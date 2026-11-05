@@ -277,7 +277,7 @@ Making the generosity database better · 6 done today · 4 running
 - **Sections:** PROBLEMS, TO-DO (per machine, priorities, blockers, the menu), RUNNING, WAITING, DONE. Headers have no hotkeys. Folding works as before. DONE shows the latest 5 in time order, then `+N more`. Inside RUNNING and WAITING, rows cluster by area in the goal's order, `Other` last. To-dos keep their priority order.
 - **Gutter:** the status mark (`◐ ⏸ ✓ ⚠ ↳`) sits in one column and the title in the next. Nothing else uses those columns.
 - **Running rows:** the title, a thin bar and the percent, lined up at the right, then time left or a stuck note when there is one (`59m left`, `⚠ stuck 14m`).
-- **Second line:** `<Area> · <why>` for running jobs, `<Area> · <why it waits>` for waiting ones, `<Area> · <impact>` for done ones. It is one line, cut with `…` to fit, never wrapped.
+- **Second line:** `<Area> · <why>` for running jobs, `<Area> · <why it waits>` for waiting ones, `<Area> · <impact>` for done ones. It is one line, cut with `…` to fit, never wrapped. Press the row's title to read the whole line, wrapped under it.
 - **Plain titles:** the title is the improvement, with its machine left out (`Hunty grants linked to own filer` reads `Grants linked to own filer`).
 - **Opened card:** press a title. A running or waiting job shows its step (or what it waits on, or its count), its machine and its time. A done job shows the rest of its impact, finish and run time with its machine, and what it unlocked. Gains a job named show here, `quality: 1.65M more board seats counted`.
 - **Lenses:** cost, quality and speed show only in an opened card, from the job's `gains`.

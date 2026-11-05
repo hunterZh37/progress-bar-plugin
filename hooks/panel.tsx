@@ -1138,7 +1138,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           {tail ? <Text color={stuck ? 'yellow' : undefined} dimColor={!stuck} wrap="truncate-end">{`  ${tail}`}</Text> : null}
         </Box>,
         second(`rw${k}`, ind.length + 4, ar, why),
-        ...(isOpen ? details(r, k, pad, waitOn, tags, machineOf(full, title)) : []),
+        // Open: the full why first, wrapped under the title (the collapsed line cuts it), then the details.
+        ...(isOpen ? [why && why.length > Math.max(4, width - ind.length - 4 - ar.tag.length - 3) ? hang(`fw${k}`, pad, why) : null, ...details(r, k, pad, waitOn, tags, machineOf(full, title))].filter(Boolean) : []),
       ].filter(Boolean)
     }
     const toggleCard = (key: string) => update($, openAtom, l => (l.includes(key) ? l.filter(x => x !== key) : [...l, key]))
@@ -1243,6 +1244,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         second(`dni${i}`, 4, ar, impact),
         ...(isOpen
           ? [
+              impact && impact.length > Math.max(4, width - 4 - ar.tag.length - 3) ? hang(`dfi${i}`, '    ', impact) : null,
               ...gainLines(tags).filter(g => !g.endsWith(`: ${impact}`)).map((g, j) => hang(`dg${i}-${j}`, '    ', g)),
               ...(impact && more[0] === 'no impact reported' ? more.slice(1) : more).map((t, j) => hang(`dd${i}-${j}`, '    ', t, !rec?.impact.length || !rec.impact.includes(t))),
             ]
