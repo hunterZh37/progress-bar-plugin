@@ -235,7 +235,7 @@ export type TodoRow<T> =
 export function todoRows<T extends { owner: string; text: string; line: number }>(ranked: RankedTodo<T>[], width: number, label: (b: string) => string = b => b): TodoRow<T>[] {
   const out: TodoRow<T>[] = []
   const owners = [...new Set(ranked.map(t => t.owner))]
-  const room = Math.max(8, width - 10)
+  const room = Math.max(8, width - 11) // "    ▶ " + " 1." + two spaces
   owners.forEach((owner, k) => {
     const items = ranked.filter(t => t.owner === owner)
     if (k) out.push({ kind: 'gap', owner })
@@ -243,7 +243,7 @@ export function todoRows<T extends { owner: string; text: string; line: number }
     const bOf = (t: RankedTodo<T> | undefined) => (t?.blockedBy ? shortJob(label(t.blockedBy)) : '')
     items.forEach((t, i) => {
       const b = bOf(t)
-      out.push({ kind: 'item', owner, item: t, marker: t.next ? '▶' : b ? '⏸' : ' ', num: (t.num === null ? '' : String(t.num)).padStart(2), title: clip(shownTitle(t.body), room), dim: !!b })
+      out.push({ kind: 'item', owner, item: t, marker: t.next ? '▶' : b ? '⏸' : ' ', num: `${i + 1}.`.padStart(3), title: clip(shownTitle(t.body), room), dim: !!b })
       if (b && bOf(items[i + 1]) !== b) out.push({ kind: 'waits', owner, text: clip(`waits for ${b}`, room), at: t.line })
     })
   })

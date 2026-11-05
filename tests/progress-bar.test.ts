@@ -582,7 +582,7 @@ test('the panel draws sections and rows, and a header press writes folded.txt', 
   expect(ran).toContainEqual({ argv: ['/bin/sh', SCRIPT], env: { PB_FULL: '1' }, stdin: '{"session_id":"","cwd":"","workspace":{"current_dir":""}}' })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { title: 'Status', isFocused: false, bodyColumns: 52, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } })
   expect((await ui.find({ type: 'Text', text: /^  You$/ }))?.text).toBe('  You')
-  expect((await ui.find({ type: 'Button', text: /call Sam/ }))?.text).toBe('    call Sam')
+  expect((await ui.find({ type: 'Button', text: /call Sam/ }))?.text).toBe(' 2.  call Sam')
   expect((await ui.find({ type: 'Button', text: /TO-DO/ }))?.text).toBe('▾ ☐ TO-DO  3')
   // One line per job by default: the title button, the bar, %, and a yellow no-progress note. No details yet.
   expect((await ui.find({ type: 'Button', key: 'open-nightly-import' }))?.text).toBe(`▸ ${'nightly-import'.padEnd(14)}`)
@@ -659,7 +659,7 @@ test('open to-dos under TO-DO, checked-off ones under DONE; the menu marks done,
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
   expect((await ui.find({ type: 'Button', text: /TO-DO/ }))?.text).toBe('▾ ☐ TO-DO  2')
-  expect((await ui.find({ type: 'Button', text: /review PR/ }))?.text).toBe('    review PR')
+  expect((await ui.find({ type: 'Button', text: /review PR/ }))?.text).toBe(' 1.  review PR')
   expect(await ui.find({ type: 'Text', text: /^  Mac$/ })).toBe(undefined)
   expect((await ui.find({ type: 'Button', text: /DONE/ }))?.text).toBe('▾ ✔ DONE  3')
   expect((await ui.find({ type: 'Text', text: /Checked-off to-dos/ }))?.text).toBe('  Checked-off to-dos')
@@ -678,7 +678,7 @@ test('open to-dos under TO-DO, checked-off ones under DONE; the menu marks done,
   expect((await ui.find({ type: 'Button', text: /Move back/ }))?.text).toBe('○ Move back to to-do  ')
   await ui.press({ key: 'a-todo-3' })
   expect(files[TODO_FILE]).toBe('# note\n[you]\nx review PR | https://x.test/1\nold thing\ncall Sam\n[mac]\nx all done here\n')
-  expect((await ui.find({ type: 'Button', text: /old thing/ }))?.text).toBe('    old thing')
+  expect((await ui.find({ type: 'Button', text: /old thing/ }))?.text).toBe(' 1.  old thing')
 
   await ui.press({ key: 't-4' })
   await ui.press({ key: 'a-del-4' })
@@ -1265,10 +1265,19 @@ test('to-do rows: one line each, ▶ next, ⏸ blocked, one waits for line per r
   const rows = todoRows(rankTodos(todos, ['load-2019-20']), 40, b => (b === 'load-2019-20' ? 'Load 2019-20 filings · board history' : b))
   expect(rows.map(r => (r.kind === 'item' ? `${r.marker} ${r.num}  ${r.title}` : r.kind === 'waits' ? `~ ${r.text}` : r.kind))).toEqual([
     'head',
-    '⏸  1  trends per org',
-    '⏸  2  grant links',
-    '~ waits for Load 2019-20 filings',
-    '▶  3  a very long title that will n…',
+    '⏸  1.  trends per org',
+    '⏸  2.  grant links',
+    '~ waits for Load 2019-20 filin…',
+    '▶  3.  a very long title that will …',
+  ])
+  // Items the file does not number are numbered by their place, so every row starts with "1.", "2.", ...
+  const plain = [
+    { owner: 'you', text: 'Add the Azure redirect', done: false, line: 1 },
+    { owner: 'you', text: 'Verify the Google app', done: false, line: 2 },
+  ]
+  expect(todoRows(rankTodos(plain, []), 60).flatMap(r => (r.kind === 'item' ? [`${r.num} ${r.title}`] : []))).toEqual([
+    ' 1. Add the Azure redirect',
+    ' 2. Verify the Google app',
   ])
   expect(shortJob('Hunty: Similar orgs · step')).toBe('Hunty: Similar orgs')
   expect(shortJob('Arts classify: batch 3')).toBe('Arts classify')

@@ -175,7 +175,7 @@ Load the 2026 batch
 - **Headings:** any `[name]`, for a person or a machine. Each shows as one row: `YOU: item · item`.
 - **Done:** prefix `x `. Done items are hidden in the status line and shown with `✓` under DONE in the Status panel. `/progress-bar todo clear` removes them.
 - **Links:** `text | url` makes the text clickable in terminals that support links.
-- **Priority:** a leading `N. ` sets an item's place under its heading, `1.` first. Unnumbered items come after the numbered ones, in file order. The status line and the Status panel list items in this order, with the number.
+- **Priority:** a leading `N. ` sets an item's place under its heading, `1.` first. Unnumbered items come after the numbered ones, in file order. The status line and the Status panel list items in this order. The panel numbers every item by its place, `1.` to `N.` in bold cyan, whether or not the file numbers it.
 - **Blocked items:** an item ending `(after X)` waits while any RUNNING job's name or title holds every key word of X (case does not matter, small words like "the" are skipped). `(after 2019-20 load)` waits on `Load 2019-20 filings`. A blocked item shows dim. The Status panel hides the `(after X)` text and adds one dim `waits for <job>` line under the items that wait on that job.
 - **Next:** the top ready item of each machine heading (any heading but `[you]`) is marked: `next` in the status line, a green `▶` in the Status panel.
 - **Move up and Move down:** in the Status panel, press an item and pick `↑ Up` or `↓ Down`. Every open item under that heading is renumbered `1.` to `N.` in the new order. The item is found by its text, never by line number.

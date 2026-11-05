@@ -929,7 +929,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     ].filter(Boolean)
 
     // Open to-dos, one line each, never wrapped: per machine "Mac  2", then by priority a marker (green ▶ next, dim ⏸
-    // blocked), the number in a 2-wide column and the title without its "(after X)". Blocked items that wait on the same
+    // blocked), its place as "1." in a 3-wide column (bold cyan) and the title without its "(after X)". Blocked items that wait on the same
     // job get one dim "waits for <job>" line under the last of them. Pressing an item opens its menu below it.
     const jobLabel = (b: string) => (runNames.includes(b) ? metaNow[slug(b)]?.title ?? b : b)
     const todoRows = () => layoutTodos(rankTodos(todos.filter(t => !t.done), running), width, jobLabel).flatMap(row => {
@@ -943,7 +943,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         <Box key={`tr-${t.line}`}>
           <Text color={row.marker === '▶' ? 'green' : undefined} dimColor={row.marker === '⏸'}>{`    ${row.marker} `}</Text>
           <Button key={`t-${t.line}`} plain onPress={() => update($, menuAtom, v => (v === t.line ? -1 : t.line))}>
-            {row.dim ? <Text dimColor>{`${row.num}  ${row.title}`}</Text> : `${row.num}  ${row.title}`}
+            {row.dim
+              ? <Text dimColor>{`${row.num}  ${row.title}`}</Text>
+              : [<Text key="n" bold color="cyan">{row.num}</Text>, `  ${row.title}`]}
           </Button>
         </Box>,
         menuFor === t.line
