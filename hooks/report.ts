@@ -18,7 +18,7 @@ export const PROGRESS_TOOL = {
   inputSchema: {
     type: 'object',
     properties: {
-      title: { type: 'string', description: 'Plain words for what the job is. Example: Login fix, tests and deploy.' },
+      title: { type: 'string', description: 'Plain words for the improvement the job makes, the outcome not the mechanism. Example: Every board member counted, not just 25.' },
       done: { type: 'number', description: 'Steps finished so far.' },
       total: { type: 'number', description: 'Steps in all, above 0.' },
       step: { type: 'string', description: 'A few words on the current step.' },
@@ -27,7 +27,7 @@ export const PROGRESS_TOOL = {
       slug: { type: 'string', description: 'Optional file name. Default: the slug of the title.' },
       reads: { type: 'string', description: 'Optional. What the job reads, a few words. Example: nombot.board_members_history. Shown on the Topology tab.' },
       writes: { type: 'string', description: 'Optional. What the job writes, a few words. Example: Postgres via work-mac. Shown on the Topology tab.' },
-      impact: { type: 'string', description: 'What the finished job changed and why it matters, one to three short lines (newlines split them). Example: Board links rebuilt: 1.29M pairs, 109K split people merged. Shown when its DONE row is opened.' },
+      impact: { type: 'string', description: 'How the finished job made things better: what the data or product now has or gets right, with the key number, one to three short lines (newlines split them). No commit ids or file names. Example: 1.65M more board seats, so board links and people search see whole boards. Shown when its DONE row is opened.' },
       finished: { type: 'boolean', description: 'true removes the bar once the job is over. Pass impact with it.' },
     },
     required: ['title'],

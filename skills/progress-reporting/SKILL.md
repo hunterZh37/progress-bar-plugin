@@ -39,11 +39,11 @@ Path: `~/.claude-progress/<slug>.json`
 - **done**, **total**: numbers, `total` above 0. Without them the line shows `working`.
 - **step**: a few words on the current step.
 - **startedAt**: optional, milliseconds since the epoch. Without it the file's time is used.
-- **title**: plain words for what the job is, so a person knows it at a glance. The Status panel shows it in bold above the slug.
+- **title**: plain words for the improvement the job makes, so a person knows at a glance why it runs. Name the outcome, not the mechanism: `Every board member counted, not just 25` rather than `Board lists past 25 seats`, `Know where more orgs serve` rather than `Service places round 3`. The Status panel shows it in bold above the slug.
 - **why**: what the job unlocks for the person (`the weekly report`). Shown as `unlocks: …`.
 - **parent**: the slug of the bigger job this is part of. Set it when a subagent or script works for another job that has a progress file. While both run, the child draws inside the parent's card, and the parent reads `waiting on: <child>` instead of stuck.
 - **session**: the Claude Code session id, so the bar shows only in this session. In Bash it is `$CLAUDE_CODE_SESSION_ID`. Add it whenever you can.
-- **impact**: set it just before the job ends. What changed and why it matters, in numbers when you have them, one to three short lines (newlines split them). The Status panel shows it when the job's DONE row is opened. Without it the row says `no impact reported`.
+- **impact**: set it just before the job ends. Answer one question: how is the thing this job works on better now? Say what it now has or gets right, with the key number, and who or what benefits, one to three short lines (newlines split them). Example: `1.65M more board seats, so board links and people search see whole boards`. Skip mechanics like commit ids, accounts or file names. The Status panel shows it when the job's DONE row is opened. Without it the row says `no impact reported`.
 - **reads**, **writes**: optional short strings, what the job reads and writes (`nombot.board_members_history`, `Postgres via work-mac`). The Topology tab shows them on the branch between machines and in the job's details. Without `reads` a job on a helper machine is drawn reading from the data host's database. Set `writes` only when the job writes back.
 - **cwd**: always add it, the absolute folder you work in. The bar then shows in the sessions of that project, even when the session id is missing or that session has closed.
 - Without `session` and `cwd`, the bar goes to the shared list, which may show in no session on a machine that routes it elsewhere.
@@ -89,7 +89,7 @@ EOF
 
 Write `impact` into the file, wait 5 seconds (one poll, so the plugin saves it), then delete the file. Or call `progress_report` with `finished: true` and `impact`. A file untouched for 10 minutes stops showing anyway.
 
-**Subagents:** your final report is your impact. Start it with one bold sentence on what changed, with numbers (`**Board links rebuilt: 1.29M pairs, 109K split people merged.**`). The plugin keeps that sentence, or your first 2 to 3 lines.
+**Subagents:** your final report is your impact. Start it with one bold sentence on how the work made things better, with numbers (`**One person is one person now: 109K split board members merged, so board links stop double counting.**`). The plugin keeps that sentence, or your first 2 to 3 lines.
 
 ## Events: the Status panel's Log tab
 
