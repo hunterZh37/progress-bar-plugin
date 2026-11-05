@@ -292,19 +292,19 @@ WAITING jobs draw no bar: one line, `⏸ <title> · waiting on <reason>` (the te
 ```
 ▌List │ Connectors │ GitHub │ Log │ Chat           Max 62% ▰▰▰▱▱ 7d
 
-◐ ▾ Health care labels       ████████░░  64%  1h19m left
+◐ ▾ Health care labels       ━━━━━━━━──  64%  1h19m left
     healthcare-classify   🏷  labeling
     1,234 of 2,000 batches
     scoring
     ⏱ 42m so far   ⚡ 31/min
     unlocks: the health care filter, wrapped under
     its indent when it is long
-◓ ▾ Release prep             ████████░░  75%  waiting on Train the model
+◓ ▾ Release prep             ━━━━━━━━──  75%  waiting on Train the model
     🤖  Claude agent
     6 of 8 steps
     ⏱ 22m so far   🔧 52 actions
-      ↳ ▸ Train the model    ░░███░░░░░       12:50 running
-⚠ ▸ Nightly import           ████████░░  80%  ⚠ stuck 14m
+      ↳ ▸ Train the model    ──━━━─────       12:50 running
+⚠ ▸ Nightly import           ━━━━━━━━──  80%  ⚠ stuck 14m
 ```
 
 - **Usage meter:** a compact `Team 48% ▰▰▱▱▱ 7d` (the plan's name, `Max` when unknown) sits at the right end of the tab row on every tab, even with nothing running. In a pane too narrow for both it gets its own line above the tabs, right-aligned. It reads `Max 7-day used N%` (or `7d N%`) from running lines. With no job reporting it, the last reading stays for up to 7 days (saved in `~/.claude-progress/.state/max-usage.json`). Once that reading is over 35 minutes old it adds its time, like `· as of 12:39`.

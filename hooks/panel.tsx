@@ -992,14 +992,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           </Button>
           {frac === null
             ? [
-                <Text key="a" dimColor>{`  ${'░'.repeat(before)}`}</Text>,
-                <Text key="b" color={stuck ? 'yellow' : 'cyan'}>{'███'}</Text>,
-                <Text key="c" dimColor>{'░'.repeat(after)}</Text>,
+                <Text key="a" dimColor>{`  ${'─'.repeat(before)}`}</Text>,
+                <Text key="b" color={stuck ? 'yellow' : 'cyan'}>{'━━━'}</Text>,
+                <Text key="c" dimColor>{'─'.repeat(after)}</Text>,
                 <Text key="d">{'     '}</Text>,
               ]
             : [
-                <Text key="a" color={stuck ? 'yellow' : 'green'}>{`  ${'█'.repeat(filled)}`}</Text>,
-                <Text key="b" dimColor>{'░'.repeat(MINI - filled)}</Text>,
+                <Text key="a" color={stuck ? 'yellow' : 'green'}>{`  ${'━'.repeat(filled)}`}</Text>,
+                <Text key="b" dimColor>{'─'.repeat(MINI - filled)}</Text>,
                 <Text key="c" bold>{` ${String(Math.round(r.pct!)).padStart(3)}%`}</Text>,
               ]}
           </Box>
