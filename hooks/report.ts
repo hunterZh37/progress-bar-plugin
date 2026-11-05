@@ -1,5 +1,6 @@
 import type { EngineInterface } from 'claude-code'
 
+import { impactLines, saveDone } from './done'
 import { slug } from './render'
 import { sessionKeyOf } from './route'
 
@@ -13,7 +14,7 @@ const RESERVED = new Set(['inbox', 'actions', 'max-usage', 'channels'])
 
 export const PROGRESS_TOOL = {
   name: 'progress_report',
-  description: 'Show a progress bar for a job in this session\'s Status panel and status line. Call it when a job with several steps starts and after each step, with done and total. Pass finished: true when the job is over to remove the bar. It writes ~/.claude-progress/<slug>.json with this session\'s id and folder filled in, so the bar shows in this session on any machine. For a subagent you brief, give it the slug to report under (the slug of its description) so the bar sits on its line.',
+  description: 'Show a progress bar for a job in this session\'s Status panel and status line. Call it when a job with several steps starts and after each step, with done and total. Pass finished: true when the job is over to remove the bar, with impact: what it changed. It writes ~/.claude-progress/<slug>.json with this session\'s id and folder filled in, so the bar shows in this session on any machine. For a subagent you brief, give it the slug to report under (the slug of its description) so the bar sits on its line.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -24,13 +25,14 @@ export const PROGRESS_TOOL = {
       why: { type: 'string', description: 'What the job unlocks for the person. Shown as "unlocks: ...".' },
       parent: { type: 'string', description: 'Optional slug of the bigger job this is part of.' },
       slug: { type: 'string', description: 'Optional file name. Default: the slug of the title.' },
-      finished: { type: 'boolean', description: 'true removes the bar once the job is over.' },
+      impact: { type: 'string', description: 'What the finished job changed and why it matters, one to three short lines (newlines split them). Example: Board links rebuilt: 1.29M pairs, 109K split people merged. Shown when its DONE row is opened.' },
+      finished: { type: 'boolean', description: 'true removes the bar once the job is over. Pass impact with it.' },
     },
     required: ['title'],
   },
 }
 
-export type ReportInput = { title: string; done?: number; total?: number; step?: string; why?: string; parent?: string; slug?: string; finished?: boolean }
+export type ReportInput = { title: string; done?: number; total?: number; step?: string; why?: string; parent?: string; slug?: string; impact?: string; finished?: boolean }
 export type Owner = { session: string; cwd: string }
 
 /** The progress file's JSON for a report. `startedAt` comes from the file it replaces, else now. */
@@ -45,6 +47,8 @@ export function reportBody(i: ReportInput, owner: Owner, startedAt: number): Rec
   out.title = i.title.trim()
   if (i.why?.trim()) out.why = i.why.trim()
   if (i.parent?.trim()) out.parent = slug(i.parent)
+  const impact = impactLines(i.impact)
+  if (impact.length) out.impact = impact.join('\n')
   if (owner.session) out.session = owner.session
   if (owner.cwd) out.cwd = owner.cwd
   return out
@@ -75,8 +79,18 @@ export async function writeReport($: EngineInterface, h: string, i: ReportInput,
   if (RESERVED.has(name)) return `"${name}" is a data file name. Pick another slug.`
   const path = `${h}/${DIR_REL}/${name}.json`
   if (i.finished) {
+    // The done record keeps what the job changed after its file is gone.
+    let prev: Record<string, unknown> = {}
+    try { prev = JSON.parse(String(await $.fs.read(path))) as Record<string, unknown> } catch { prev = {} }
+    const o = owner ?? await ownerOf($)
+    const impact = impactLines(i.impact).length ? impactLines(i.impact) : impactLines(prev.impact)
+    const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
+    await saveDone($, h, {
+      slug: name, title: i.title?.trim() || str(prev.title) || '', why: i.why?.trim() || str(prev.why), impact, step: str(prev.step),
+      started: typeof prev.startedAt === 'number' ? prev.startedAt : undefined, finished: await $.clock.now(), session: o.session || undefined, kind: 'job',
+    }).catch(() => undefined)
     await $.process.run(['rm', '-f', path]).catch(() => undefined)
-    return `Removed the bar ${name}.`
+    return `Removed the bar ${name}.${impact.length ? '' : ' Pass impact (what it changed) next time so its DONE row says so.'}`
   }
   const now = await $.clock.now()
   const body = reportBody(i, owner ?? await ownerOf($), await startedAtOf($, path, now))

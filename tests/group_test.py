@@ -123,17 +123,31 @@ class Group(unittest.TestCase):
         self.assertTrue(any('build' in l for l in out))
         self.assertTrue(any('inboxer' in l for l in out))
 
-    def test_helper_healthy_is_info_in_done_without_bar(self):
+    def test_helper_healthy_is_a_machine_line_not_a_done_row(self):
         t = 1_800_000_000
         out = self.run_('▶ hunty ✓ helper healthy · load 0.22 on 12 cores · idle\n▶ build ████░░░░ 40.0% · 2/5\n', now=t)
         self.assertEqual(out, [
             '▾ ▶ RUNNING',
             '  ◐ build ████░░░░ 40.0% · 2/5 · in progress',
-            '▾ ✔ DONE',
-            '  hunty ✓ helper healthy · load 0.22 on 12 cores · idle',
+            '🖥 hunty ✓ helper healthy · load 0.22 on 12 cores · idle',
         ])
+        # Fed back in (a status line chained twice), the machine line is dropped.
+        self.assertEqual(self.g.ours(['🖥 hunty ✓ helper healthy · idle', 'Opus']), ['Opus'])
         # When it goes away it is not reported as a finished job.
         self.assertFalse(any('hunty' in l for l in self.run_('', now=t + 60)))
+
+    def test_helper_idle_reads_busy_while_a_host_job_runs(self):
+        out = self.run_('▶ hunty ✓ helper healthy · load 1.96 on 12 cores · idle\n'
+                        '▶ hunty: hunty-board-cap-extract ████████░░░░ 40.2% · 55000/136911 · parsing\n'
+                        '▶ hunty: board_cap.py · 86.8% CPU · 00:29\n')
+        self.assertIn('🖥 hunty ✓ helper healthy · load 1.96 on 12 cores · busy: 1 job running', out)
+        self.assertFalse(any(l.startswith('▾ ✔ DONE') for l in out))
+        # Only busy processes: they count.
+        out = self.run_('▶ hunty ✓ helper healthy · load 1.96 on 12 cores · idle\n▶ hunty: a.py · 86.8% CPU · 00:29\n▶ hunty: b.py · 50.0% CPU · 00:10\n', T0 + 1)
+        self.assertIn('🖥 hunty ✓ helper healthy · load 1.96 on 12 cores · busy: 2 processes running', out)
+        # Another host's job does not make it busy.
+        out = self.run_('▶ hunty ✓ helper healthy · load 0.2 on 12 cores · idle\n▶ gpu: train ██░░ 10.0% · 1/9\n', T0 + 2)
+        self.assertIn('🖥 hunty ✓ helper healthy · load 0.2 on 12 cores · idle', out)
 
     def test_folded_sections(self):
         self.write('.state/folded.txt', 'todo\nrunning\n')

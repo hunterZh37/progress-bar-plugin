@@ -18,6 +18,7 @@ import type { Task } from './report'
 import { PROJECT_LINE, pickOwner, routeOf, sessionKeyOf as keyOf } from './route'
 import type { Progress, Row, Track } from './render'
 import { isDarwin } from './mac'
+import { impactLines, parseDone, reportOf, saveDone, summarize, DONE_REL } from './done'
 import { aliveTasks, bgLaunch, scanTranscript, snapOf, toolWhat, waitSegs } from './waiting'
 import type { BgSnap, BgTask, Job, TxScan } from './waiting'
 
@@ -163,10 +164,6 @@ async function bornOf($: EngineInterface, path: string): Promise<number> {
   } catch { return 0 }
 }
 
-async function readP($: EngineInterface, path: string): Promise<Progress | null> {
-  try { return parseProgress(String(await $.fs.read(path))) } catch { return null }
-}
-
 const gitRoots = new Map<string, string>()
 
 /** The project slug of a folder, as the per-project to-dos name it. */
@@ -216,7 +213,15 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
     ownJobs.add(slug(a.description))
     if (s.lastTool === 'SubagentHandback') continue
     if (a.status === 'waiting' && s.tools === 0 && now - s.startedAt > STALE_WAIT_MS) continue
-    const p = h ? await readP($, `${dir}/${slug(a.description)}.json`) : null
+    let p: Progress | null = null
+    if (h) {
+      try {
+        const text = String(await $.fs.read(`${dir}/${slug(a.description)}.json`))
+        p = parseProgress(text)
+        const raw = JSON.parse(text) as Record<string, unknown>
+        if (raw && typeof raw === 'object') agentFiles.set(a.id, raw)
+      } catch { p = null }
+    }
     rows.push({ id: a.id, description: a.description, status: a.status, startedAt: s.startedAt, tools: s.tools, lastTool: s.lastTool, done: p?.done ?? null, total: p?.total ?? null, step: p?.step ?? '' })
   }
   const shared = new Set<string>()
@@ -252,6 +257,7 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
   }
   const projects = new Map<string, string>()
   const jobs: Job[] = []
+  const fileNow = new Map<string, FileJob>()
   let files: Awaited<ReturnType<typeof $.fs.list>> = []
   try { files = await $.fs.list(dir) } catch { files = [] }
   for (const f of files) {
@@ -277,13 +283,16 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
     if (route === 'skip') continue
     const id = `file:${name}`
     if (route === 'shared') shared.add(id)
-    rows.push({ id, description: name, status: 'running', startedAt: p.startedAt ?? 0, tools: 0, lastTool: '', done: p.done, total: p.total, step: p.step })
+    const row: Row = { id, description: name, status: 'running', startedAt: p.startedAt ?? 0, tools: 0, lastTool: '', done: p.done, total: p.total, step: p.step }
+    rows.push(row)
+    if (raw && typeof raw === 'object') fileNow.set(name, { row, raw: raw as Record<string, unknown> })
     const m = pickMeta(raw)
     const pct = p.done !== null && p.total ? (100 * p.done) / p.total : null
     if (pct === null || pct < 100) jobs.push({ name, title: m.title ?? '', pct, parent: m.parent ? slug(m.parent) : '' })
   }
   await explainWaits($, agents, rows, jobs, now)
   await trackRows($, dir, rows, now)
+  await recordFinished($, h, dir, fileNow, now)
   return { rows, now, shared }
 }
 
@@ -311,6 +320,88 @@ async function trackRows($: EngineInterface, dir: string, rows: Row[], now: numb
   }
   for (const [k, t] of Object.entries(tracks)) if (now - t.seen > TRACK_KEEP_MS) { delete tracks[k]; changed = true }
   if (changed) await $.fs.write(`${dir}/${TRACK_REL}`, JSON.stringify(tracks)).catch(() => undefined)
+}
+
+// ---- Done records (done.ts): a job's or agent's impact, kept after its progress file is gone ----
+
+type FileJob = { row: Row; raw: Record<string, unknown> }
+// Progress-file jobs this session showed last poll, and the ones already recorded at 100% (by slug and start).
+let filesBefore = new Map<string, FileJob>()
+const recordedAt = new Set<string>()
+// Each live agent's progress file as last read, for its title, why and impact once it is done.
+const agentFiles = new Map<string, Record<string, unknown>>()
+// Agents whose SubagentHandback was recorded: a later SubagentStop keeps that report.
+const handedBack = new Set<string>()
+
+const strOf = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
+
+/** A done record for a progress-file job. */
+async function recordJob($: EngineInterface, h: string, name: string, j: FileJob, now: number) {
+  let session = strOf(j.raw.session)
+  if (!session) { try { session = await $.session.id() } catch { session = undefined } }
+  await saveDone($, h, {
+    slug: name, title: strOf(j.raw.title) ?? '', why: strOf(j.raw.why), impact: impactLines(j.raw.impact), step: j.row.step || undefined,
+    started: j.row.startedAt || undefined, finished: now, session, kind: 'job',
+  }).catch(() => undefined)
+}
+
+/**
+ * A job counts as finished when its file is gone since the last poll, or when it first reports done == total.
+ * A file that is still there but no longer shown (stale, or another session's now) is not a finish.
+ * Shell command rows (shell-*) are not tasks and keep no record.
+ */
+async function recordFinished($: EngineInterface, h: string, dir: string, now: Map<string, FileJob>, at: number) {
+  for (const [name, j] of now) {
+    const r = j.row
+    const k = `${name}@${r.startedAt}`
+    if (r.done !== null && r.total !== null && r.done >= r.total && !recordedAt.has(k) && !name.startsWith('shell-')) {
+      recordedAt.add(k)
+      await recordJob($, h, name, j, at)
+    }
+  }
+  for (const [name, j] of filesBefore) {
+    if (now.has(name) || name.startsWith('shell-')) continue
+    if (await $.fs.exists(`${dir}/${name}.json`).catch(() => true)) continue
+    const k = `${name}@${j.row.startedAt}`
+    // Already recorded at 100%: record again only to pick up an impact written since.
+    if (recordedAt.has(k) && !impactLines(j.raw.impact).length) continue
+    recordedAt.add(k)
+    await recordJob($, h, name, j, at)
+  }
+  filesBefore = now
+  if (recordedAt.size > 500) recordedAt.clear()
+}
+
+/**
+ * A done record for an agent: its final report as a short impact (done.ts summarize), unless its progress file named
+ * an impact, or a progress_report with impact recorded it in the last 30 minutes.
+ */
+async function recordAgent($: EngineInterface, agentId: string, report: string, txPathOf = '') {
+  const h = await resolveHome($)
+  if (!h) return
+  let desc = ''
+  try { desc = (await $.agent.list()).find(a => a.id === agentId)?.description ?? '' } catch { desc = '' }
+  if (!desc && txPathOf) {
+    try { desc = String((JSON.parse(String(await $.fs.read(txPathOf.replace(/\.jsonl$/, '.meta.json')))) as { description?: unknown }).description ?? '') } catch { desc = '' }
+  }
+  if (!desc) return
+  const key = slug(desc)
+  const raw = agentFiles.get(agentId) ?? {}
+  const now = await $.clock.now()
+  let impact = impactLines(raw.impact)
+  if (!impact.length) {
+    try {
+      const prev = parseDone(String(await $.fs.read(`${h}/${DONE_REL}/${key}.json`)))
+      if (prev && prev.impact.length && prev.kind === 'job' && now - prev.finished < 30 * 60_000) impact = prev.impact
+    } catch { /* none */ }
+  }
+  if (!impact.length) impact = summarize(report)
+  let session = ''
+  try { session = await $.session.id() } catch { session = '' }
+  await saveDone($, h, {
+    slug: key, title: strOf(raw.title) ?? desc, why: strOf(raw.why), impact, step: strOf(raw.step),
+    started: seen.get(agentId)?.startedAt, finished: now, session: session || undefined, kind: 'agent',
+  }).catch(() => undefined)
 }
 
 /** Folds or unfolds status line sections; the grouped status line shows a folded one as "▸ NAME (count)". */
@@ -585,7 +676,7 @@ export const register: Register = (on, options) => {
     const i = e as unknown as Record<string, unknown>
     const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
     const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
-    const text = await writeReport($, await resolveHome($), { title: str(i.title) ?? '', done: num(i.done), total: num(i.total), step: str(i.step), why: str(i.why), parent: str(i.parent), slug: str(i.slug), finished: i.finished === true })
+    const text = await writeReport($, await resolveHome($), { title: str(i.title) ?? '', done: num(i.done), total: num(i.total), step: str(i.step), why: str(i.why), parent: str(i.parent), slug: str(i.slug), impact: str(i.impact), finished: i.finished === true })
     await poll($).catch(() => undefined)
     return { result: text }
   })
@@ -652,6 +743,15 @@ export const register: Register = (on, options) => {
     const i = e as unknown as { agent_id?: unknown; agent_transcript_path?: unknown; background_tasks?: unknown }
     if (typeof i.agent_id === 'string' && typeof i.agent_transcript_path === 'string' && i.agent_transcript_path) txOf.set(i.agent_id, i.agent_transcript_path)
     snap = snapOf(i.background_tasks, await $.clock.now()) ?? snap
+    // Its turn ended: record its final report as its impact, unless its SubagentHandback was recorded already.
+    const id = typeof i.agent_id === 'string' ? i.agent_id : ''
+    const tx = typeof i.agent_transcript_path === 'string' ? i.agent_transcript_path : ''
+    if (id && tx && !handedBack.has(id)) {
+      try {
+        const rep = reportOf((await $.process.run(['tail', '-c', String(TX_TAIL), tx], { timeoutMs: 5000 })).stdout)
+        if (rep.text) await recordAgent($, id, rep.text, tx)
+      } catch { /* no transcript */ }
+    }
     return next(e)
   })
 
@@ -679,6 +779,11 @@ export const register: Register = (on, options) => {
       const t = bgLaunch(String(e.tool), input, r.result, s.lastAt)
       if (t) s.bg = [...(s.bg ?? []).filter(x => x.id !== t.id), t]
       if (stopped) dropTask(stopped)
+      // The agent's final report: what it changed, kept in its done record.
+      if (e.tool === 'SubagentHandback' && typeof input.message === 'string' && input.message.trim()) {
+        handedBack.add(e.agentId)
+        await recordAgent($, e.agentId, input.message).catch(() => undefined)
+      }
     }
     return r
   })

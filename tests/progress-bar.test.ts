@@ -4,6 +4,7 @@ import type { On } from 'claude-code'
 
 import { CONN_CACHE_REL, connUrl, connName, connSummary, formatCache, parseAccounts, parseCache, parseLogin, parseMcpList } from '../hooks/connectors'
 import { CHECKPOINT_PY } from '../hooks/checkpoint'
+import { clock } from '../hooks/done'
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
 import { PANE, maxReading, noteShows, NOTE_MS, sameName, waitPhrase, waitReason, badge, evId, fitLabel, labelCol, machineTitle, machines, maxMeter, nestRows, runCount, shortTitle, parseSections, runCard, shortAge, timeTail, slide, stripAnsi } from '../hooks/panel'
@@ -977,6 +978,7 @@ const TITLED_FULL = [
   '  ◐ child-step ██░░ 50.0% · 1/2 · y',
   '  ◐ box: train.py · 540% CPU · 12:50',
   '  ◐ other ██░░ 50.0% · 1/2 · a step · waiting on: Child job',
+  '🖥 hunty ✓ helper healthy · load 1.96 on 12 cores · busy: 1 job running',
   '▾ ✔ DONE',
   '  finisher ████████████████████ 100.0% · 7/7 · tests pass · 6m · 38 tools',
   '  nightly · finished 10:12',
@@ -989,6 +991,10 @@ test('the panel: titles, ids with badges, unlocks, a nested child, waiting on an
     [`${DIR}/big-batch.json`]: '{"done":6,"total":8,"title":"Big batch · six parts","why":"unlocks: the weekly report"}',
     [`${DIR}/child-step.json`]: '{"done":1,"total":2,"parent":"big-batch","title":"Child step"}',
     [`${DIR}/finisher.json`]: '{"done":7,"total":7,"title":"Finisher · last part"}',
+    // A done record with an impact for the grouper's finished row, and one older record only the records know.
+    [`${DIR}/.state/done/nightly.json`]: JSON.stringify({ slug: 'nightly', title: 'Nightly import · all files', why: 'the morning dashboard', impact: ['Board links rebuilt: 1.29M pairs', '109K split people merged'], started: NOW - 80 * 60_000, finished: NOW - 60_000, machine: 'Mac', kind: 'job' }),
+    [`${DIR}/.state/done/hunty-person-matcher-fix.json`]: JSON.stringify({ slug: 'hunty-person-matcher-fix', title: 'Hunty person matcher fix', impact: [], started: NOW - 3 * 3_600_000, finished: NOW - 2 * 3_600_000, machine: 'Mac', kind: 'agent' }),
+    [`${DIR}/.state/done/last-week.json`]: JSON.stringify({ slug: 'last-week', title: 'Old job', impact: ['x'], finished: NOW - 2 * 86_400_000, machine: 'Mac', kind: 'job' }),
   }
   panelWorld(on, files, TITLED_FULL)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -1027,8 +1033,28 @@ test('the panel: titles, ids with badges, unlocks, a nested child, waiting on an
   expect(texts.filter(t => /%/.test(t)).every(t => /^\s*\d+%$/.test(t))).toBe(true)
   // DONE: one dim line for a row at 100%, titles for finished jobs.
   expect(texts).toContain('  ✓ Finisher  finishing · 7/7')
-  expect(texts).toContain('  ✓ Nightly import  10:12')
   expect(texts.some(t => /█/.test(t) && /finish/.test(t))).toBe(false)
+  // The machine status line sits under the tabs, never as a DONE row.
+  expect(texts).toContain('🖥 hunty ✓ helper healthy · load 1.96 on 12 cores · busy: 1 job running')
+  // Finished jobs are buttons with their titles: the grouper's row, then a record from the last 12 h. Older ones stay out.
+  const done = async () => (await ui.findAll({ type: 'Button' })).filter(b => /^dno-/.test(b.key ?? '')).map(b => b.text ?? '')
+  expect(await done()).toEqual(['▸ Nightly import', '▸ Hunty person matcher fix'])
+  expect(texts).toContain('  10:12')
+  expect(texts).toContain(`  ${clock(NOW - 2 * 3_600_000)}`)
+  expect((await ui.find({ type: 'Button', key: 'h-done' }))?.text).toBe('▾ ✔ DONE  3')
+  // Opened: the impact lines, finish and run time with the machine badge, what it unlocks.
+  await ui.press({ key: 'dno-nightly' })
+  texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(await done()).toContain('▾ Nightly import')
+  expect(texts).toContain('Board links rebuilt: 1.29M pairs')
+  expect(texts).toContain('109K split people merged')
+  expect(texts).toContain(`finished ${clock(NOW - 60_000)} · ran 1h19m   🖥  Mac`)
+  expect(texts).toContain('unlocks: the morning dashboard')
+  // No impact: it says so.
+  await ui.press({ key: 'dno-hunty-person-matcher-fix' })
+  texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(texts).toContain('no impact reported')
+  expect(texts).toContain(`finished ${clock(NOW - 2 * 3_600_000)} · ran 1h00m   🖥  Mac`)
   await ui.unmount()
 })
 

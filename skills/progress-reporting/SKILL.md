@@ -21,7 +21,7 @@ progress_report(title: "Login fix, tests and deploy", why: "people can sign in a
 
 - It writes `~/.claude-progress/<slug of title>.json` with this session's id, folder and `startedAt` filled in, so the bar shows in this session's Status panel on any machine.
 - Pass `slug` to pick the file name, `parent` to nest it under a bigger job.
-- At the end call it with `finished: true`. That removes the bar.
+- At the end call it with `finished: true` and `impact`: what the job changed and why it matters, one to three short lines (`Board links rebuilt: 1.29M pairs, 109K split people merged`). That removes the bar and keeps the impact on its DONE row.
 - No tool (a shell script, a job on another machine)? Write the file yourself (below).
 
 ## The file
@@ -31,7 +31,8 @@ Path: `~/.claude-progress/<slug>.json`
 ```json
 {"done": 2, "total": 5, "step": "run tests", "startedAt": 1767225600000,
  "title": "Login fix · tests and deploy", "why": "people can sign in again", "parent": "release-prep",
- "session": "<session id>", "cwd": "/absolute/working/dir"}
+ "session": "<session id>", "cwd": "/absolute/working/dir",
+ "impact": "Login works again for all 3 providers\n41 tests added"}
 ```
 
 - **done**, **total**: numbers, `total` above 0. Without them the line shows `working`.
@@ -41,6 +42,7 @@ Path: `~/.claude-progress/<slug>.json`
 - **why**: what the job unlocks for the person (`the weekly report`). Shown as `unlocks: …`.
 - **parent**: the slug of the bigger job this is part of. Set it when a subagent or script works for another job that has a progress file. While both run, the child draws inside the parent's card, and the parent reads `waiting on: <child>` instead of stuck.
 - **session**: the Claude Code session id, so the bar shows only in this session. In Bash it is `$CLAUDE_CODE_SESSION_ID`. Add it whenever you can.
+- **impact**: set it just before the job ends. What changed and why it matters, in numbers when you have them, one to three short lines (newlines split them). The Status panel shows it when the job's DONE row is opened. Without it the row says `no impact reported`.
 - **cwd**: always add it, the absolute folder you work in. The bar then shows in the sessions of that project, even when the session id is missing or that session has closed.
 - Without `session` and `cwd`, the bar goes to the shared list, which may show in no session on a machine that routes it elsewhere.
 - A job that can't write these (a log-only job) can get a line in `~/.claude-progress/titles.txt`: `<job id><TAB><title><TAB><why><TAB><parent>`.
@@ -83,7 +85,9 @@ EOF
 
 ## When done
 
-Delete the file. A file untouched for 10 minutes stops showing anyway.
+Write `impact` into the file, wait 5 seconds (one poll, so the plugin saves it), then delete the file. Or call `progress_report` with `finished: true` and `impact`. A file untouched for 10 minutes stops showing anyway.
+
+**Subagents:** your final report is your impact. Start it with one bold sentence on what changed, with numbers (`**Board links rebuilt: 1.29M pairs, 109K split people merged.**`). The plugin keeps that sentence, or your first 2 to 3 lines.
 
 ## Events: the Status panel's Log tab
 
@@ -127,6 +131,9 @@ for i in 1 2 3; do
   progress nightly-import "$((i-1))" 3 "batch $i"
   ./import.sh "batch-$i"
 done
+# impact: what the run changed, then a poll's time for the plugin to save it
+printf '{"done":3,"total":3,"step":"done","impact":"Loaded 3 batches","session":"%s","cwd":"%s"}\n' "$CLAUDE_CODE_SESSION_ID" "$PWD" > ~/.claude-progress/nightly-import.json
+sleep 6
 rm -f ~/.claude-progress/nightly-import.json
 ```
 

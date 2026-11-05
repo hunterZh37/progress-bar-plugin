@@ -2,6 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { CONN_CACHE_REL } from '../hooks/connectors'
+import { DONE_REL } from '../hooks/done'
 import { isProgressLine, scriptPaths } from '../hooks/chain'
 import { PANE, STATUS_OFF_REL, scriptNote, statusOffAction, statusOffReason } from '../hooks/panel'
 import { withStatusLine } from '../hooks/register'
@@ -372,4 +373,54 @@ test('after a reload: the waiting agent transcript gives its running task, its l
   // Saved at the next poll, so a reload keeps them.
   await settle($ as never)
   expect(JSON.parse(files[`${P}/.state/seen-${KEY}.json`]!).ag2).toMatchObject({ lastWhat: 'One long wait with tighter error pattern, 10 min checks', lastAt: NOW - 25 * 60_000 })
+})
+
+// Done records: what a finished task changed, kept after its progress file is gone.
+const DONE = `${HOME}/${DONE_REL}`
+const rec = (files: Record<string, string>, k: string) => JSON.parse(files[`${DONE}/${k}.json`]!) as Record<string, unknown>
+
+test('done records: progress_report finished with impact, and a job file that vanishes keeps its impact', { options: { openPanel: false } }, async ($, on) => {
+  const files: Record<string, string> = {}
+  world(on, files)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call(report({ title: 'Board links', why: 'people pages', done: 3, total: 3 }))
+  files[`${P}/board-links.json`] = JSON.stringify({ ...JSON.parse(files[`${P}/board-links.json`]!), startedAt: NOW - 80 * 60_000 })
+  const r = await $.tool.call(report({ title: 'Board links', impact: 'Board links rebuilt: 1.29M pairs\n109K split people merged', finished: true }))
+  expect(String((r as { result?: unknown }).result)).toBe('Removed the bar board-links.')
+  expect(rec(files, 'board-links')).toMatchObject({ slug: 'board-links', title: 'Board links', why: 'people pages', impact: ['Board links rebuilt: 1.29M pairs', '109K split people merged'], started: NOW - 80 * 60_000, finished: NOW, session: SID, kind: 'job' })
+  // A shell job: it writes impact into its file, then deletes it. The next poll records it.
+  files[`${P}/nightly-import.json`] = JSON.stringify({ done: 4, total: 5, step: 'last batch', title: 'Nightly import', session: SID, startedAt: NOW - 600_000 })
+  await settle($ as never)
+  files[`${P}/nightly-import.json`] = JSON.stringify({ done: 5, total: 5, step: 'done', title: 'Nightly import', session: SID, startedAt: NOW - 600_000, impact: ['Loaded 12,034 returns'] })
+  await settle($ as never)
+  expect(rec(files, 'nightly-import')).toMatchObject({ title: 'Nightly import', impact: ['Loaded 12,034 returns'], started: NOW - 600_000 })
+  delete files[`${P}/nightly-import.json`]
+  await settle($ as never)
+  expect(rec(files, 'nightly-import').impact).toEqual(['Loaded 12,034 returns'])
+  // A file that is only stale (still there) is not a finish.
+  expect(files[`${DONE}/other.json`]).toBe(undefined)
+})
+
+test('done records: an agent keeps a short impact from its SubagentHandback report, or its transcript at SubagentStop', { options: { openPanel: false } }, async ($, on) => {
+  const agents = [{ id: 'ag1', description: 'Hunty person matcher fix', status: 'running' }, { id: 'ag2', description: 'Grade the sample', status: 'running' }]
+  const tx = [
+    JSON.stringify({ type: 'user', timestamp: new Date(NOW - 3_600_000).toISOString(), message: { role: 'user', content: 'go' } }),
+    JSON.stringify({ type: 'assistant', timestamp: new Date(NOW - 60_000).toISOString(), message: { role: 'assistant', content: [{ type: 'text', text: '## Result\n\n**Graded 200 rows: 96% match the labels.** Two labels were wrong.' }] } }),
+  ].join('\n')
+  const files: Record<string, string> = {}
+  world(on, files, { agents, onRun: argv => (argv[0] === 'tail' && argv[3] === '/tx/ag2.jsonl' ? { exitCode: 0, stdout: tx } : undefined) })
+  on('tool.call', () => ({ result: 'ok' as never }))
+  on('classic.SubagentStop', () => ({}))
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await settle($ as never)
+  await $.tool.call({ tool: 'SubagentHandback', agentId: 'ag1', message: 'The person matcher is fixed, applied to the live database and pushed. Commit **12f5c8d** is on `main`.\n\n**What changed**\n- **Migration 095:** dates cut from names.' } as never)
+  expect(rec(files, 'hunty-person-matcher-fix')).toMatchObject({ title: 'Hunty person matcher fix', kind: 'agent', impact: ['The person matcher is fixed, applied to the live database and pushed.', 'Commit 12f5c8d is on main.', 'Migration 095: dates cut from names.'], finished: NOW, session: SID })
+  // Its SubagentStop keeps the handback report.
+  await $.classic.SubagentStop({ agent_id: 'ag1', agent_transcript_path: '/tx/ag1.jsonl' } as never)
+  await settle($ as never)
+  expect(rec(files, 'hunty-person-matcher-fix').impact).toHaveLength(3)
+  // No handback: the last text in its transcript, the first bold sentence.
+  await $.classic.SubagentStop({ agent_id: 'ag2', agent_transcript_path: '/tx/ag2.jsonl' } as never)
+  await settle($ as never)
+  expect(rec(files, 'grade-the-sample').impact).toEqual(['Graded 200 rows: 96% match the labels.'])
 })

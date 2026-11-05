@@ -92,10 +92,11 @@ That's it. Answer `y` to add the marketplace and pick a scope. From the next ses
 ```json
 {"done": 2, "total": 5, "step": "render pages", "startedAt": 1767225600000,
  "title": "Docs site · all pages", "why": "the public help pages", "parent": "release-prep",
- "session": "2f6c1e0a-7d4b-4e8f-9a1c-5b3d2e7f8a90", "cwd": "/Users/me/code/docs"}
+ "session": "2f6c1e0a-7d4b-4e8f-9a1c-5b3d2e7f8a90", "cwd": "/Users/me/code/docs",
+ "impact": "Docs rebuilt: 412 pages\nSearch index 18% smaller"}
 ```
 
-Easiest: Claude calls the plugin's `progress_report` tool (title, why, done, total, step, parent, slug, finished). It writes this file with `session`, `cwd` and `startedAt` filled in.
+Easiest: Claude calls the plugin's `progress_report` tool (title, why, done, total, step, parent, slug, impact, finished). With `finished: true` it saves the done record (below) and removes the file. It writes this file with `session`, `cwd` and `startedAt` filled in.
 
 | Field | Does |
 | --- | --- |
@@ -107,9 +108,12 @@ Easiest: Claude calls the plugin's `progress_report` tool (title, why, done, tot
 | `parent` | Optional slug of the job this one is part of. While both run, this job shows under the parent's line when the parent is open, marked `↳` |
 | `session` | Optional. The Claude Code session id (`$CLAUDE_CODE_SESSION_ID` in Bash). The job shows only in that session while it is open |
 | `cwd` | Optional. The absolute folder the job works for. The job shows in every session of that folder's project (same project as Per-project to-dos) |
+| `impact` | Optional, set it before the job ends. What it changed and why it matters, one to three short lines (a string with newlines, or a list). Example: `Board links rebuilt: 1.29M pairs, 109K split people merged`. Shown when its DONE row is opened |
 
 - **Slug:** the job or subagent description, lowercased, each run of other characters turned into `-`. `Build docs!` becomes `build-docs`.
-- **Delete the file when done.** Files older than 10 minutes are hidden.
+- **Delete the file when done.** Files older than 10 minutes are hidden. Write `impact` first and give it 5 seconds (one poll) before you delete the file, or call `progress_report` with `finished: true` and `impact`.
+- **Done records:** when a job's file is gone, or it first reports `done` equal to `total`, the plugin saves `~/.claude-progress/.state/done/<slug>.json` with its `title`, `why`, `impact`, `step`, `started`, `finished`, `machine` and `session`. The last 100 are kept, none over 7 days old. A file that is only stale (still there) is not a finish. Shell command rows (`shell-*`) keep none.
+- **Agents:** a subagent's impact is its final report, cut short: its `SubagentHandback` message, else its last text in its transcript (read at SubagentStop). The first bold sentence (4 words or more, not a label ending in `:`), else its first 2 to 3 lines, as plain text up to 300 characters. An `impact` in its own progress file, or one `progress_report` saved in the last 30 minutes, wins.
 - **Jobs that can't write the file** (a log-only job, a row from another tool) get the same fields from `~/.claude-progress/titles.txt`, one job per line, tab separated: `<job id><TAB><title><TAB><why><TAB><parent>`. The job id is the name the row shows. Empty columns are fine, `#` starts a comment. A progress file's own fields win.
 
 ```
@@ -238,7 +242,7 @@ The first match wins. Clicking needs a terminal with link support (iTerm2, WezTe
 ## How it works
 
 - The plugin lists subagents, counts their tool calls and reads the progress files.
-- It writes subagent lines to `~/.claude-progress/.lines/agents-<session>.txt` (one file per open session, so sessions never overwrite each other), jobs this session owns (by `session` or `cwd`) to `jobs-<session>.txt` and the rest to `jobs.txt`. Each session's status line shows only its own bars: `agents-<session>.txt` and any `.lines/*-<session>.txt` file. Shared files such as `jobs.txt` show only in the project `todos/lines.txt` gives them to, everywhere when there is no `lines.txt`, or everywhere after `echo all > ~/.claude-progress/.state/scope`. Each session's claims file (`.state/claims-<session>.txt`) names its project on its first line, so other sessions know where a `cwd` job shows. At most 6 lines each. A JSON file counts as a job only if it has `done` and `total` or a `step`, so data files like `inbox.json` and `actions.json` never show as jobs. The grouper also drops an `inbox` row that an older plugin build in another session still writes. A machine status row with `helper healthy` (like `<host> ✓ helper healthy · load 0.22 on 12 cores · idle`) shows under DONE with no bar, since it is not a job.
+- It writes subagent lines to `~/.claude-progress/.lines/agents-<session>.txt` (one file per open session, so sessions never overwrite each other), jobs this session owns (by `session` or `cwd`) to `jobs-<session>.txt` and the rest to `jobs.txt`. Each session's status line shows only its own bars: `agents-<session>.txt` and any `.lines/*-<session>.txt` file. Shared files such as `jobs.txt` show only in the project `todos/lines.txt` gives them to, everywhere when there is no `lines.txt`, or everywhere after `echo all > ~/.claude-progress/.state/scope`. Each session's claims file (`.state/claims-<session>.txt`) names its project on its first line, so other sessions know where a `cwd` job shows. At most 6 lines each. A JSON file counts as a job only if it has `done` and `total` or a `step`, so data files like `inbox.json` and `actions.json` never show as jobs. The grouper also drops an `inbox` row that an older plugin build in another session still writes. A machine status row with `helper healthy` (like `<host> ✓ helper healthy · load 0.22 on 12 cores · idle`) is not a job. It prints as one `🖥 ` line after RUNNING (in the Status panel, a small dim line under the tabs), never under DONE. The helper that writes it decides `idle` from the machine's load, so while a `<host>: ...` job runs or waits the line reads `busy: N jobs running` instead (busy `N% CPU` processes count only when no job does).
 - The status line script prints every `.lines/*.txt` file changed in the last 2 minutes. Other tools can drop their own lines there too.
 - `group.py` sorts those lines into sections, adds the to-dos and links, and remembers ended jobs in `~/.claude-progress/.state/group-seen-<session>.json`.
 - With `events.py` beside it, `group.py` logs done, stuck and problem rows once each to `~/.claude-progress/events.jsonl` (sent keys in `.state/events-sent.json`) and starts a log folder scan in the background at most every 30 seconds (offsets in `.state/log-offsets.json`).
@@ -276,9 +280,28 @@ The status line then reads:
 - **Fold:** press a header, or its hotkey. Hotkeys count `1`, `2`, `3`... in the order the sections show (to-do, problems, running, waiting, done, whichever are there). It writes `~/.claude-progress/.state/folded.txt`, the same file `/progress-bar fold` uses.
 - **On by default:** the first session writes `~/.claude-progress/.state/panel-on`. With that file the pane opens at session start and the status line prints the summary. `panel off` deletes it, writes `.state/panel-off` so the default never turns it back on, and closes the pane. `panel on` undoes that. With **Open the Status panel** off in `/config`, nothing is written and `/progress-bar` opens it once.
 - **To-do menu:** click a to-do for Done, Up, Down, Start (a ready machine item), Delete or Move back to to-do (a checked-off one). It edits this project's list, on the line that still holds that item's text, so a line added since the panel drew never hits the wrong item. TO-DO lists open items only. Checked-off ones move to DONE under **Checked-off to-dos**, after finished jobs, and count there.
-- **Rows:** to-dos one per line under each owner, running jobs one line each, a press opening the details (see **Running cards**), done jobs dimmed with their finish time.
+- **Rows:** to-dos one per line under each owner, running jobs one line each, a press opening the details (see **Running cards**), done jobs dimmed with their finish time (see **Done rows**).
 - **Status line on:** after **▶ Turn on status line**, the answer (`Status line on: ...`) shows for 3 minutes, then clears.
 - **Tabs:** `▌List  │   Connectors  │   GitHub  │   Log`, the shown one marked `▌`. **List** (the default) shows the sections above. **Connectors** shows your connectors, its label adding `!N` when N need attention. **GitHub** shows your repos. **Log** shows the events log, its label adding `!N` for unseen errors.
+
+## Done rows
+
+Each finished job under DONE is a button: `✓ ▸ <title>  11:27`. The title comes from its done record, else its progress file or `titles.txt`, else its id made readable (`hunty: hunty-board-cap-extract` reads `Hunty: Board cap extract`). Press it to open what it changed:
+
+```
+✓ ▾ Board links rebuild  11:50
+      Board links rebuilt: 1.29M pairs, 109K split people merged
+      50/50 merges right
+      finished 11:50 · ran 1h20m   🖥  Mac
+      unlocks: people pages
+```
+
+- **Impact:** the job's `impact` lines, or an agent's short report, each wrapped under its indent. `no impact reported` when there is none.
+- **Time and machine:** `finished HH:MM · ran 1h20m` from the record's `started` and `finished`, then the machine badge (the record's, else the row's `<host>:`, else this machine).
+- **Why:** `unlocks: …` when the job had a `why`.
+- **Which rows:** the grouper's finished rows (30 minutes), then done records from the last 12 hours not shown yet and not running again, newest first, 20 rows at most. The header counts them.
+- **Older agents:** an agent that finished before the plugin kept records gets one from its transcript (this session's `subagents` folder) the first time its row is opened.
+- **Remote jobs:** a `<host>: name` row has a record only on the machine that ran it. Here it opens to `no impact reported` with its finish time.
 
 ## Running cards
 

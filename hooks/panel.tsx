@@ -11,13 +11,14 @@ import { markRead, openLocal, readChannel } from './channel'
 import { PAGE_LINES, kb, pageCount, readChat, selectChannel, sendChat, toggleOpen, when } from './chat'
 import { markHandled, readInbox } from './inbox'
 import { isDarwin } from './mac'
+import { backfillAgent, clock, doneDetails, machineName, prettyName, readDone } from './done'
 import { moveItem, nextPrompt, rankTodos, todoRows as layoutTodos } from './priority'
 import { sessionProject } from './project'
 import { turnOnStatusLine } from './setup'
 import { parseSaved } from './usage'
 import type { UsageReading } from './usage'
 import { FEW_STEPS, FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, slug } from './render'
-import type { Action, ActionUi, Channel, ChatMsg, ChatState, Checkpoint, Conn, Ev, Health, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
+import type { Action, ActionUi, Channel, ChatMsg, ChatState, Checkpoint, Conn, DoneRec, Ev, Health, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
 
 // The Status panel: the grouped status line, drawn in a docked pane beside the chat.
 // It runs the plugin's own status line script with PB_FULL=1 every second while the pane is open.
@@ -77,6 +78,8 @@ const actionsAtom = atom({ plugin: 'progress-bar', key: 'actions' } as const, []
 const actionUiAtom = atom({ plugin: 'progress-bar', key: 'actionUi' } as const, { confirm: '', term: '', failId: '', fail: '' } as ActionUi)
 // Why the panel or status line may show nothing (pollPanel, noteStatusLine), drawn as a short line.
 const healthAtom = atom({ plugin: 'progress-bar', key: 'health' } as const, { script: '', statusOff: '', note: '' } as Health)
+// Done records by slug (done.ts): what each finished job or agent changed.
+const doneAtom = atom({ plugin: 'progress-bar', key: 'done' } as const, {} as Record<string, DoneRec>)
 const DIR_REL = '.claude-progress'
 // Holds why the status line was not switched over, once that was logged, so the Log tab says it once, not every
 // session. The panel reads it for its "Turn on status line" line.
@@ -154,11 +157,16 @@ export const stripAnsi = (s: string) =>
 
 export type Section = { key: Key; title: string; folded: boolean; count: number; rows: string[] }
 
-/** Splits the grouped output into sections (a header, then its indented rows) and the lines after them. */
-export function parseSections(lines: string[]): { sections: Section[]; other: string[] } {
+/**
+ * Splits the grouped output into sections (a header, then its indented rows), the machine status lines ("🖥 ...")
+ * and the lines after them.
+ */
+export function parseSections(lines: string[]): { sections: Section[]; other: string[]; machines: string[] } {
   const sections: Section[] = []
   const other: string[] = []
+  const machines: string[] = []
   for (const line of lines) {
+    if (line.startsWith('🖥 ')) { machines.push(line.trim()); continue }
     const head = /^([▾▸])\s+\S+\s+(TO-DO|RUNNING|WAITING|DONE|PROBLEMS)(?:\s+\((\d+)\))?\s*$/.exec(line)
     if (head) {
       sections.push({ key: TITLES[head[2]!]!, title: head[2]!, folded: head[1] === '▸', count: Number(head[3] ?? 0), rows: [] })
@@ -172,7 +180,42 @@ export function parseSections(lines: string[]): { sections: Section[]; other: st
     if (s.folded) continue
     s.count = s.key === 'todo' ? s.rows.reduce((a, r) => a + todoItems(r).items.length, 0) : s.rows.length
   }
-  return { sections, other }
+  return { sections, other, machines }
+}
+
+/** Finished jobs from the done records shown under DONE besides the grouper's rows: the last 12 h, up to DONE_MAX rows in all. */
+export const DONE_SHOW_MS = 12 * 3_600_000
+export const DONE_MAX = 20
+
+export type DoneItem = { key: string; name: string; at: string; finishing?: string; text?: string }
+
+/**
+ * The DONE rows: the grouper's (finished "name · finished HH:MM", a row at 100% still reporting as finishing, any
+ * other row as plain text), then done records from the last 12 h not shown yet and not running or waiting again,
+ * newest first, up to DONE_MAX in all.
+ */
+export function doneItems(rows: string[], recs: Record<string, DoneRec>, live: Set<string>, now: number): DoneItem[] {
+  const out: DoneItem[] = rows.map(row => {
+    const fin = /^(.*?) · finished (\d\d:\d\d)$/.exec(row)
+    if (fin) return { key: slug(fin[1]!), name: fin[1]!, at: fin[2]! }
+    if (/[█░]/.test(row)) {
+      const name = runCard(row.replace(/^[✔✓]\s*/, '')).name
+      const c = /(\d+)\/(\d+)/.exec(row)
+      return { key: slug(name), name, at: '', finishing: `finishing${c ? ` · ${c[1]}/${c[2]}` : ''}` }
+    }
+    return { key: '', name: '', at: '', text: row }
+  })
+  const shown = new Set(out.map(x => x.key).filter(Boolean))
+  const extra = Object.values(recs)
+    .filter(r => now - r.finished < DONE_SHOW_MS && !shown.has(r.slug) && !live.has(r.slug))
+    .sort((a, b) => b.finished - a.finished)
+    .map(r => ({ key: r.slug, name: r.slug, at: clock(r.finished) }))
+  return [...out, ...extra].slice(0, Math.max(out.length, DONE_MAX))
+}
+
+/** A DONE row's title: its record's, else its progress file's or titles.txt's, else its name made readable. */
+export function doneTitle(name: string, rec: DoneRec | undefined, metaTitle = ''): string {
+  return (rec?.title || metaTitle || prettyName(name)).split(' · ')[0]!
 }
 
 /** "YOU: a · b" -> { who: 'You', items: ['a', 'b'] } */
@@ -619,6 +662,8 @@ export async function pollPanel($: EngineInterface, h: string) {
   await readFolded($, h)
   await readTodos($, h)
   await readMeta($, h)
+  const done = await readDone($, h)
+  if (JSON.stringify(await read($, doneAtom)) !== JSON.stringify(done)) await update($, doneAtom, () => done)
   await readEvents($, h)
   await readActions($, h)
   await readInbox($, h)
@@ -899,12 +944,17 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const openTodos = todos.filter(t => !t.done).length
     const width = Math.max(30, e.props.bodyColumns ?? 60)
     const barW = Math.min(20, Math.max(10, width - 30))
-    const { sections: parsed, other } = parseSections(lines)
+    const { sections: parsed, other, machines: machineLines } = parseSections(lines)
     // TO-DO shows only while something is open. Checked-off to-dos go under DONE, so DONE shows if they exist.
     const doneTodos = todos.filter(t => t.done)
     const sections = parsed.filter(s => s.key !== 'todo' || openTodos > 0)
     if (openTodos > 0 && !sections.some(s => s.key === 'todo')) sections.unshift({ key: 'todo', title: 'TO-DO', folded: false, count: 0, rows: [] })
-    if (doneTodos.length && !sections.some(s => s.key === 'done')) sections.push({ key: 'done', title: 'DONE', folded: false, count: 0, rows: [] })
+    const recs = await read($, doneAtom)
+    const nowDone = await $.clock.now()
+    const liveKeys = new Set(sections.filter(s => s.key === 'running' || s.key === 'waiting').flatMap(s => s.rows).map(r => slug(runCard(r).name)))
+    const doneList = doneItems(sections.find(s => s.key === 'done')?.rows ?? [], recs, liveKeys, nowDone)
+    if ((doneTodos.length || doneList.length) && !sections.some(s => s.key === 'done')) sections.push({ key: 'done', title: 'DONE', folded: false, count: 0, rows: [] })
+    const localMachine = await machineName($)
 
     // Running names and titles: what an "(after X)" to-do waits for.
     const runNames = (sections.find(x => x.key === 'running')?.rows ?? []).map(x => runCard(x).name)
@@ -965,8 +1015,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     })
 
     // Finished jobs, then the checked-off to-dos.
-    const doneRows = (rows: string[]) => [
-      ...plainRows(rows, 'done'),
+    const doneRows = () => [
+      ...doneList.flatMap(finishedRow),
       ...(doneTodos.length ? [<Text key="w-checked" bold color="magenta">{'  Checked-off to-dos'}</Text>, ...doneTodos.flatMap(todoItem)] : []),
     ]
 
@@ -1076,6 +1126,36 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         ...(isOpen ? [inStep ? null : hang(`wr${i}`, '    ', full, false), ...details(c, `w${i}`, '    ', '', why, sameName(c.name, title) ? '' : c.name)].filter(Boolean) : []),
       ]
     })
+
+    // A finished job: "✓ ▸ <title>  14:05", a button. Open, it shows what the job changed (its impact, else "no impact
+    // reported"), "finished 14:05 · ran 1h20m" with its machine badge, and what it unlocks, each wrapped under its
+    // indent. An agent that finished before records were kept gets one from its transcript when first opened.
+    const finishedRow = (d: DoneItem, i: number) => {
+      if (d.text !== undefined) return [<Text key={`dn${i}`} dimColor>{`  ${d.text}`}</Text>]
+      const rec = recs[d.key]
+      const title = doneTitle(d.name, rec, metaOf(d.name).title)
+      if (d.finishing) return [<Text key={`dn${i}`} dimColor wrap="truncate-end">{`  ✓ ${title}  ${d.finishing}`}</Text>]
+      const k = `done:${d.key}`
+      const isOpen = openCards.has(k)
+      const host = /^([A-Za-z0-9_.-]+):\s/.exec(d.name)?.[1]
+      const mach = rec?.machine || (host ? host.charAt(0).toUpperCase() + host.slice(1) : localMachine)
+      const press = async () => {
+        if (!isOpen && !rec) {
+          await backfillAgent($, homeDir, d.name, metaOf(d.name).title).catch(() => null)
+          const all = await readDone($, homeDir)
+          await update($, doneAtom, () => all)
+        }
+        await toggleCard(k)
+      }
+      return [
+        <Box key={`dn${i}`}>
+          <Text dimColor>{'  ✓ '}</Text>
+          <Button key={`dno-${d.key}`} plain onPress={press}><Text dimColor>{`${isOpen ? '▾' : '▸'} ${title}`}</Text></Button>
+          <Text dimColor>{d.at ? `  ${d.at}` : ''}</Text>
+        </Box>,
+        ...(isOpen ? doneDetails(rec, d.at, mach).map((t, j) => hang(`dd${i}-${j}`, '      ', t, !rec?.impact.length || j >= rec.impact.length)) : []),
+      ]
+    }
 
     // Done rows: "✓ <title>  14:05" for a finished job, one dim line "✓ <title>  finishing · a/b" for a row at 100% that
     // still reports (no bar).
@@ -1465,6 +1545,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     return (
       <Box flexDirection="column">
         {tabBar}
+        {machineLines.length ? <Box key="machines" flexDirection="column" marginBottom={1}>{machineLines.map((l, i) => <Text key={`mc${i}`} dimColor wrap="truncate-end">{l}</Text>)}</Box> : null}
         {actBlock}
         {inboxBlock}
         {chanBlock}
@@ -1477,9 +1558,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           return (
             <Box key={`s-${sec.key}`} flexDirection="column" marginBottom={n < sections.length - 1 || other.length ? 1 : 0}>
               <Button key={`h-${sec.key}`} hotkey={String(n + 1)} plain onPress={() => flip($, homeDir, sec.key)}>
-                {`${isFolded ? '▸' : '▾'} ${ICON[sec.key]} ${sec.title}  ${sec.key === 'todo' ? openTodos : sec.key === 'done' ? sec.count + doneTodos.length : sec.key === 'running' && sec.rows.length ? runCount(sec.rows.map(r => runCard(r).name), meta) : sec.count}`}
+                {`${isFolded ? '▸' : '▾'} ${ICON[sec.key]} ${sec.title}  ${sec.key === 'todo' ? openTodos : sec.key === 'done' ? (isFolded ? sec.count : doneList.length) + doneTodos.length : sec.key === 'running' && sec.rows.length ? runCount(sec.rows.map(r => runCard(r).name), meta) : sec.count}`}
               </Button>
-              {!isFolded && (sec.key === 'todo' ? todoRows() : sec.key === 'running' ? runRows(sec.rows) : sec.key === 'waiting' ? waitRows(sec.rows) : sec.key === 'done' ? doneRows(sec.rows) : plainRows(sec.rows, sec.key))}
+              {!isFolded && (sec.key === 'todo' ? todoRows() : sec.key === 'running' ? runRows(sec.rows) : sec.key === 'waiting' ? waitRows(sec.rows) : sec.key === 'done' ? doneRows() : plainRows(sec.rows, sec.key))}
             </Box>
           )
         })}

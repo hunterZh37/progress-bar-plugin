@@ -25,6 +25,11 @@ export type Tab = 'list' | 'connectors' | 'github' | 'log' | 'chat'
 
 /** Status panel: a job's plain-language title, what it unlocks and its parent job's slug, from its progress file or titles.txt. */
 export type Meta = { title?: string; why?: string; parent?: string }
+/**
+ * Status panel: a finished job's or agent's record, ~/.claude-progress/.state/done/<slug>.json (hooks/done.ts).
+ * `impact` is one to three short lines on what it changed. `started` and `finished` are epoch ms.
+ */
+export type DoneRec = { slug: string; title: string; why?: string; impact: string[]; step?: string; started?: number; finished: number; machine: string; session?: string; kind: 'job' | 'agent' }
 /** Status panel: slugs of the running jobs whose line is open to show its details. */
 export type OpenCards = string[]
 /** Log tab: an event's level. */
@@ -74,6 +79,6 @@ export type ActionUi = { confirm: string; term: string; failId: string; fail: st
 
 declare module 'claude-code' {
   interface PluginState {
-    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; project: Project; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards; recap: Recap; inbox: Inbox; channel: Channel; chat: ChatState; actions: Action[]; actionUi: ActionUi; health: Health }
+    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; project: Project; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards; recap: Recap; inbox: Inbox; channel: Channel; chat: ChatState; actions: Action[]; actionUi: ActionUi; health: Health; done: Record<string, DoneRec> }
   }
 }

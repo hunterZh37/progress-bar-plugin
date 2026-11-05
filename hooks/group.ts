@@ -9,6 +9,8 @@ Reads status lines on stdin and prints:
   TO-DO (this project's list, see todo_file), then PROBLEMS / RUNNING / WAITING / DONE,
   then any line that is not a job (your own status line) as is.
 Jobs that vanish show as "finished HH:MM" for 30 min, unless their last row said starting with no progress.
+A machine status row ("<host> ✓ helper healthy · load 0.22 on 12 cores · idle") is not a job: it prints as one
+"🖥 " line after RUNNING. While a "<host>: ..." job runs or waits, its "idle" reads "busy: N jobs running".
 Duplicate rows of one job are merged. A trailing status word (working, starting…) is not part of a job's name.
 A stopped row (■) whose job log ends with a finish line counts as done, not a problem.
 To-dos sort by a leading "N. " (1 first). One ending "(after X)" is dim while a running job matches X. The top ready one per machine says next.
@@ -80,7 +82,7 @@ ANSI = re.compile(r'\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;]*m')
 STUCK = re.compile(r'^\s*[◐◓◑◒]?\s*⚠\s*stuck(\s+\S+)?\s+')
 OURS_HEAD = re.compile(r'^[▾▸]\s')
 OURS_ROW = re.compile(r'^  (?:[◐◓◑◒⚠✖■✔▶]|[A-Z][A-Z0-9 _-]*: )')
-OURS_BADGE = re.compile(r'^(?:⛔ \d+ actions? needed|✉ \d+ need you|📨 \d+ new)')
+OURS_BADGE = re.compile(r'^(?:⛔ \d+ actions? needed|✉ \d+ need you|📨 \d+ new|🖥 )')
 
 
 def plain(l):
@@ -133,7 +135,7 @@ def is_starting(l):
 
 
 def kind(l):
-    # Machine status ("<host> ✓ helper healthy · load 0.22 on 12 cores · idle"), not a job: a DONE row, no bar.
+    # Machine status ("<host> ✓ helper healthy · load 0.22 on 12 cores · idle"), not a job: a machine line, no bar.
     if 'helper healthy' in l:
         return 'info'
     if l.startswith('✖') or l.startswith('■') or ' ✗ ' in l:
@@ -528,9 +530,24 @@ def main(stdin, now, summary=False):
             out.extend('  ' + h.upper() + ': ' + ' · '.join(i) for h, i in todo.items())
     sec('✖ PROBLEMS', groups['problem'], 'problems')
     sec('▶ RUNNING', groups['running'], 'running', deco=running_deco)
+    out.extend(machine_line(l, groups) for l in groups['info'])
     sec('⏸ WAITING', groups['waiting'], 'waiting')
-    sec('✔ DONE', groups['info'] + groups['done'], 'done')
+    sec('✔ DONE', groups['done'], 'done')
     return out + other
+
+
+def machine_line(l, groups):
+    """A machine status row as "🖥 <host> ✓ helper healthy · load ...". The helper's own "idle" comes from its load
+    alone, so while a "<host>: ..." job runs or waits here it reads "busy: N jobs running" (busy processes, "N% CPU"
+    rows, count only when no job does)."""
+    t = re.sub(r'^[▶✔]\s*', '', plain(l)).strip()
+    host = t.split(' ', 1)[0].lower()
+    rows = [r for r in groups['running'] + groups['waiting'] if name_of(r).lower().startswith(host + ':')]
+    jobs = [r for r in rows if not CPU.search(r)]
+    n, what = (len(jobs), 'job') if jobs else (len(rows), 'process')
+    if n:
+        t = re.sub(r'\s*·\s*idle\s*$', '', t) + ' · busy: ' + str(n) + ' ' + what + ('' if n == 1 else ('es' if what == 'process' else 's')) + ' running'
+    return '🖥 ' + t
 
 
 WATCHER = re.compile(r'\b(watcher|watching|watch|monitor|monitoring)\b', re.I)
