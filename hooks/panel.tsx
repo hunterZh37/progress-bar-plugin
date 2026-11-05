@@ -26,8 +26,8 @@ import type { Action, ActionUi, Channel, ChatMsg, ChatState, Checkpoint, Conn, D
 
 // The Status panel: the grouped status line, drawn in a docked pane beside the chat.
 // It runs the plugin's own status line script with PB_FULL=1 every second while the pane is open.
-// Section headers are buttons that fold or open the section through ~/.claude-progress/.state/folded.txt. Their hotkeys
-// are 1, 2, 3... in the order they show.
+// Section headers are buttons that fold or open the section through ~/.claude-progress/.state/folded.txt. They have no
+// hotkeys, since Claude Code draws a "1:" prefix on every header that has one.
 // To-dos come straight from ~/.claude-progress/todo.txt: open ones under TO-DO, checked-off ones under DONE.
 // Pressing one opens a menu: mark as done (or move back to to-do), move up or down, start now, or delete.
 // Open to-dos show by priority ("N. " in todo.txt, see priority.ts) with their number. One that waits for a running
@@ -1718,7 +1718,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           const isFolded = folded.has(sec.key) || sec.folded
           return (
             <Box key={`s-${sec.key}`} flexDirection="column" marginBottom={n < shown.length - 1 || other.length ? 1 : 0}>
-              <Button key={`h-${sec.key}`} hotkey={String(n + 1)} plain onPress={() => flip($, homeDir, sec.key)}>
+              <Button key={`h-${sec.key}`} plain onPress={() => flip($, homeDir, sec.key)}>
                 <Text bold>{`${isFolded ? '▸' : '▾'} ${sec.title}`}</Text>
                 <Text dimColor>{`  ${count(sec, isFolded)}`}</Text>
               </Button>

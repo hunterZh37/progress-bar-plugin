@@ -1202,14 +1202,14 @@ test('waiting rows: no bar, one line "⏸ <title> · waiting on <what>", a press
   await ui.unmount()
 })
 
-test('section hotkeys follow the display order, and a watcher shows on the job it watches', async ($, on) => {
+test('section headers have no hotkeys (no number prefixes), and a watcher shows on the job it watches', async ($, on) => {
   const full = ['▾ ▶ RUNNING', '  ◐ label-top-ups ██░░ 40.0% · 2/5 · watched by: Label top-ups watcher', '▾ ⏸ WAITING', '  deploy waits for build · 1m', '▾ ✔ DONE', '  old · finished 10:12'].join('\n')
   const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [TODO_FILE]: '[mac]\nrun import\n' }
   panelWorld(on, files, full)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
   const heads = (await ui.findAll({ type: 'Button' })).filter(b => /^h-/.test(b.key ?? ''))
-  expect(heads.map(b => [b.key, (b as unknown as { props?: { hotkey?: string } }).props?.hotkey ?? (b as unknown as { hotkey?: string }).hotkey])).toEqual([['h-running', '1'], ['h-waiting', '2'], ['h-todo', '3'], ['h-done', '4']])
+  expect(heads.map(b => [b.key, (b as unknown as { props?: { hotkey?: string } }).props?.hotkey ?? (b as unknown as { hotkey?: string }).hotkey])).toEqual([['h-running', undefined], ['h-waiting', undefined], ['h-todo', undefined], ['h-done', undefined]])
   // Headers: the fold mark and the name bold, the count dim.
   const head = (await ui.find({ type: 'Button', key: 'h-running' })) as unknown as { children?: { props?: { bold?: boolean; dimColor?: boolean } }[] }
   expect(head.children?.map(c => [!!c.props?.bold, !!c.props?.dimColor])).toEqual([[true, false], [false, true]])
