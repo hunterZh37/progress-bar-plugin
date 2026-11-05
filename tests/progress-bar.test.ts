@@ -11,7 +11,7 @@ import { EVENTS_PY, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } 
 import { REPOS_REL, parseBranches, parseCommits, webUrl } from '../hooks/github'
 import { blocker, clip, doneEvents, isRunningRow, jobMachine, keyWords, moveItem, nextPrompt, nextReady, parseCaps, parseItem, parseMode, rankTodos, ranked, rowName, shortJob, todoRows } from '../hooks/priority'
 import { fileOf, parseProjects, projectSlug, resolveProject } from '../hooks/project'
-import { aliveTasks, bgLaunch, idsIn, jobText, oneLine, snapOf, toolWhat, waitSegs, watchedJob } from '../hooks/waiting'
+import { aliveTasks, bgLaunch, jobText, oneLine, scanTranscript, snapOf, toolWhat, waitSegs, watchedJob } from '../hooks/waiting'
 import { FEW_STEPS, RATE_MIN_MS, eta, expandHome, line, rateLeft, stepRate, trackJob, lines, parseProgress, parseTitles, pickMeta, parseWatch, prevOf, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoItems, todoList } from '../hooks/render'
 
 const NOW = 1_800_000_000_000
@@ -1304,7 +1304,7 @@ test('why an agent waits: its tasks, a job it watches, its step, then its last a
   expect(watchedJob('Mac Jev first pass for labels', jobs)).toBe(null)
   expect(jobText(jobs[0]!)).toBe('Mac label top-ups 2021-23 (99%)')
   const base = { desc: 'Release prep', status: 'waiting', tasks: [], kids: [], jobs, step: '', lastTool: 'Bash', lastWhat: 'check log', lastAt: NOW - 4 * 60_000, waitSince: NOW - 12 * 60_000 }
-  expect(waitSegs({ ...base, tasks: [sh, mon], kids: ['Grade the sample'] }, NOW)).toEqual(['waiting on: Wait for the top-up run to finish (Mac label top-ups 2021-23 99%), monitor: deploy goes green, agent: Grade the sample', 'waiting 12m'])
+  expect(waitSegs({ ...base, tasks: [sh, mon], kids: ['Grade the sample'] }, NOW)).toEqual(['waiting on: Wait for the top-up run to finish (Mac label top-ups 2021-23 99%), monitor: deploy goes green (arts-verify), agent: Grade the sample', 'waiting 12m'])
   // A job whose parent is this agent.
   expect(waitSegs(base, NOW)).toEqual(['waiting on: arts-verify', 'waiting 12m'])
   expect(waitSegs({ ...base, desc: 'Label top-ups watcher' }, NOW)[0]).toBe('waiting on: Mac label top-ups 2021-23 (99%)')
@@ -1317,7 +1317,6 @@ test('why an agent waits: its tasks, a job it watches, its step, then its last a
   expect(toolWhat({ file_path: '/a/b/log.txt' })).toBe('log.txt')
   expect(toolWhat({ command: 'tail -5 x.log\nmore' })).toBe('tail -5 x.log')
   expect(oneLine('a · b\nc')).toBe('a, b c')
-  expect(idsIn('bk7\nbk7\n', ['bk7', 'zz'])).toEqual(['bk7'])
 })
 
 test('a waiting row says why with how long, and the open row says it in full', async ($, on) => {
@@ -1340,4 +1339,34 @@ test('a waiting row says why with how long, and the open row says it in full', a
   texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   expect(texts).toContain('last action 4m ago: Bash, check log · for 12m')
   await ui.unmount()
+})
+
+/** Transcript lines shaped like the real ones: a call, its result, and a task notice. */
+const txUse = (id: string, name: string, input: Record<string, unknown>, ts: string) => JSON.stringify({ timestamp: ts, message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } })
+const txRes = (id: string, text: string) => JSON.stringify({ message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text }] } })
+const txNote = (task: string, status: string) => JSON.stringify({ message: { role: 'user', content: `<task-notification>\n<task-id>${task}</task-id>\n<tool-use-id>x</tool-use-id>\n<status>${status}</status>\n<summary>Background command done</summary>\n</task-notification>` } })
+
+test('a transcript tells a waiting agent: background tasks still running, its last call, the progress files it names', () => {
+  const text = [
+    'cut first line',
+    txUse('t1', 'Bash', { command: 'cat > ~/.claude-progress/mac-label-top-ups-2021-23.json', description: 'Write the job bar' }, '2026-11-05T18:50:00.000Z'),
+    txRes('t1', 'ok'),
+    txUse('t2', 'Bash', { command: 'sleep 600', description: 'One long wait: run end or error/limit, checks every 10 min', run_in_background: true }, '2026-11-05T18:59:15.845Z'),
+    txRes('t2', 'Command running in background with ID: bqz17syay. Output is being written to: /tmp/x'),
+    txNote('bqz17syay', 'completed'),
+    txUse('t3', 'Monitor', { description: 'deploy goes green', timeout_ms: 1000 }, '2026-11-05T19:00:00.000Z'),
+    txRes('t3', 'Monitor started (task b64ssxvum, expires in 30m unless the source ends first)'),
+    JSON.stringify({ message: { role: 'user', content: '<task-notification>\n<task-id>b64ssxvum</task-id>\n<event>[Monitor expired after 30m with no events delivered.]</event>\n</task-notification>' } }),
+    txUse('t4', 'Bash', { command: 'while pgrep x; do sleep 600; done', description: 'One long wait with tighter error pattern, 10 min checks', run_in_background: true }, '2026-11-05T19:09:25.100Z'),
+    txRes('t4', 'Command running in background with ID: b9g4q9ufq. Output is being written to: /tmp/y'),
+  ].join('\n')
+  const sc = scanTranscript(text)
+  expect(sc.running).toEqual([{ id: 'b9g4q9ufq', desc: 'One long wait with tighter error pattern, 10 min checks', kind: 'shell' }])
+  expect([sc.lastTool, sc.lastWhat, sc.lastAt]).toEqual(['Bash', 'One long wait with tighter error pattern, 10 min checks', Date.parse('2026-11-05T19:09:25.100Z')])
+  expect(sc.files).toEqual(['mac-label-top-ups-2021-23'])
+  // The real case: the agent's name shares no key words with the job, but its transcript writes the job's file.
+  const jobs = [{ name: 'mac-label-top-ups-2021-23', title: 'Mac label top-ups 2021-23', pct: 90.2, parent: '' }]
+  const w = { desc: 'Mac Jev first pass for labels', status: 'waiting', tasks: [], kids: [], jobs, step: '', lastTool: 'Bash', lastWhat: '', lastAt: 0, waitSince: NOW - 25 * 60_000, files: sc.files }
+  expect(waitSegs(w, NOW)).toEqual(['waiting on: Mac label top-ups 2021-23 (90%)', 'waiting 25m'])
+  expect(waitSegs({ ...w, tasks: sc.running.map(x => ({ ...x, kind: 'shell' as const, at: 0 })) }, NOW)[0]).toBe('waiting on: One long wait with tighter error pattern, 10 min checks (Mac label top-ups 2021-23 90%)')
 })

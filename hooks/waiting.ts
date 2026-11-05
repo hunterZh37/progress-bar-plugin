@@ -2,8 +2,8 @@
 //
 // What the engine gives: each tool call's input and result (a background Bash's `backgroundTaskId`, a Monitor's
 // `taskId` and deadline), `$.agent.list()` (a child agent's `parentId`), and at every Stop and SubagentStop the
-// session's in-flight background tasks (`background_tasks`, ids and descriptions). Nothing here reads a transcript's
-// format: a transcript is only searched for a task id, to learn which agent started a task seen before a reload.
+// session's in-flight background tasks (`background_tasks`, when the event carries it). A reload forgets what tool calls
+// showed, and a Stop may carry no task list, so a waiting agent's own transcript is read too (scanTranscript).
 
 import { keyWords } from './priority'
 import { ago, slug } from './render'
@@ -94,6 +94,8 @@ export type WaitFacts = {
   jobs: readonly Job[]
   /** Its own progress file's step. */
   step: string
+  /** Progress files its transcript names (slugs): a job it writes or reads is a job it watches. */
+  files?: readonly string[]
   lastTool: string
   lastWhat: string
   /** When its last tool call ended (ms), 0 when not known. */
@@ -114,15 +116,16 @@ export function waitSegs(w: WaitFacts, now: number): string[] {
   if (w.status === 'pending') return ['not started yet']
   if (w.status !== 'waiting') return []
   const out: string[] = []
+  const own = slug(w.desc)
+  // The job it watches: one whose progress file its transcript names, one whose parent it is, or one its name names.
+  const job = w.jobs.find(j => j.name !== own && w.files?.includes(j.name)) ?? w.jobs.find(j => j.parent && j.parent === own) ?? watchedJob(w.desc, w.jobs)
   const on = [
     ...w.tasks.map(t => {
-      const j = watchedJob(t.desc, w.jobs)
+      const j = watchedJob(t.desc, w.jobs) ?? job
       return `${t.kind === 'monitor' ? 'monitor: ' : ''}${t.desc}${j ? ` (${jobText(j, false)})` : ''}`
     }),
     ...w.kids.map(k => `agent: ${k}`),
   ]
-  const own = slug(w.desc)
-  const job = on.length ? null : w.jobs.find(j => j.parent && j.parent === own) ?? watchedJob(w.desc, w.jobs)
   if (on.length) out.push(`waiting on: ${oneLine(on.join(', '), 200)}`)
   else if (job) out.push(`waiting on: ${oneLine(jobText(job), 200)}`)
   else if (!w.step && w.lastTool) {
@@ -133,8 +136,46 @@ export function waitSegs(w: WaitFacts, now: number): string[] {
   return out
 }
 
-/** Task ids from `ids` that appear in a text (a transcript searched with grep -o -F). */
-export function idsIn(text: string, ids: readonly string[]): string[] {
-  const found = new Set(text.split('\n').map(l => l.trim()).filter(Boolean))
-  return ids.filter(i => found.has(i))
+/** What an agent's transcript tells: its background tasks still running, its last tool call, the progress files it names. */
+export type TxScan = { running: { id: string; desc: string; kind: string }[]; lastTool: string; lastWhat: string; lastAt: number; files: string[] }
+
+const ENDED = /<task-id>([\w-]+)<\/task-id>[\s\S]{0,800}?(<status>(completed|failed|killed|stopped)<\/status>|Monitor expired)/g
+
+/**
+ * Reads a transcript's JSON lines (a tail is fine: a cut first line is skipped). A background task is one whose tool
+ * result says "running in background with ID: X" or "Monitor started (task X", with its call's description. It is over
+ * once a task notice for X says completed, failed, killed or stopped, a Monitor expired, or a TaskStop named it.
+ */
+export function scanTranscript(text: string): TxScan {
+  const calls = new Map<string, { name: string; input: Record<string, unknown> }>()
+  const started = new Map<string, { desc: string; kind: string }>()
+  const ended = new Set<string>()
+  const files = new Set<string>()
+  let lastTool = '', lastWhat = '', lastAt = 0
+  for (const m of text.matchAll(/\.claude-progress\/([a-z0-9-]+)\.json/g)) files.add(m[1]!)
+  for (const m of text.matchAll(ENDED)) ended.add(m[1]!)
+  for (const l of text.split('\n')) {
+    if (!l.startsWith('{')) continue
+    let d: { message?: { content?: unknown }; timestamp?: unknown }
+    try { d = JSON.parse(l) } catch { continue }
+    const c = d.message?.content
+    if (!Array.isArray(c)) continue
+    for (const x of c as Record<string, unknown>[]) {
+      if (x.type === 'tool_use' && typeof x.id === 'string') {
+        const input = (x.input && typeof x.input === 'object' ? x.input : {}) as Record<string, unknown>
+        calls.set(x.id, { name: s(x.name), input })
+        lastTool = s(x.name); lastWhat = toolWhat(input)
+        const at = Date.parse(s(d.timestamp))
+        if (at) lastAt = at
+        if (x.name === 'TaskStop') ended.add(s(input.task_id) || s(input.shell_id))
+      } else if (x.type === 'tool_result') {
+        const body = typeof x.content === 'string' ? x.content : JSON.stringify(x.content ?? '')
+        const m = /running in background with ID: ([\w-]+)/.exec(body) ?? /Monitor started \(task ([\w-]+)/.exec(body)
+        const call = calls.get(s(x.tool_use_id))
+        if (m) started.set(m[1]!, { desc: oneLine(s(call?.input.description) || s(call?.input.command).split('\n')[0]!, 80), kind: call?.name === 'Monitor' ? 'monitor' : 'shell' })
+      }
+    }
+  }
+  const running = [...started].filter(([id]) => !ended.has(id)).map(([id, v]) => ({ id, ...v }))
+  return { running, lastTool, lastWhat, lastAt, files: [...files] }
 }

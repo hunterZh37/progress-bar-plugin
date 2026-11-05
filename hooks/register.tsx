@@ -18,8 +18,8 @@ import type { Task } from './report'
 import { PROJECT_LINE, pickOwner, routeOf, sessionKeyOf as keyOf } from './route'
 import type { Progress, Row, Track } from './render'
 import { isDarwin } from './mac'
-import { aliveTasks, bgLaunch, idsIn, snapOf, toolWhat, waitSegs } from './waiting'
-import type { BgSnap, BgTask, Job } from './waiting'
+import { aliveTasks, bgLaunch, scanTranscript, snapOf, toolWhat, waitSegs } from './waiting'
+import type { BgSnap, BgTask, Job, TxScan } from './waiting'
 
 const WATCH = '.watch.json'
 // Data files in ~/.claude-progress that are never jobs.
@@ -93,8 +93,9 @@ let snap: BgSnap | null = null
 // Where this session's transcripts are (the main one's path without .jsonl), and each agent's own, from SubagentStop.
 let txBase = ''
 const txOf = new Map<string, string>()
-// Agents already searched for a snapshot's unowned task ids, so each transcript is searched once per snapshot.
-const searched = new Set<string>()
+// Each waiting agent's transcript scan, kept while the transcript does not change.
+const scans = new Map<string, { mtime: number; scan: TxScan }>()
+const TX_TAIL = 4 * 1024 * 1024
 
 /** Removes a stopped task from every agent. */
 function dropTask(id: string) {
@@ -104,12 +105,8 @@ function dropTask(id: string) {
 /** An agent's transcript path, or '' when no Stop or SubagentStop has named one yet. */
 const txPath = (id: string) => txOf.get(id) ?? (txBase ? `${txBase}/subagents/agent-${id}.jsonl` : '')
 
-/**
- * Why each waiting or pending agent waits (waiting.ts waitSegs). A task the last snapshot lists that no agent is known
- * to own (it started before a reload) is looked up by its id in the waiting agent's transcript.
- */
+/** Why each waiting or pending agent waits (waiting.ts waitSegs). */
 async function explainWaits($: EngineInterface, agents: Awaited<ReturnType<EngineInterface['agent']['list']>>, rows: Row[], jobs: Job[], now: number) {
-  const owned = new Set([...seen.values()].flatMap(s => (s.bg ?? []).map(t => t.id)))
   for (const r of rows) {
     const a = agents.find(x => x.id === r.id)
     const s = seen.get(r.id)
@@ -119,19 +116,23 @@ async function explainWaits($: EngineInterface, agents: Awaited<ReturnType<Engin
     if (s.bg) s.bg = alive
     if (a.status !== 'waiting') { s.waitSince = undefined; if (a.status !== 'pending') continue }
     const path = txPath(a.id)
-    const loose = (snap?.tasks ?? []).filter(t => !owned.has(t.id))
-    if (a.status === 'waiting' && !alive.length && loose.length && path && !searched.has(`${a.id}@${snap!.at}`)) {
-      searched.add(`${a.id}@${snap!.at}`)
+    // Its transcript, read again only when it changed: background tasks still running (a reload forgets the ones
+    // seen at tool calls), its last call when not seen since a reload, and the progress files it names.
+    let scan: TxScan | null = null
+    if (a.status === 'waiting' && path) {
       try {
-        const ids = loose.map(t => t.id)
-        const out = (await $.process.run(['grep', '-o', '-F', ...ids.flatMap(i => ['-e', i]), path], { timeoutMs: 5000 })).stdout
-        for (const id of idsIn(out, ids)) {
-          const t = loose.find(x => x.id === id)!
-          s.bg = [...(s.bg ?? []), { id, desc: t.desc, kind: t.kind === 'monitor' ? 'monitor' : 'shell', at: snap!.at }]
-          owned.add(id)
+        const m = (await $.fs.stat(path)).mtimeMs
+        const c = scans.get(a.id)
+        if (c && c.mtime === m) scan = c.scan
+        else {
+          scan = scanTranscript((await $.process.run(['tail', '-c', String(TX_TAIL), path], { timeoutMs: 5000 })).stdout)
+          scans.set(a.id, { mtime: m, scan })
         }
-        alive = aliveTasks(s.bg ?? [], snap, now)
-      } catch { /* no transcript */ }
+      } catch { scan = null }
+    }
+    if (scan) {
+      alive = [...alive, ...scan.running.filter(x => !alive.some(y => y.id === x.id)).map(x => ({ ...x, kind: x.kind === 'monitor' ? 'monitor' as const : 'shell' as const, at: 0 }))]
+      if (!s.lastWhat && scan.lastWhat && scan.lastTool === s.lastTool) { s.lastWhat = scan.lastWhat; if (scan.lastAt) s.lastAt = scan.lastAt }
     }
     if (a.status === 'waiting' && !s.waitSince) {
       // Unknown after a reload: the agent's transcript was last written when its turn ended.
@@ -141,7 +142,7 @@ async function explainWaits($: EngineInterface, agents: Awaited<ReturnType<Engin
       s.waitSince = at || now
     }
     const kids = agents.filter(k => k.parentId === a.id && LIVE.has(k.status) && seen.get(k.id)?.lastTool !== 'SubagentHandback').map(k => k.description)
-    r.wait = waitSegs({ desc: a.description, status: a.status, tasks: alive, kids, jobs, step: r.step, lastTool: s.lastTool, lastWhat: s.lastWhat ?? '', lastAt: s.lastAt ?? 0, waitSince: s.waitSince ?? 0 }, now)
+    r.wait = waitSegs({ desc: a.description, status: a.status, tasks: alive, kids, jobs, step: r.step, lastTool: s.lastTool, lastWhat: s.lastWhat ?? '', lastAt: s.lastAt ?? 0, waitSince: s.waitSince ?? 0, files: scan?.files }, now)
   }
 }
 

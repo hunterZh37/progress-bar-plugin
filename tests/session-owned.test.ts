@@ -350,15 +350,26 @@ test('a waiting agent says what it waits on: its background task, else its last 
   expect(JSON.parse(files[`${P}/.state/seen-${KEY}.json`]!).ag1).toMatchObject({ lastWhat: 'Wait for the top-up run to finish', lastAt: NOW, waitSince: NOW })
 })
 
-test('after a reload: a task the stop lists is found in the waiting agent transcript by its id', { options: { openPanel: false } }, async ($, on) => {
-  const agents = [{ id: 'ag2', description: 'Label checker', status: 'waiting' }]
-  const TX = `${HOME}/.claude/projects/x/${SID}`
-  const files: Record<string, string> = { [`${P}/.state/seen-${KEY}.json`]: JSON.stringify({ ag2: { startedAt: NOW, tools: 5, lastTool: 'Bash' } }) }
-  const onRun = (argv: readonly string[]) => (argv[0] === 'grep' ? { exitCode: 0, stdout: argv.at(-1) === `${TX}/subagents/agent-ag2.jsonl` ? 'bk7\n' : '' } : undefined)
-  const { runs } = world(on, files, { agents, onRun })
+test('after a reload: the waiting agent transcript gives its running task, its last call and the job it writes', { options: { openPanel: false } }, async ($, on) => {
+  const agents = [{ id: 'ag2', description: 'Mac Jev first pass for labels', status: 'waiting' }]
+  const TX = `${HOME}/.claude/projects/${CWD.replace(/[^A-Za-z0-9]/g, '-')}/${SID}`
+  const tx = [
+    JSON.stringify({ timestamp: new Date(NOW - 25 * 60_000).toISOString(), message: { content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'python3 -c "open(\'~/.claude-progress/mac-label-top-ups-2021-23.json\')"', description: 'One long wait with tighter error pattern, 10 min checks', run_in_background: true } }] } }),
+    JSON.stringify({ message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'Command running in background with ID: b9g4q9ufq. Output is being written to: /tmp/b' }] } }),
+  ].join('\n')
+  const files: Record<string, string> = {
+    [`${P}/.state/seen-${KEY}.json`]: JSON.stringify({ ag2: { startedAt: NOW - 3_600_000, tools: 54, lastTool: 'Bash' } }),
+    [`${P}/mac-label-top-ups-2021-23.json`]: JSON.stringify({ done: 127571, total: 141453, step: 'Claude pass', title: 'Mac label top-ups 2021-23', session: SID }),
+    [`${TX}/subagents/agent-ag2.jsonl`]: tx,
+  }
+  const onRun = (argv: readonly string[]) => (argv[0] === 'tail' ? { exitCode: 0, stdout: files[argv.at(-1)!] ?? '' } : undefined)
+  world(on, files, { agents, onRun })
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
-  await $.classic.Stop({ stop_hook_active: false, transcript_path: `${TX}.jsonl`, background_tasks: [{ id: 'bk7', type: 'shell', status: 'running', description: 'One long wait, 10 min checks' }, { id: 'zz1', type: 'shell', status: 'running', description: 'Someone else' }] } as never)
+  // A Stop with no task list changes nothing.
+  await $.classic.Stop({ stop_hook_active: false } as never)
   await settle($ as never)
-  expect(files[`${L}/agents-${KEY}.txt`]!.split('\n')[0]).toBe('▶ Label checker waiting · waiting on: One long wait, 10 min checks · waiting 0m · 0m · 5 tools · Bash')
-  expect(runs.filter(r => r[0] === 'grep').length).toBe(1)
+  expect(files[`${L}/agents-${KEY}.txt`]!.split('\n')[0]).toBe('▶ Mac Jev first pass for labels waiting · waiting on: One long wait with tighter error pattern, 10 min checks (Mac label top-ups 2021-23 90%) · waiting 25m · 1h00m · 54 tools · Bash')
+  // Saved at the next poll, so a reload keeps them.
+  await settle($ as never)
+  expect(JSON.parse(files[`${P}/.state/seen-${KEY}.json`]!).ag2).toMatchObject({ lastWhat: 'One long wait with tighter error pattern, 10 min checks', lastAt: NOW - 25 * 60_000 })
 })
