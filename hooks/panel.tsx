@@ -513,8 +513,22 @@ export function meterText(plan: string | undefined, used: number, asOf: string):
   return `${meterLabel(plan)} ${used}% ${'━'.repeat(f)}${'─'.repeat(METER_CELLS - f)} 7d${asOf ? ` · ${asOf}` : ''}`
 }
 
-/** The tab row's text width: the tab labels and the " │ " between them. */
-export const tabsWidth = (labels: string[]) => labels.reduce((a, l) => a + l.length, 0) + 3 * Math.max(0, labels.length - 1)
+/** Terminal cells a string takes: emoji (U+1F000 and up) take two, everything else one. */
+export const cells = (s: string) => [...s].reduce((a, ch) => a + (ch.codePointAt(0)! >= 0x1f000 ? 2 : 1), 0)
+
+/**
+ * Each tab's icon and name. Icons are either one cell (☰ ⎇) or emoji with default emoji presentation, two cells
+ * (🔌 📜 💬 🌐), so their width is the same in every terminal. 🕸 is left out: without a variation selector some
+ * terminals draw it one cell wide.
+ */
+export const TAB_ICONS = { list: ['☰', 'List'], connectors: ['🔌', 'Connectors'], github: ['⎇', 'GitHub'], log: ['📜', 'Log'], chat: ['💬', 'Chat'], topology: ['🌐', 'Topology'] } as const
+
+/** A tab's label: its icon, the name only on the shown tab, then its badge ("!2", "3"). */
+export const tabLabel = (key: keyof typeof TAB_ICONS, shown: boolean, badge = '') =>
+  `${TAB_ICONS[key][0]}${shown ? ` ${TAB_ICONS[key][1]}` : ''}${badge ? ` ${badge}` : ''}`
+
+/** The tab row's width in cells: the tab labels and the two spaces between them. */
+export const tabsWidth = (labels: string[]) => labels.reduce((a, l) => a + cells(l), 0) + 2 * Math.max(0, labels.length - 1)
 
 /** Where the meter goes: on the tab row when it fits after the tabs with two spaces to spare, else its own line. */
 export const meterOnTabRow = (tabsW: number, meterW: number, width: number) => tabsW + 2 + meterW <= width
@@ -1186,32 +1200,30 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       return <Text key={`p${i}`} color={key === 'problems' ? 'red' : undefined} dimColor={key === 'done'}>{`  ${row}`}</Text>
     })
 
-    // The tab bar: List, Connectors (with "!N" when N need sign-in or failed), GitHub and Log (with "!N" unseen errors).
-    // The shown tab has a bar mark.
+    // The tab bar: icons for List, Connectors (with "!N" when N need sign-in or failed), GitHub, Log (with "!N" unseen
+    // errors), Chat (unread count) and Topology. The shown tab adds its name in bold.
     const badN = conns.list.filter(c => c.kind !== 'ok').length
     const log = await read($, logAtom)
     const nowS = Math.floor(nowMs / 1000)
     const unseen = unseenErrors(log.events, log.seenAt, nowS)
-    const mark = (t: string) => (tab === t ? '▌' : ' ')
     const chat = await read($, chatAtom)
     const chatUnread = chat.msgs.filter(m => m.unread).length
-    const sep = (k: string) => <Text key={k} dimColor>{' │ '}</Text>
+    const sep = (k: string) => <Text key={k}>{'  '}</Text>
     // The usage meter sits in the top right corner on every tab: a running job's live reading, else the saved one.
     const liveUsed = (sections.find(x => x.key === 'running')?.rows ?? []).map(runCard)
       .reduce<number | null>((a, c) => (c.maxUsed === null ? a : Math.max(a ?? 0, c.maxUsed)), null)
     const reading = maxReading(liveUsed, maxSaved, nowMs)
     if (reading.save && liveUsed !== null) void $.fs.write(maxFile, JSON.stringify({ pct: liveUsed, at: nowMs, ...(maxSaved?.plan ? { plan: maxSaved.plan } : {}) })).catch(() => undefined)
     // The tab labels, then the usage meter: on the tab row's right end when it fits, else right-aligned on its own line.
-    // In a pane too narrow for every label, Topology reads Topo, then Connectors reads Conn.
-    const labelsAt = (n: number) => [
-      `${mark('list')}List`,
-      `${mark('connectors')}${n < 2 ? 'Connectors' : 'Conn'}${badN ? ` !${badN}` : ''}`,
-      `${mark('github')}GitHub`,
-      `${mark('log')}Log${unseen ? ` !${unseen}` : ''}`,
-      `${mark('chat')}Chat${chatUnread ? ` ${chatUnread}` : ''}`,
-      `${mark('topology')}${n < 1 ? 'Topology' : 'Topo'}`,
+    // Icons only, the shown tab with its name too, so the row fits a narrow pane and leaves room for the meter.
+    const tabLabels = [
+      tabLabel('list', tab === 'list'),
+      tabLabel('connectors', tab === 'connectors', badN ? `!${badN}` : ''),
+      tabLabel('github', tab === 'github'),
+      tabLabel('log', tab === 'log', unseen ? `!${unseen}` : ''),
+      tabLabel('chat', tab === 'chat', chatUnread ? String(chatUnread) : ''),
+      tabLabel('topology', tab === 'topology'),
     ]
-    const tabLabels = [0, 1, 2].map(labelsAt).find(l => tabsWidth(l) <= width) ?? labelsAt(2)
     const meter = (() => {
       const used = reading.used
       if (used === null) return null
@@ -1233,17 +1245,17 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       <Box key="tabs" flexDirection="column" marginBottom={1}>
       {meter && !inline ? <Box key="maxmeter"><Text>{' '.repeat(Math.max(0, width - meter.width))}</Text>{meter.parts}</Box> : null}
       <Box key="tabrow">
-        <Button key="tab-list" plain onPress={() => update($, tabAtom, () => 'list')}>{tabLabels[0]!}</Button>
+        <Button key="tab-list" plain onPress={() => update($, tabAtom, () => 'list')}><Text bold={tab === 'list'}>{tabLabels[0]!}</Text></Button>
         {sep('sep-1')}
-        <Button key="tab-connectors" plain onPress={() => update($, tabAtom, () => 'connectors')}>{tabLabels[1]!}</Button>
+        <Button key="tab-connectors" plain onPress={() => update($, tabAtom, () => 'connectors')}><Text bold={tab === 'connectors'}>{tabLabels[1]!}</Text></Button>
         {sep('sep-2')}
-        <Button key="tab-github" plain onPress={async () => { await update($, tabAtom, () => 'github'); await readGh($, homeDir) }}>{tabLabels[2]!}</Button>
+        <Button key="tab-github" plain onPress={async () => { await update($, tabAtom, () => 'github'); await readGh($, homeDir) }}><Text bold={tab === 'github'}>{tabLabels[2]!}</Text></Button>
         {sep('sep-3')}
-        <Button key="tab-log" plain onPress={async () => { await update($, tabAtom, () => 'log'); await markSeen($, homeDir) }}>{tabLabels[3]!}</Button>
+        <Button key="tab-log" plain onPress={async () => { await update($, tabAtom, () => 'log'); await markSeen($, homeDir) }}><Text bold={tab === 'log'}>{tabLabels[3]!}</Text></Button>
         {sep('sep-4')}
-        <Button key="tab-chat" plain onPress={async () => { await update($, tabAtom, () => 'chat'); await readChat($, homeDir) }}>{tabLabels[4]!}</Button>
+        <Button key="tab-chat" plain onPress={async () => { await update($, tabAtom, () => 'chat'); await readChat($, homeDir) }}><Text bold={tab === 'chat'}>{tabLabels[4]!}</Text></Button>
         {sep('sep-5')}
-        <Button key="tab-topology" plain onPress={async () => { await update($, tabAtom, () => 'topology'); await readTopo($, homeDir) }}>{tabLabels[5]!}</Button>
+        <Button key="tab-topology" plain onPress={async () => { await update($, tabAtom, () => 'topology'); await readTopo($, homeDir) }}><Text bold={tab === 'topology'}>{tabLabels[5]!}</Text></Button>
         {meter && inline ? <Text key="mt-gap">{' '.repeat(Math.max(2, width - tabsW - meter.width))}</Text> : null}
         {meter && inline ? meter.parts : null}
       </Box>
@@ -1351,19 +1363,20 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const jobs: TopoJob[] = live.map(({ row, wait }) => {
         const c = runCard(row)
         const m0 = metaOf(c.name)
-        return { name: c.name, title: m0.title || c.name, pct: c.pct, mark: wait ? '⏸' : c.mark === '✔' ? '✔' : c.stuck ? '⚠' : '▶', step: c.step, reads: m0.reads, writes: m0.writes, proc: /\d% CPU\b/.test(row) }
+        return { name: c.name, title: m0.title || c.name, pct: c.pct, mark: wait ? '⏸' : c.mark === '✔' ? '✔' : c.stuck ? '⚠' : '▶', step: c.step, reads: m0.reads, writes: m0.writes, proc: /\d% CPU\b/.test(row), waitOn: c.waitOn, why: m0.why }
       })
       const self = topo.cfg.self || resolveMachine(topo.cfg, mach.local) || resolveMachine(topo.cfg, localMachine) || topo.cfg.machines.find(m => m.role === 'data')?.id || 'local'
       const queues = queuesOf(topo.cfg, rankTodos(todos.filter(t => !t.done), running).map(t => ({ owner: t.owner, text: t.text })), self)
-      const drawn = renderTopology({ cfg: topo.cfg, self, jobs, health: topo.health, queues, extra: mach.remote }, width)
+      // Smallest first: one row per machine. A press opens a machine (its jobs, services, queued count), a press on a
+      // job opens its reads, writes, step and why. Open keys live in the same open-cards list as the List tab's.
+      const drawn = renderTopology({ cfg: topo.cfg, self, jobs, health: topo.health, queues, extra: mach.remote }, width, openCards)
+      const segs = (l: (typeof drawn)[number], i: number) => l.segs.map((sg, k) => <Text key={`tp${i}-${k}`} color={sg.color} dimColor={sg.dim} bold={sg.bold}>{sg.text}</Text>)
       return (
         <Box flexDirection="column">
           {tabBar}
-          {drawn.map((l, i) => (
-            <Box key={`tp${i}`}>
-              {l.map((sg, k) => <Text key={`tp${i}-${k}`} color={sg.color} dimColor={sg.dim} bold={sg.bold} wrap="truncate-end">{sg.text || ' '}</Text>)}
-            </Box>
-          ))}
+          {drawn.map((l, i) => l.press
+            ? <Button key={`tpb-${l.press}`} plain onPress={() => toggleCard(l.press!)}>{segs(l, i)}</Button>
+            : <Box key={`tp${i}`}>{segs(l, i)}</Box>)}
         </Box>
       )
     }

@@ -613,25 +613,25 @@ test('the panel draws an indeterminate bar without a %, and one compact usage me
   const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n' }
   panelWorld(on, files, full)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 40 } })
   expect((await ui.find({ type: 'Text', text: /^━━━$/ }))?.text).toBe('━━━')
   expect(await ui.find({ type: 'Text', text: /steps not reported/ })).toBe(undefined)
   await ui.press({ key: 'open-build-docs' })
   expect((await ui.find({ type: 'Text', text: /steps not reported/ }))?.text).toBe('steps not reported')
-  // At 52 columns the meter ("Max 62% ━━━── 7d", 16) does not fit after the tabs (52, Topology cut to Topo): its own line, right-aligned.
+  // At 40 columns the meter ("Max 62% ━━━── 7d", 16) does not fit after the icon tabs (25 cells): its own line, right-aligned.
   const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   const at = texts.indexOf('Max ')
-  expect(texts.slice(at - 1, at + 4)).toEqual([' '.repeat(52 - 16), 'Max ', '62% ', '━━━', '── 7d'])
+  expect(texts.slice(at - 1, at + 4)).toEqual([' '.repeat(40 - 16), 'Max ', '62% ', '━━━', '── 7d'])
   // Above the tabs, not after them.
-  expect(at).toBeLessThan(texts.indexOf(' │ '))
+  expect(at).toBeLessThan(texts.indexOf('☰ List'))
   await ui.press({ key: 'open-orgs-judge' })
   expect((await ui.find({ type: 'Text', text: /3 of 10 steps/ }))?.text).toBe('3 of 10 steps')
   await ui.unmount()
-  // A wider pane: the meter sits on the tab row's right end.
-  const wide = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 80 } })
+  // The usual 52 columns: the meter sits on the tab row's right end.
+  const wide = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
   const wt = (await wide.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  expect(wt.indexOf('Max ')).toBeGreaterThan(wt.lastIndexOf(' │ '))
-  expect(wt[wt.indexOf('Max ') - 1]).toBe(' '.repeat(80 - 56 - 16))
+  expect(wt.indexOf('Max ')).toBeGreaterThan(wt.indexOf('🌐'))
+  expect(wt[wt.indexOf('Max ') - 1]).toBe(' '.repeat(52 - 25 - 16))
   await wide.unmount()
 })
 
@@ -759,14 +759,14 @@ test('the Connectors tab: checks claude mcp list, caches name and status only, n
   expect(files[CACHE]).not.toContain('postgres')
   expect(files[CACHE]).not.toContain('https')
 
-  expect((await ui.find({ type: 'Button', text: /List/ }))?.text).toBe('▌List')
-  // At 52 columns with a badge, Topology reads Topo and Connectors reads Conn.
-  expect((await ui.find({ type: 'Button', key: 'tab-connectors' }))?.text).toBe(' Conn !3')
+  expect((await ui.find({ type: 'Button', key: 'tab-list' }))?.text).toBe('☰ List')
+  // Icons only, with the badge. The shown tab adds its name.
+  expect((await ui.find({ type: 'Button', key: 'tab-connectors' }))?.text).toBe('🔌 !3')
   expect((await ui.find({ type: 'Button', text: /RUNNING/ }))?.text).toBe('▾ ▶ RUNNING  1')
   expect(await ui.find({ type: 'Text', text: /CONNECTORS/ })).toBe(undefined)
 
   await ui.press({ key: 'tab-connectors' })
-  expect((await ui.find({ type: 'Button', key: 'tab-connectors' }))?.text).toBe('▌Conn !3')
+  expect((await ui.find({ type: 'Button', key: 'tab-connectors' }))?.text).toBe('🔌 Connectors !3')
   expect(await ui.find({ type: 'Button', text: /RUNNING/ })).toBe(undefined)
   expect((await ui.find({ type: 'Text', text: /CONNECTORS/ }))?.text).toBe('⚡ CONNECTORS  2 ok · 2 need sign-in · 1 failed')
   expect((await ui.find({ type: 'Text', text: /Claude:/ }))?.text).toBe('  Claude: me@x.test · Acme')
@@ -803,7 +803,7 @@ test('a fresh shared cache is read, not refreshed', async ($, on) => {
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
   expect(ran.some(r => r.argv[0] === 'claude')).toBe(false)
-  expect((await ui.find({ type: 'Button', key: 'tab-connectors' }))?.text).toBe(' Conn !1')
+  expect((await ui.find({ type: 'Button', key: 'tab-connectors' }))?.text).toBe('🔌 !1')
   await ui.press({ key: 'tab-connectors' })
   expect((await ui.find({ type: 'Text', text: /CONNECTORS/ }))?.text).toBe('⚡ CONNECTORS  1 ok · 1 need sign-in')
   await ui.unmount()
@@ -877,7 +877,7 @@ test('the GitHub tab draws the repo, other branches and commits, and a press ope
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
   expect(ran.some(r => r.argv[0] === 'git')).toBe(false)
   await ui.press({ key: 'tab-github' })
-  expect((await ui.find({ type: 'Button', text: /GitHub/ }))?.text).toBe('▌GitHub')
+  expect((await ui.find({ type: 'Button', text: /GitHub/ }))?.text).toBe('⎇ GitHub')
   expect((await ui.find({ type: 'Text', text: /repo \d of/ }))?.text).toBe('repo 1 of 2')
   expect((await ui.find({ type: 'Button', text: /↗/ }))?.text).toBe('app  ↗')
   expect((await ui.find({ type: 'Text', text: /^acme$/ }))?.text).toBe('acme')
@@ -1077,10 +1077,10 @@ test('the Log tab: !N unseen errors, counts, filters, detail, open log only insi
   const { ran } = panelWorld(on, files, '▾ ▶ RUNNING\n  ◐ job ██░░ 50.0% · 1/2\n')
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
-  expect((await ui.find({ type: 'Button', key: 'tab-log' }))?.text).toBe(' Log !2')
+  expect((await ui.find({ type: 'Button', key: 'tab-log' }))?.text).toBe('📜 !2')
   await ui.press({ key: 'tab-log' })
   expect(files[`${DIR}/.state/log-seen.txt`]).toBe(String(S))
-  expect((await ui.find({ type: 'Button', key: 'tab-log' }))?.text).toBe('▌Log')
+  expect((await ui.find({ type: 'Button', key: 'tab-log' }))?.text).toBe('📜 Log')
   expect((await ui.find({ type: 'Text', text: /✖ 2 errors/ }))?.text).toBe('✖ 2 errors  ')
   expect((await ui.find({ type: 'Text', text: /⚠ 1 warning / }))?.text).toBe('⚠ 1 warning  ')
   expect((await ui.find({ type: 'Text', text: /✓ 1 done/ }))?.text).toBe('✓ 1 done')

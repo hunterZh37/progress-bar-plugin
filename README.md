@@ -108,7 +108,7 @@ Easiest: Claude calls the plugin's `progress_report` tool (title, why, done, tot
 | `parent` | Optional slug of the job this one is part of. While both run, this job shows under the parent's line when the parent is open, marked `↳` |
 | `session` | Optional. The Claude Code session id (`$CLAUDE_CODE_SESSION_ID` in Bash). The job shows only in that session while it is open |
 | `cwd` | Optional. The absolute folder the job works for. The job shows in every session of that folder's project (same project as Per-project to-dos) |
-| `reads`, `writes` | Optional short strings for the Topology tab: what the job reads and writes, like `nombot.board_members_history` or `Postgres via work-mac`. Without them a job on a helper machine reads from the data host and sends results back to it |
+| `reads`, `writes` | Optional short strings for the Topology tab: what the job reads and writes, like `nombot.board_members_history` or `Postgres via work-mac`. Without `reads` a job on a helper machine reads from the data host's database. Without `writes` it is not drawn writing anything |
 | `impact` | Optional, set it before the job ends. What it changed and why it matters, one to three short lines (a string with newlines, or a list). Example: `Board links rebuilt: 1.29M pairs, 109K split people merged`. Shown when its DONE row is opened |
 
 - **Slug:** the job or subagent description, lowercased, each run of other characters turned into `-`. `Build docs!` becomes `build-docs`.
@@ -283,7 +283,7 @@ The status line then reads:
 - **To-do menu:** click a to-do for Done, Up, Down, Start (a ready machine item), Delete or Move back to to-do (a checked-off one). It edits this project's list, on the line that still holds that item's text, so a line added since the panel drew never hits the wrong item. TO-DO lists open items only. Checked-off ones move to DONE under **Checked-off to-dos**, after finished jobs, and count there.
 - **Rows:** to-dos one per line under each owner, running jobs one line each, a press opening the details (see **Running cards**), done jobs dimmed with their finish time (see **Done rows**).
 - **Status line on:** after **▶ Turn on status line**, the answer (`Status line on: ...`) shows for 3 minutes, then clears.
-- **Tabs:** `▌List  │   Connectors  │   GitHub  │   Log`, the shown one marked `▌`. **List** (the default) shows the sections above. **Connectors** shows your connectors, its label adding `!N` when N need attention. **GitHub** shows your repos. **Log** shows the events log, its label adding `!N` for unseen errors.
+- **Tabs:** icons, `☰ List  🔌  ⎇  📜  💬  🌐`. The shown tab adds its name in bold. **☰ List** (the default) shows the sections above. **🔌 Connectors** shows your connectors, adding `!N` when N need attention (`🔌 !2`). **⎇ GitHub** shows your repos. **📜 Log** shows the events log, adding `!N` for unseen errors. **💬 Chat** adds the unread count (`💬 3`). **🌐 Topology** shows your machines. The icons are one cell (☰ ⎇) or emoji that every terminal draws two cells wide, so the row stays the same width everywhere and leaves room for the usage meter.
 
 ## Done rows
 
@@ -410,41 +410,35 @@ The **Log** tab of the Status panel lists what happened to your jobs, newest fir
 
 ## Topology tab
 
-The **Topology** tab of the Status panel draws your machines as boxes, what runs on each and what data moves between them. It redraws on the panel's refresh tick.
+The **Topology** tab of the Status panel shows your machines, what runs on each and what data moves between them. It starts as the smallest summary and opens on a press. It redraws on the panel's refresh tick.
 
 ```
-┌─ work-mac · 100.78.76.82 ─────┐     ┌─ hunty · 100.66.167.126 ───────┐
-│ ● busy · 1 job · data host    ├◀───▶┤ ● busy · 1 job · load 0.37/12  │
-│ Postgres nombot ~68 GB, repo… │     │ 12 cores + GPU, local model    │
-│ NomBot live, label jobs, eve… │     │ DB read-only as helper         │
-│ ▶ Label top-ups 2021-23   97% │     │ ▶ Board lists past 25 sea… 83% │
-│                               │     └────────────────────────────────┘
-│                               │       ☐ 1 queued · next: Fix grants l…
-│                               │
-│                               │     ┌─ personal-mac ─────────────────┐
-│                               ├┄┄┄┄┄┤ ● unknown                      │
-└───────────────────────────────┘     │ M2 Pro 32 GB, Claude on perso… │
-  ☐ 2 queued · next: NomBot eval…     │ DB read-only, no repo copy     │
-                                      │ no jobs                        │
-                                      └────────────────────────────────┘
-
-FLOWS NOW
-  work-mac ──reads nombot.board_members_history──▶ hunty: Board lists p…
-  hunty ──writes Postgres via work-mac──▶ work-mac (DB write): Board li…
-  work-mac ──Jev API──▶ Label top-ups 2021-23
-  work-mac ──Claude──▶ Label top-ups 2021-23
-
-SERVICES   ● Jev API  ● Claude  ○ GitHub
+▸ ● work-mac      data host · 1 job
+▸ ● hunty         1 job · load 0.37/12  ◀─ reads + writes ─▶ work-mac
+▸ ● personal-mac  1 job                 ◀─ reads ── work-mac
 ```
 
-- **Machines:** `~/.claude-progress/topology.json`, written once with defaults. Each machine has an `id`, `ip`, `role` (`data` for the one that holds the database, else `compute`), `aliases` (other names in titles and to-do headings), `about` lines and an optional `status` heartbeat file. Add `"self": "<id>"` when this machine's to-do headings do not say which one it is. Edit the file to rename machines or change IPs.
-- **Boxes:** the data host on the left, helpers on the right. Each box shows the state (green `busy`, dim `idle` or `unknown`, red `offline`), the load when known, and the running jobs with their percent. Jobs come from the same rows as the List tab. A job's machine is its `<host>: ` row prefix or the machine word its title starts with (`Hunty board lists`, `Personal-mac tools setup`), else this machine.
-- **Links:** between each helper and the data host, `◀───▶` when data moves both ways, `────▶` or `◀────` one way, `┄┄┄┄┄` nothing moving, `──✕──` offline.
-- **Queued to-dos:** under each box, dim: how many open to-dos its heading has and the top one.
-- **Flows:** a progress file's `reads` and `writes` name what moves. Without them a job on a helper reads from the data host's database as the read-only `dbRole` (`helper`) and sends results back. A data host job draws only what it declares.
-- **Services:** `Jev API`, `Claude` and `GitHub` light up while a running job's name, title, step, reads or writes match their pattern (`services` in topology.json: `name`, `match` as a regex, optional `from`).
-- **Health:** this machine is online. A machine with a `status` file (hunty: `.lines/linux.txt`) is online while that file is under 2 minutes old and says `✓`, else offline. A machine without one shows `unknown` with a note. The plugin runs no network checks of its own.
-- **Width:** boxes side by side from 60 to 120 columns, a stacked list under 60. In a narrow pane the tab reads `Topo`.
+Press a machine to open it, and press a job inside it to see what it moves:
+
+```
+▾ ● hunty         1 job · load 0.37/12  ◀─ reads + writes ─▶ work-mac
+    ▾ Board lists past 25 seats         83%  reads + writes
+        reads: nombot.board_members_history
+        writes: Postgres via work-mac
+    1 queued
+```
+
+- **Closed:** one row per machine. A green dot is busy, dim is idle or unknown, red is offline. Then the job count, the load when known, and the link to the data host.
+- **Links:** `◀─ reads ── work-mac` the helper reads from the data host, `◀─ reads + writes ─▶ work-mac` both ways, `── writes ─▶ work-mac` back only, `(N)` when several jobs share it, `┄┄ work-mac` nothing moving, `─ ✕ ─ work-mac` offline.
+- **Open machine:** its running jobs, one row each with percent and what each moves, the services it calls (`→ Jev API · Claude`) and how many to-dos are queued for it. Waiting jobs show only when they say what they wait on.
+- **Open job:** its reads, writes, what it waits on, its step and why.
+- **Open state:** kept with the List tab's open cards, so a machine stays open across refreshes.
+- **Jobs:** the same rows as the List tab. A job's machine is its `<host>: ` row prefix or the machine word its title starts with (`Hunty board lists`, `Personal-mac tools setup`), else this machine.
+- **Flows:** a job on a helper reads from the data host (its `reads` names what, else the data host's database as the read-only `dbRole`, `helper`). It writes back only when its progress file has `writes`.
+- **Services:** `Jev API`, `Claude` and `GitHub` show on a machine while a running job's name, title, step, reads or writes match their pattern.
+- **Health:** this machine is online. A machine with a `status` file (hunty: `.lines/linux.txt`) is online while that file is under 2 minutes old and says `✓`, else offline. A machine without one is `unknown` until a job reports from it. The plugin runs no network checks of its own.
+- **Machines:** `~/.claude-progress/topology.json`, written once with defaults. Each machine has an `id`, `ip`, `role` (`data` for the one that holds the database, else `compute`), `aliases` (other names in titles and to-do headings), `about` and an optional `status` heartbeat file. `services` lists `name`, `match` (a regex) and an optional `from`. Add `"self": "<id>"` when this machine's to-do headings do not say which one it is.
+- **Width:** under 60 columns the load is left out and links are short (`◀ reads`).
 
 ## Overnight recap
 
@@ -611,7 +605,7 @@ Or just tell Claude "send this to Sam". The `secure-channel` skill has Claude ca
 
 ### Chat
 
-The Status panel has a **Chat** tab next to List, Connectors, GitHub, Log and Topology. It shows each channel as a chat room. The tab reads `Chat 2` when 2 received messages are unread.
+The Status panel has a **Chat** tab next to List, Connectors, GitHub, Log and Topology. It shows each channel as a chat room. Its tab icon reads `💬 2` when 2 received messages are unread.
 
 ```
  List │ Connectors │ GitHub │ Log │ ▌Chat 1

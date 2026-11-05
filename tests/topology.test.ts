@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { PANE } from '../hooks/panel'
-import { DEFAULT_TOPOLOGY, HEARTBEAT_MS, TOPOLOGY_REL, bareTitle, flowsOf, jobHost, lineWidth, parseHealth, parseTopology, placeJobs, plainLine, queuesOf, renderTopology } from '../hooks/topology'
+import { DEFAULT_TOPOLOGY, HEARTBEAT_MS, TOPOLOGY_REL, bareTitle, flowsOf, jobHost, jobKey, lineWidth, linkOf, parseHealth, parseTopology, placeJobs, plainLine, queuesOf, renderTopology } from '../hooks/topology'
 import type { TopoInput, TopoJob } from '../hooks/topology'
 import { statusScript } from '../hooks/render'
 
@@ -45,70 +45,79 @@ test('jobs land on machines from the title lead, a host prefix, else this machin
   expect(bareTitle(cfg, 'Mac label top-ups 2021-23 · all', 'work-mac')).toBe('Label top-ups 2021-23')
 })
 
-test('flows: declared reads and writes, else inferred for a helper job, services by pattern', async () => {
+test('flows: a helper job reads from the data host, writes back only when it declares writes, services by pattern', async () => {
   const flows = flowsOf(cfg, placeJobs(cfg, JOBS, 'work-mac'))
-  const line = (f: { from: string; to: string; label: string; jobs: string[] }) => `${f.from} ──${f.label}──▶ ${f.to ? `${f.to}: ` : ''}${f.jobs.join(', ')}`
+  const line = (f: { from: string; to: string; label: string; jobs: string[] }) => `${f.from} ${f.label} ${f.to}: ${f.jobs.join(', ')}`
   expect(flows.map(line)).toEqual([
-    'work-mac ──Jev API──▶ Label top-ups 2021-23',
-    'work-mac ──Claude──▶ Label top-ups 2021-23',
-    'work-mac ──reads nombot.board_members_history──▶ hunty: Board lists past 25 seats',
-    'hunty ──writes Postgres via work-mac──▶ work-mac (DB write): Board lists past 25 seats',
-    'work-mac ──reads (helper)──▶ personal-mac: Tools setup',
-    'personal-mac ──results──▶ work-mac (DB write): Tools setup',
+    'work-mac Jev API Jev API: Label top-ups 2021-23',
+    'work-mac Claude Claude: Label top-ups 2021-23',
+    'work-mac reads hunty: Board lists past 25 seats',
+    'hunty writes work-mac: Board lists past 25 seats',
+    'work-mac reads personal-mac: Tools setup',
   ])
-  // A data host job draws what it declares, against Postgres. Waiting and process rows move nothing.
-  const local = flowsOf(cfg, placeJobs(cfg, [job('rebuild', 'Rebuild links', 10, { writes: 'nombot.links' }), job('hunty: x.py', 'hunty: x.py', null, { proc: true }), job('Hunty y', 'Hunty y', null, { mark: '⏸' })], 'work-mac'))
-  expect(local.map(line)).toEqual(['work-mac ──writes nombot.links──▶ Postgres: Rebuild links'])
+  // Waiting and process rows move nothing.
+  const quiet = flowsOf(cfg, placeJobs(cfg, [job('hunty: x.py', 'hunty: x.py', null, { proc: true }), job('Hunty y', 'Hunty y', null, { mark: '⏸' })], 'work-mac'))
+  expect(quiet).toEqual([])
+  // Two jobs on one link: the link shows the count.
+  const two = flowsOf(cfg, placeJobs(cfg, [job('Hunty a', 'Hunty a', 1), job('Hunty b', 'Hunty b', 2)], 'work-mac'))
+  expect(linkOf(two, 'work-mac', 'hunty', false).text).toBe('◀─ reads (2) ── work-mac')
+  expect(linkOf(two, 'work-mac', 'personal-mac', false).text).toBe('┄┄ work-mac')
 })
 
-test('render at 100 columns: data host left, helpers right, links, queued to-dos, flows and services', async () => {
-  const out = renderTopology(input(), 100)
-  for (const l of out) expect(lineWidth(l)).toBeLessThanOrEqual(100)
-  const t = out.map(plainLine)
-  expect(t[0]).toMatch(/^┌─ work-mac · 100\.78\.76\.82 ─+┐ {5}┌─ hunty · 100\.66\.167\.126 ─+┐$/)
-  expect(t[1]).toMatch(/^│ ● busy · 1 job · data host +├◀───▶┤ ● busy · 1 job · load 0\.37\/12 +│$/)
-  expect(t.some(l => /▶ Label top-ups 2021-23 +97% │/.test(l))).toBe(true)
-  expect(t.some(l => /▶ Board lists past 25 seats +83% │$/.test(l))).toBe(true)
-  expect(t.some(l => /├◀───▶┤ ● busy · 1 job +│$/.test(l))).toBe(true)
-  expect(t.some(l => /☐ 2 queued · next: NomBot eval rerun/.test(l))).toBe(true)
-  expect(t.some(l => /☐ 1 queued · next: Fix grants linked back/.test(l))).toBe(true)
-  expect(t).toContain('FLOWS NOW')
-  expect(t).toContain('  hunty ──writes Postgres via work-mac──▶ work-mac (DB write): Board lists past 25 seats')
-  expect(t).toContain('SERVICES   ● Jev API  ● Claude  ○ GitHub')
-  expect(t).toContain('  personal-mac: reachability unknown, no heartbeat configured')
+test('closed: one row per machine with its state, job count and link, each a button', async () => {
+  const rows = renderTopology(input(), 80)
+  expect(rows.map(plainLine)).toEqual([
+    '▸ ● work-mac      data host · 1 job',
+    '▸ ● hunty         1 job · load 0.37/12  ◀─ reads + writes ─▶ work-mac',
+    '▸ ● personal-mac  1 job                 ◀─ reads ── work-mac',
+  ])
+  expect(rows.map(r => r.press)).toEqual(['topo:work-mac', 'topo:hunty', 'topo:personal-mac'])
+  expect(rows[0]!.segs.find(s => s.text === '● ')?.color).toBe('green')
 })
 
-test('render at 60 columns: every line fits, boxes still side by side', async () => {
-  const out = renderTopology(input(), 60)
-  for (const l of out) expect(lineWidth(l)).toBeLessThanOrEqual(60)
-  const t = out.map(plainLine)
-  expect(t[0]).toBe('┌─ work-mac ──────────────┐     ┌─ hunty · 100.66.167.126 ─┐')
-  expect(t.some(l => l.includes('├◀───▶┤'))).toBe(true)
-  expect(t).toContain('  work-mac ──reads nombot.board_members_history──▶ hunty: B…')
+test('open: a machine lists its jobs, services and queued count, and an open job its reads, writes, step and why', async () => {
+  const jobs = [JOBS[0]!, { ...JOBS[1]!, why: 'labels for 2021-23' }, JOBS[2]!, job('Mac jev pass', 'Mac Jev first pass', null, { mark: '⏸', waitOn: 'top-ups' }), job('Mac idle wait', 'Mac idle wait', null, { mark: '⏸' })]
+  const open = new Set(['topo:work-mac', 'topo:hunty', jobKey('work-mac', 'mac-label-top-ups-2021-23'), jobKey('hunty', 'Hunty board lists past 25 seats')])
+  expect(renderTopology(input({ jobs }), 80, open).map(plainLine)).toEqual([
+    '▾ ● work-mac      data host · 1 job',
+    '    ▾ Label top-ups 2021-23             97%',
+    '        step: Claude pass: workforce',
+    '        why: labels for 2021-23',
+    '    ▸ Jev first pass                    waits',
+    '    → Jev API · Claude',
+    '    2 queued',
+    '▾ ● hunty         1 job · load 0.37/12  ◀─ reads + writes ─▶ work-mac',
+    '    ▾ Board lists past 25 seats         83%  reads + writes',
+    '        reads: nombot.board_members_history',
+    '        writes: Postgres via work-mac',
+    '    1 queued',
+    '▸ ● personal-mac  1 job                 ◀─ reads ── work-mac',
+  ])
+  // A helper job without reads says where it reads from.
+  const p = renderTopology(input(), 80, new Set(['topo:personal-mac', jobKey('personal-mac', 'Personal-mac tools setup')])).map(plainLine)
+  expect(p.slice(-2)).toEqual(['    ▾ Tools setup                       60%  reads', '        reads: work-mac database as helper'])
 })
 
-test('under 60 columns: a stacked list', async () => {
-  const t = text(40)
-  expect(t.slice(0, 4)).toEqual(['● work-mac  busy · 1 job · data host', '  100.78.76.82', '  ▶ Label top-ups 2021-23           97%', '  ☐ 2 queued · next: NomBot eval rerun'])
-  expect(t).toContain('● hunty  busy · 1 job · load 0.37/12')
+test('render at 60 and 100 columns fits, and under 60 the link is short', async () => {
+  const all = new Set(['topo:work-mac', 'topo:hunty', 'topo:personal-mac'])
+  for (const w of [60, 100]) for (const r of renderTopology(input(), w, all)) expect(lineWidth(r)).toBeLessThanOrEqual(w)
+  expect(text(40)).toEqual(['▸ ● work-mac  data host · 1 job', '▸ ● hunty  1 job  ◀ reads + writes ▶', '▸ ● personal-mac  1 job  ◀ reads'])
 })
 
-test('offline: a stale or failing heartbeat draws the helper red with ──✕── and says why', async () => {
+test('offline: a stale or failing heartbeat draws the helper red with ✕ on its link', async () => {
   expect(parseHealth('▶ hunty ✓ helper healthy · load 0.22 on 12 cores · idle\n▶ hunty: job 10.0%', NOW, NOW)).toEqual({ state: 'online', load: 'load 0.22/12' })
   expect(parseHealth('▶ hunty ✓ ok', NOW - HEARTBEAT_MS - 60_000, NOW)).toEqual({ state: 'offline', note: 'heartbeat 3m old' })
   expect(parseHealth('▶ hunty ✗ helper down', NOW, NOW).state).toBe('offline')
   expect(parseHealth(null, 0, NOW)).toEqual({ state: 'offline', note: 'no heartbeat file' })
-  const out = renderTopology(input({ jobs: [JOBS[1]!], health: { hunty: { state: 'offline', note: 'heartbeat 3m old' } } }), 100)
-  const t = out.map(plainLine)
-  expect(t[1]).toMatch(/├──✕──┤ ● offline +│$/)
-  expect(out[1]!.find(s => s.text === '──✕──')?.color).toBe('red')
-  expect(out[0]!.find(s => s.text.startsWith('┌─ hunty'))?.color).toBe('red')
-  expect(t.some(l => /│ unreachable +│$/.test(l))).toBe(true)
-  expect(t).toContain('  hunty: offline, heartbeat 3m old')
-  // Personal-mac: no jobs, no heartbeat: unknown and dim, its link dotted.
-  expect(t.some(l => /├┄┄┄┄┄┤ ● unknown +│$/.test(l))).toBe(true)
-  // Busy draws green.
-  expect(out[0]!.find(s => s.text.startsWith('┌─ work-mac'))?.color).toBe('green')
+  const rows = renderTopology(input({ jobs: [JOBS[1]!], health: { hunty: { state: 'offline' } } }), 80, new Set(['topo:hunty']))
+  expect(rows.map(plainLine).slice(1)).toEqual([
+    '▾ ● hunty         offline            ─ ✕ ─ work-mac',
+    '    unreachable',
+    '    1 queued',
+    '▸ ● personal-mac  unknown            ┄┄ work-mac',
+  ])
+  expect(rows[1]!.segs.find(s => s.text === '● ')?.color).toBe('red')
+  expect(rows[1]!.segs.find(s => s.text.includes('✕'))?.color).toBe('red')
 })
 
 /** A world for the panel with the status script answering `full`. */
@@ -145,12 +154,17 @@ test('the Topology tab: writes topology.json once, draws jobs from progress file
   world(on, files, ['▾ ▶ RUNNING', '  ◑ Hunty board lists █████████████████░░░ 83.3% · 5/6 · rebuilding'].join('\n'))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { title: 'Status', isFocused: false, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 60 }, view: {} } })
-  expect((await ui.find({ type: 'Button', key: 'tab-topology' }))?.text).toBe(' Topology')
+  expect((await ui.find({ type: 'Button', key: 'tab-topology' }))?.text).toBe('🌐')
   await ui.press({ key: 'tab-topology' })
   expect(JSON.parse(files[`${D}/${TOPOLOGY_REL.split('/').pop()}`]!).machines[1].ip).toBe('100.66.167.126')
-  const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  expect(texts.some(t => /▶ Board lists +83%$/.test(t))).toBe(true)
-  expect(texts).toContain(' ──reads nombot.board_members_history──▶ ')
-  expect(texts.some(t => /load 0\.37\/12/.test(t))).toBe(true)
+  // Closed: one row per machine. Opening hunty shows its job, opening the job shows what it reads.
+  expect((await ui.find({ type: 'Button', key: 'tpb-topo:hunty' }))?.text).toMatch(/^▸ ● hunty +1 job · load 0\.37\/12 +◀─ reads ── work-mac$/)
+  expect(await ui.find({ type: 'Text', text: /Board lists/ })).toBe(undefined)
+  await ui.press({ key: 'tpb-topo:hunty' })
+  expect((await ui.find({ type: 'Button', key: 'tpb-topo:hunty:hunty-board-lists' }))?.text).toMatch(/^ +▸ Board lists +83% +reads$/)
+  await ui.press({ key: 'tpb-topo:hunty:hunty-board-lists' })
+  expect((await ui.find({ type: 'Text', text: 'nombot.board_members_history' }))?.text).toBe('nombot.board_members_history')
+  await ui.press({ key: 'tpb-topo:hunty' })
+  expect(await ui.find({ type: 'Text', text: /Board lists/ })).toBe(undefined)
   await ui.unmount()
 })

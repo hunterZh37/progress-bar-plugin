@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { meterLabel, meterOnTabRow, meterText, tabsWidth } from '../hooks/panel'
+import { cells, meterLabel, meterOnTabRow, meterText, tabLabel, tabsWidth } from '../hooks/panel'
 import { PROBE_SCRIPT, USAGE_EVERY, parsePlan, parseProbe, parseSaved, probeDue, probeWith } from '../hooks/usage'
 import type { ProbeIo } from '../hooks/usage'
 
@@ -46,10 +46,13 @@ test('meterLabel and meterText: named by the plan, Max when unknown, compact, th
   expect(meterText(undefined, 85, 'as of 07:38')).toBe('Max 85% ━━━━─ 7d · as of 07:38')
   expect(meterText('Team', 48, 'as of 07:38').match(/[;—]/)).toBeNull()
   // On the tab row only when it fits with two spaces to spare.
-  expect(tabsWidth(['▌List', ' Connectors !2', ' GitHub', ' Log', ' Chat'])).toBe(47)
-  expect(meterOnTabRow(47, 18, 80)).toBe(true)
-  expect(meterOnTabRow(47, 18, 66)).toBe(false)
-  expect(meterOnTabRow(47, 18, 67)).toBe(true)
+  // Icon tabs: emoji count two cells, the shown tab adds its name, two spaces between tabs.
+  expect(tabLabel('list', true)).toBe('☰ List')
+  expect(tabLabel('connectors', false, '!2')).toBe('🔌 !2')
+  expect(cells('🔌 !2')).toBe(5)
+  expect(tabsWidth(['☰ List', '🔌 !2', '⎇', '📜', '💬', '🌐'])).toBe(28)
+  expect(meterOnTabRow(28, 18, 48)).toBe(true)
+  expect(meterOnTabRow(28, 18, 47)).toBe(false)
 })
 
 test('PROBE_SCRIPT: no API key, default login, empty folder, cheapest call, never nests', () => {
