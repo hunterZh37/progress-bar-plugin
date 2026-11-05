@@ -1694,8 +1694,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       extra ? <Button key="done-more" plain onPress={() => toggleCard('done:all')}><Text dimColor>{allDone ? '    show fewer' : `    +${extra} more`}</Text></Button> : null,
       ...(doneTodos.length ? [<Text key="w-checked" dimColor>{'    Checked-off to-dos'}</Text>, ...doneTodos.flatMap(todoItem)] : []),
     ].filter(Boolean)
-    // What matters now first: problems, running, waiting, to-do, done.
-    const ORDER: Key[] = ['problems', 'running', 'waiting', 'todo', 'done']
+    // What matters now first: problems, to-do, running, waiting, done.
+    const ORDER: Key[] = ['problems', 'todo', 'running', 'waiting', 'done']
     const shown = [...sections].sort((a, b) => ORDER.indexOf(a.key) - ORDER.indexOf(b.key))
     const count = (sec: (typeof sections)[number], isFolded: boolean) => {
       if (sec.key === 'todo') return String(openTodos)

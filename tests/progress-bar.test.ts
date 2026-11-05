@@ -1209,7 +1209,7 @@ test('section headers have no hotkeys (no number prefixes), and a watcher shows 
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
   const heads = (await ui.findAll({ type: 'Button' })).filter(b => /^h-/.test(b.key ?? ''))
-  expect(heads.map(b => [b.key, (b as unknown as { props?: { hotkey?: string } }).props?.hotkey ?? (b as unknown as { hotkey?: string }).hotkey])).toEqual([['h-running', undefined], ['h-waiting', undefined], ['h-todo', undefined], ['h-done', undefined]])
+  expect(heads.map(b => [b.key, (b as unknown as { props?: { hotkey?: string } }).props?.hotkey ?? (b as unknown as { hotkey?: string }).hotkey])).toEqual([['h-todo', undefined], ['h-running', undefined], ['h-waiting', undefined], ['h-done', undefined]])
   // Headers: the fold mark and the name bold, the count dim.
   const head = (await ui.find({ type: 'Button', key: 'h-running' })) as unknown as { children?: { props?: { bold?: boolean; dimColor?: boolean } }[] }
   expect(head.children?.map(c => [!!c.props?.bold, !!c.props?.dimColor])).toEqual([[true, false], [false, true]])

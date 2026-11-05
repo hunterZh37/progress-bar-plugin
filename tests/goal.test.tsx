@@ -128,7 +128,7 @@ const FULL = [
   '  grants-rematch · finished 10:12',
 ].join('\n')
 
-test('the List tab: a one-line anchor, then RUNNING, WAITING, TO-DO, DONE; plain two-line rows; no emoji; goal.json written once', async ($, on) => {
+test('the List tab: a one-line anchor, then TO-DO, RUNNING, WAITING, DONE; plain two-line rows; no emoji; goal.json written once', async ($, on) => {
   const files: Record<string, string> = {
     [SCRIPT]: statusScript(), [FLAG]: 'on\n',
     [`${DIR}/todo.txt`]: '[hunty]\n1. Know where more orgs serve (after hunty-board-seats)\n',
@@ -154,7 +154,7 @@ test('the List tab: a one-line anchor, then RUNNING, WAITING, TO-DO, DONE; plain
   expect(all).not.toMatch(/[\u{1F000}-\u{1FFFF}⛔⚙⏱⚡☀✉]/u)
   expect(all).not.toMatch(/today: |quality|machines:|◒/)
   // Level 2: what matters now first. Never two blank lines in a row.
-  expect(lines.filter(l => /^[▾▸] /.test(l))).toEqual(['▾ RUNNING  2', '▾ TO-DO  1', '▾ DONE  1'])
+  expect(lines.filter(l => /^[▾▸] /.test(l))).toEqual(['▾ TO-DO  1', '▾ RUNNING  2', '▾ DONE  1'])
   expect(all).not.toMatch(/\n\s*\n\s*\n/)
   // Level 3 and 4: the mark, the title, a thin bar and the percent, time left after it; then "<Area> · <why>" under
   // the title text.

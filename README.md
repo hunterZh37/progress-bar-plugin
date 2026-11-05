@@ -26,7 +26,7 @@ Live progress bars and a to-do list in the Claude Code status line. One line per
 - **Auto-next:** when a job finishes, the top ready to-do of its machine starts by itself (or is suggested, the default).
 - **Links:** job names open their progress file, or a URL you set in `links.txt`.
 - **Status line:** a small script prints all this above your existing status line.
-- **Status panel:** an optional docked pane beside the chat that anyone can read at a glance: the goal on top (`Making the generosity database better`), then RUNNING, WAITING, TO-DO and DONE, each row with the area it improves under its title (see **Goal view**). The status line shrinks to one line.
+- **Status panel:** an optional docked pane beside the chat that anyone can read at a glance: the goal on top (`Making the generosity database better`), then TO-DO, RUNNING, WAITING and DONE, each row with the area it improves under its title (see **Goal view**). The status line shrinks to one line.
 - **Area and gains:** a job says which part of the goal it improves (`area`) and which of cost, quality, speed it makes better (`gains`), so the panel can group it and tag it.
 - **Connectors:** a second tab in the panel shows which MCP connectors are connected, need sign-in or failed.
 - **GitHub:** a third tab shows the session repo's branch, other branches and recent commits. Click one to open it on GitHub.
@@ -274,7 +274,7 @@ Making the generosity database better · 6 done today · 4 running
 
 - **Four levels:** the anchor is the one bold colored line. Section headers are bold and uppercase with a dim count. Row titles are plain and bright. Second lines are dim, under the title text, with the area word a step brighter. Never more than one blank line.
 - **Anchor:** the goal, then done today and running, the counts that are not zero, on one line cut to the pane.
-- **Sections, most urgent first:** PROBLEMS, RUNNING, WAITING, TO-DO (per machine, priorities, blockers, the menu), DONE. Hotkeys `1`, `2`, `3`... follow that order. Folding works as before. DONE shows the latest 5 in time order, then `+N more`. Inside RUNNING and WAITING, rows cluster by area in the goal's order, `Other` last. To-dos keep their priority order.
+- **Sections:** PROBLEMS, TO-DO (per machine, priorities, blockers, the menu), RUNNING, WAITING, DONE. Headers have no hotkeys. Folding works as before. DONE shows the latest 5 in time order, then `+N more`. Inside RUNNING and WAITING, rows cluster by area in the goal's order, `Other` last. To-dos keep their priority order.
 - **Gutter:** the status mark (`◐ ⏸ ✓ ⚠ ↳`) sits in one column and the title in the next. Nothing else uses those columns.
 - **Running rows:** the title, a thin bar and the percent, lined up at the right, then time left or a stuck note when there is one (`59m left`, `⚠ stuck 14m`).
 - **Second line:** `<Area> · <why>` for running jobs, `<Area> · <why it waits>` for waiting ones, `<Area> · <impact>` for done ones. It is one line, cut with `…` to fit, never wrapped.
