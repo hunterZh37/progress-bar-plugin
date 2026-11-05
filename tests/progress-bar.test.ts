@@ -615,7 +615,7 @@ test('the panel draws an indeterminate bar without a %, and one compact usage me
   panelWorld(on, files, full)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 40 } })
-  expect((await ui.find({ type: 'Text', text: /^━━━$/ }))?.text).toBe('━━━')
+  expect((await ui.find({ type: 'Text', text: /^  ┄+$/ }))?.text).toMatch(/^  ┄{10}$/)
   expect(await ui.find({ type: 'Text', text: /steps not reported/ })).toBe(undefined)
   await ui.press({ key: 'open-build-docs' })
   expect((await ui.find({ type: 'Text', text: /steps not reported/ }))?.text).toBe('steps not reported')

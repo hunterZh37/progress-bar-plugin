@@ -393,7 +393,7 @@ Waiting jobs draw no bar: `⏸ ▸ <title>`, then a dim line `<how long> · <why
     🤖  Claude agent
     6 of 8 steps
     ⏱ 22m so far   🔧 52 actions
-      ↳ ▸ Train the model    ──━━━─────       12:50 running
+      ↳ ▸ Train the model    ┄┄┄┄┄┄┄┄┄┄       12:50 running
 ⚠ ▸ Nightly import           ━━━━━━━━──  80%  ⚠ stuck 14m
 ```
 
@@ -415,9 +415,9 @@ Waiting jobs draw no bar: `⏸ ▸ <title>`, then a dim line `<how long> · <why
 - **Remote jobs:** a `<host>: name` job without a `parent` nests under the one running job whose id starts with `<host>-` (such as `gpu-box: train.py` under `gpu-box-train`). With none or several such jobs it keeps its own line.
 - **Waiting on:** a parent whose numbers have not moved is not stuck while a child runs or changed in the last 10 minutes. Its line reads `waiting on <child title>` instead of `⚠ stuck`. The grouper does the same in the status line.
 - **Kind badge:** 🏷  **labeling** for names ending `-classify`, `-verify`, `-judge` or `-candidates`. 🖥  **on host** for names starting `host:` or `host: ` (any `name:` prefix, such as `gpu-box: train.py`). 🤖  **Claude agent** when the row reports `N tools`. ⚙  **job** for the rest.
-- **Busy processes:** a row detail `N% CPU` is never progress. The line shows the sliding piece and the run time, the card `⚙ N cores busy` and `⏱ 12:50 running`. A busy process that ends never shows as finished.
+- **Busy processes:** a row detail `N% CPU` is never progress. The line shows a still dotted bar and the run time, the card `⚙ N cores busy` and `⏱ 12:50 running`. A busy process that ends never shows as finished.
 - **Name:** a trailing status word (`working`, `running`, `pending`, `waiting`, `starting`) is left out.
-- **No percent:** a 3-block piece slides along the bar, so it still reads as working.
+- **No percent:** a still dotted bar `┄┄┄┄┄┄┄┄┄┄` with the run time. It used to slide, which read as flashing.
 - **Facts:** `⚙ N cores busy`, `⏱ 12:50 running`, `⏱ Y so far`, `⚡ N/min`, `🔧 N actions · last: Tool`.
 - **Usage meter:** one shared meter on the tab row (or above it in a narrow pane), from a row detail `7d N%` or `Max 7-day used N%` (the highest one). Green under 50%, yellow under 80%, red above.
 - **Done at 100%:** a row that reached 100% but still reports shows under DONE as one dim line, `✓ <title>  finishing · 7/7`, without a bar.

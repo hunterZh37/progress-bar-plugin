@@ -1115,9 +1115,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           </Button>
           {frac === null
             ? [
-                <Text key="a" dimColor>{`  ${'─'.repeat(before)}`}</Text>,
-                <Text key="b" color={stuck ? 'yellow' : 'cyan'}>{'━━━'}</Text>,
-                <Text key="c" dimColor>{'─'.repeat(after)}</Text>,
+                // No % known: a still, dotted bar. A sliding piece redrew every second and read as flashing.
+                <Text key="a" color={stuck ? 'yellow' : 'cyan'} dimColor={!stuck}>{`  ${'┄'.repeat(before + 3 + after)}`}</Text>,
                 <Text key="d">{'     '}</Text>,
               ]
             : [
