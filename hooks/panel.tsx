@@ -436,10 +436,10 @@ export function maxMeter(used: number, cells = 10): { filled: number; color: 'gr
 /** The compact meter's cells. */
 export const METER_CELLS = 5
 
-/** The compact meter's text, "Team 48% ▰▰▰▱▱ 7d", with " · as of 07:38" for an old reading. */
+/** The compact meter's text, "Team 48% ━━━── 7d", with " · as of 07:38" for an old reading. */
 export function meterText(plan: string | undefined, used: number, asOf: string): string {
   const f = maxMeter(used, METER_CELLS).filled
-  return `${meterLabel(plan)} ${used}% ${'▰'.repeat(f)}${'▱'.repeat(METER_CELLS - f)} 7d${asOf ? ` · ${asOf}` : ''}`
+  return `${meterLabel(plan)} ${used}% ${'━'.repeat(f)}${'─'.repeat(METER_CELLS - f)} 7d${asOf ? ` · ${asOf}` : ''}`
 }
 
 /** The tab row's text width: the tab labels and the " │ " between them. */
@@ -1095,8 +1095,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         parts: [
           <Text key="mt-n" dimColor>{`${meterLabel(maxSaved?.plan)} `}</Text>,
           <Text key="mt-p">{`${used}% `}</Text>,
-          <Text key="mt-f" color={m.color}>{'▰'.repeat(m.filled)}</Text>,
-          <Text key="mt-e" dimColor>{`${'▱'.repeat(METER_CELLS - m.filled)} 7d${reading.asOf ? ` · ${reading.asOf}` : ''}`}</Text>,
+          <Text key="mt-f" color={m.color}>{'━'.repeat(m.filled)}</Text>,
+          <Text key="mt-e" dimColor>{`${'─'.repeat(METER_CELLS - m.filled)} 7d${reading.asOf ? ` · ${reading.asOf}` : ''}`}</Text>,
         ],
       }
     })()

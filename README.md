@@ -290,7 +290,7 @@ WAITING jobs draw no bar: one line, `⏸ <title> · waiting on <reason>` (the te
 - **Watchers fold in:** a waiting agent whose name says `watcher`, `watch` or `monitor`, and whose other words name a running job (`Mac label top-ups watcher` and `mac-label-top-ups-2021-23`), leaves WAITING. Its job's card says `watched by Mac label top-ups watcher`.
 
 ```
-▌List │ Connectors │ GitHub │ Log │ Chat           Max 62% ▰▰▰▱▱ 7d
+▌List │ Connectors │ GitHub │ Log │ Chat           Max 62% ━━━── 7d
 
 ◐ ▾ Health care labels       ━━━━━━━━──  64%  1h19m left
     healthcare-classify   🏷  labeling
@@ -307,7 +307,7 @@ WAITING jobs draw no bar: one line, `⏸ <title> · waiting on <reason>` (the te
 ⚠ ▸ Nightly import           ━━━━━━━━──  80%  ⚠ stuck 14m
 ```
 
-- **Usage meter:** a compact `Team 48% ▰▰▱▱▱ 7d` (the plan's name, `Max` when unknown) sits at the right end of the tab row on every tab, even with nothing running. In a pane too narrow for both it gets its own line above the tabs, right-aligned. It reads `Max 7-day used N%` (or `7d N%`) from running lines. With no job reporting it, the last reading stays for up to 7 days (saved in `~/.claude-progress/.state/max-usage.json`). Once that reading is over 35 minutes old it adds its time, like `· as of 12:39`.
+- **Usage meter:** a compact `Team 48% ━━─── 7d` (the plan's name, `Max` when unknown) sits at the right end of the tab row on every tab, even with nothing running. In a pane too narrow for both it gets its own line above the tabs, right-aligned. It reads `Max 7-day used N%` (or `7d N%`) from running lines. With no job reporting it, the last reading stays for up to 7 days (saved in `~/.claude-progress/.state/max-usage.json`). Once that reading is over 35 minutes old it adds its time, like `· as of 12:39`.
 - **Fresh every 30 min:** when the saved reading is over 30 minutes old, the plugin takes its own. At session start and every 5 minutes it checks the age. One session per machine does the check (a lock folder, `.state/max-usage.probe`).
   - **How:** one tiny Haiku call, `claude -p` with `--tools ""`, `--strict-mcp-config`, `--setting-sources ""` and `--no-session-persistence`, run in an empty temp folder. It reads the 7-day and 5-hour use from the reply's rate limit event.
   - **Login only:** it uses your default login. `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `CLAUDE_CONFIG_DIR` are unset for the call, and a run that reports an API key is thrown away. It counts toward your plan's use, about 3.5k tokens a call (about $0.0006 at API prices), so about 48 calls a day at most.

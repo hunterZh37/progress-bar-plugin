@@ -42,8 +42,8 @@ test('meterLabel and meterText: named by the plan, Max when unknown, compact, th
   expect(meterLabel('Team')).toBe('Team')
   expect(meterLabel()).toBe('Max')
   expect(meterLabel('x;y')).toBe('Max')
-  expect(meterText('Team', 48, '')).toBe('Team 48% ▰▰▱▱▱ 7d')
-  expect(meterText(undefined, 85, 'as of 07:38')).toBe('Max 85% ▰▰▰▰▱ 7d · as of 07:38')
+  expect(meterText('Team', 48, '')).toBe('Team 48% ━━─── 7d')
+  expect(meterText(undefined, 85, 'as of 07:38')).toBe('Max 85% ━━━━─ 7d · as of 07:38')
   expect(meterText('Team', 48, 'as of 07:38').match(/[;—]/)).toBeNull()
   // On the tab row only when it fits with two spaces to spare.
   expect(tabsWidth(['▌List', ' Connectors !2', ' GitHub', ' Log', ' Chat'])).toBe(47)

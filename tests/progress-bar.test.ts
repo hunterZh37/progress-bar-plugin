@@ -615,10 +615,10 @@ test('the panel draws an indeterminate bar without a %, and one compact usage me
   expect(await ui.find({ type: 'Text', text: /steps not reported/ })).toBe(undefined)
   await ui.press({ key: 'open-build-docs' })
   expect((await ui.find({ type: 'Text', text: /steps not reported/ }))?.text).toBe('steps not reported')
-  // At 52 columns the meter ("Max 62% ▰▰▰▱▱ 7d", 16) does not fit after the tabs (44): its own line, right-aligned.
+  // At 52 columns the meter ("Max 62% ━━━── 7d", 16) does not fit after the tabs (44): its own line, right-aligned.
   const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   const at = texts.indexOf('Max ')
-  expect(texts.slice(at - 1, at + 4)).toEqual([' '.repeat(52 - 16), 'Max ', '62% ', '▰▰▰', '▱▱ 7d'])
+  expect(texts.slice(at - 1, at + 4)).toEqual([' '.repeat(52 - 16), 'Max ', '62% ', '━━━', '── 7d'])
   // Above the tabs, not after them.
   expect(at).toBeLessThan(texts.indexOf(' │ '))
   await ui.press({ key: 'open-orgs-judge' })
