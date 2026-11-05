@@ -147,6 +147,11 @@ export function lensTags(goal: Goal, gains: Gains | undefined, impact = ''): Len
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
+/** The anchor, one line: "Making the generosity database better · 6 done today · 3 running", the counts that are not zero. */
+export function anchorLine(anchor: string, done: number, running: number): string {
+  return [anchor, done ? `${done} done today` : '', running ? `${running} running` : ''].filter(Boolean).join(' · ')
+}
+
 /** The anchor's progress line: "4 improvements done today · 3 in progress · 7 queued", the parts that are not zero. */
 export function anchorSummary(done: number, live: number, queued: number): string {
   const parts = [

@@ -30,7 +30,7 @@ export const PROGRESS_TOOL = {
       reads: { type: 'string', description: 'Optional. What the job reads, a few words. Example: nombot.board_members_history. Shown on the Topology tab.' },
       writes: { type: 'string', description: 'Optional. What the job writes, a few words. Example: Postgres via work-mac. Shown on the Topology tab.' },
       impact: { type: 'string', description: 'How the finished job made things better: what the data or product now has or gets right, with the key number, one to three short lines (newlines split them). No commit ids or file names. Example: 1.65M more board seats, so board links and people search see whole boards. Shown when its DONE row is opened.' },
-      area: { type: 'string', description: 'Which part of the goal (~/.claude-progress/goal.json areas) the job improves, by name. Example: Boards & people. Always set it, so the Status panel groups the job under that area.' },
+      area: { type: 'string', description: 'Which part of the goal (~/.claude-progress/goal.json areas) the job improves, by name. Example: Boards & people. Always set it, so the Status panel shows that area under the title of the job.' },
       gains: { type: 'object', description: 'What the job makes better, by lens: any of cost, quality, speed, each a short plain line with a number when possible. Example: {"quality": "1.65M more board seats counted", "speed": "labels in 7h instead of 12h"}. State the ones that apply.', properties: { cost: { type: 'string' }, quality: { type: 'string' }, speed: { type: 'string' } } },
       finished: { type: 'boolean', description: 'true removes the bar once the job is over. Pass impact with it.' },
     },

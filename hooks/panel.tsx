@@ -13,7 +13,7 @@ import { markHandled, readInbox } from './inbox'
 import { isDarwin } from './mac'
 import { backfillAgent, clock, doneDetails, machineName, prettyName, readDone } from './done'
 import { clip, moveItem, nextPrompt, parseItem, rankTodos, shownTitle, todoRows as layoutTodos } from './priority'
-import { DEFAULT_GOAL, OTHER, anchorSummary, areaOf, groupByArea, lensSummary, lensTags, plainTitle, readGoal } from './goal'
+import { DEFAULT_GOAL, OTHER, anchorLine, areaOf, lensTags, plainTitle, readGoal } from './goal'
 import type { LensTag } from './goal'
 import { sessionProject } from './project'
 import { DEFAULT_TOPOLOGY, queuesOf, readTopology, renderTopology, resolveMachine } from './topology'
@@ -59,7 +59,8 @@ const FOLDED_REL = '.claude-progress/.state/folded.txt'
 export const SECTION_KEYS = ['todo', 'running', 'done', 'waiting', 'problems'] as const
 type Key = (typeof SECTION_KEYS)[number]
 const TITLES: Record<string, Key> = { 'TO-DO': 'todo', RUNNING: 'running', WAITING: 'waiting', DONE: 'done', PROBLEMS: 'problems' }
-const ICON: Record<Key, string> = { todo: '☐', running: '▶', waiting: '⏸', done: '✔', problems: '✖' }
+/** DONE shows this many of the latest finished jobs, then "+N more". */
+export const DONE_FOLD = 5
 
 const foldedAtom = atom({ plugin: 'progress-bar', key: 'folded' } as const, [])
 const linesAtom = atom({ plugin: 'progress-bar', key: 'lines' } as const, [])
@@ -439,11 +440,10 @@ export const labelCol = (width: number, ind = 0) => {
 }
 
 /**
- * The title column of a running row: the row is the mark (4), "▸ " (2), the title, the bar (12) and
- * " 100%" (5), so the title gets what is left of the pane, 3 to 40 columns, less a child's indent. Time left and the
- * why go on the line under it.
+ * The title column of a running row: the mark (4), the title, the bar (12), " 100%" (5), then 14 columns for time
+ * left or a stuck note ("  1h09m left", "  ⚠ stuck 1h05m"). The title takes the rest, at least 3 columns, so bars and percents line up at the right edge.
  */
-export const rowCol = (width: number, ind = 0) => Math.max(3, Math.min(40, width - 23 - ind))
+export const rowCol = (width: number, ind = 0) => Math.max(3, width - 35 - ind)
 
 /** A label cut or padded to its column. */
 export const fitLabel = (s: string, col: number) => (s.length > col ? `${s.slice(0, col - 1)}…` : s.padEnd(col))
@@ -975,7 +975,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const lines = await read($, linesAtom)
     const folded = new Set(await read($, foldedAtom))
     const todos = await read($, todosAtom)
-    const project = await read($, projectAtom)
     const menuFor = await read($, menuAtom)
     const conns = await read($, connsAtom)
     const tab = await read($, tabAtom)
@@ -1002,7 +1001,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // A checked-off to-do (under DONE) as a button. Pressing it opens its menu below it.
     const todoItem = (t: Todo) => [
       <Button key={`t-${t.line}`} plain onPress={() => update($, menuAtom, v => (v === t.line ? -1 : t.line))}>
-        {[`    ${t.done ? '✓' : '○'} `, todoTag(t.text), t.text]}
+        {`  ${t.done ? '✓' : '○'} ${t.text}`}
       </Button>,
       menuFor === t.line
         ? <Box key={`m-${t.line}`}>
@@ -1020,20 +1019,20 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // blocked), its place as "1." in a 3-wide column (bold cyan) and the title without its "(after X)". Blocked items that wait on the same
     // job get one dim "waits for <job>" line under the last of them. Pressing an item opens its menu below it.
     const jobLabel = (b: string) => (runNames.includes(b) ? metaNow[slug(b)]?.title ?? b : b)
-    const todoRows = () => layoutTodos(rankTodos(todos.filter(t => !t.done && keep(todoArea(t.text))), running), width - TAGW - 1, jobLabel).flatMap(row => {
+    const todoRows = () => layoutTodos(rankTodos(todos.filter(t => !t.done), running), width + 3, jobLabel).flatMap(row => {
       if (row.kind === 'gap') return [<Text key={`g-${row.owner}`}>{' '}</Text>]
       if (row.kind === 'head') {
-        return [<Box key={`w-${row.owner}`}><Text bold color="magenta">{`  ${row.owner.charAt(0).toUpperCase()}${row.owner.slice(1).toLowerCase()}`}</Text><Text dimColor>{`  ${row.count}`}</Text></Box>]
+        return [<Box key={`w-${row.owner}`}><Text color="magenta">{`    ${row.owner.charAt(0).toUpperCase()}${row.owner.slice(1).toLowerCase()}`}</Text><Text dimColor>{`  ${row.count}`}</Text></Box>]
       }
-      if (row.kind === 'waits') return [<Text key={`wf-${row.at}`} dimColor>{`          ${row.text}`}</Text>]
+      if (row.kind === 'waits') return [<Text key={`wf-${row.at}`} dimColor>{`        ${row.text}`}</Text>]
       const t = row.item
       return [
         <Box key={`tr-${t.line}`}>
-          <Text color={row.marker === '▶' ? 'green' : undefined} dimColor={row.marker === '⏸'}>{`    ${row.marker} `}</Text>
+          <Text color={row.marker === '▶' ? 'green' : undefined} dimColor={row.marker === '⏸'}>{`  ${row.marker} `}</Text>
           <Button key={`t-${t.line}`} plain onPress={() => update($, menuAtom, v => (v === t.line ? -1 : t.line))}>
             {row.dim
-              ? [<Text key="n" dimColor>{`${row.num}  `}</Text>, todoTag(t.text), <Text key="t" dimColor>{row.title}</Text>]
-              : [<Text key="n" bold color="cyan">{row.num}</Text>, '  ', todoTag(t.text), row.title]}
+              ? <Text dimColor>{`${row.num} ${row.title}`}</Text>
+              : [<Text key="n" dimColor>{row.num}</Text>, ` ${row.title}`]}
           </Button>
         </Box>,
         menuFor === t.line
@@ -1086,29 +1085,16 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // Rows cluster by area inside a section: the goal's order, areas only a job names, then Other.
     const areaRank = (a: GoalArea) => { const i = goal.areas.findIndex(x => x.id === a.id); return i >= 0 ? i : a.id === OTHER.id ? 1e6 : 1e5 }
     const byArea = <T,>(xs: T[], of: (x: T) => GoalArea) => xs.map((x, i) => ({ x, i, r: areaRank(of(x)) })).sort((a, b) => a.r - b.r || a.i - b.i).map(y => y.x)
-    // An area chip pressed filters every section to that area. Pressing it again clears it.
-    const FILTER = 'filter:area:'
-    const filterId = [...openCards].find(k => k.startsWith(FILTER))?.slice(FILTER.length) ?? ''
-    const keep = (a: GoalArea) => !filterId || a.id === filterId
-    // The start of a row's dim second line: its area as a short word, then the lenses it makes better ("quality",
-    // "speed", "cost"). Lenses a job named show brighter than one inferred from its impact.
-    // `more`: whether anything follows on the line, so it never ends in a dangling " · ".
-    const lead = (ar: GoalArea, tags: LensTag[], more = true) => [
-      <Text key="ar" dimColor>{`${ar.tag}${tags.length || more ? ' · ' : ''}`}</Text>,
-      tags.length ? <Text key="ln" dimColor={tags.every(t => t.inferred)}>{`${tags.map(t => t.name).join(' ')}${more ? ' · ' : ''}`}</Text> : null,
-    ]
     // The gains a job named, one line each, for its open card.
     const gainLines = (tags: LensTag[]) => tags.filter(t => !t.inferred).map(t => `${t.name}: ${t.text}`)
     // A to-do's area as a short dim word, padded so the titles line up.
-    const TAGW = Math.min(8, Math.max(...[...goal.areas, OTHER].map(a => a.tag.length)))
-    const todoTag = (text: string) => <Text key="tg" dimColor>{`${todoArea(text).tag.slice(0, TAGW).padEnd(TAGW)} `}</Text>
     // A detail line under an open card: wrapped with a hanging indent, so long text never runs back to column 0.
     const hang = (key: string, pad: string, text: string, dim = true) => (
       <Box key={key} paddingLeft={pad.length}><Text dimColor={dim}>{text}</Text></Box>
     )
-    // A running job in plain words: line one is the mark, "▸ <title>" (the improvement, no machine), a thin bar and %;
-    // line two (dim) is time left, stuck or what it waits on, then its why. Pressing the title opens the card: the
-    // machine, id and badge, count, step, facts and named gains.
+    // A running job, two lines. Line one: the mark, "▸ <title>" (the improvement, no machine), a thin bar, the percent,
+    // then time left (or stuck, or what it waits on) when it fits. Line two: "<Area> · <why>", one dim Text cut to
+    // the pane, never wrapped. Pressing the title opens the card: the step, the machine, the time, named gains.
     const card = (r: RunCard, k: string, ind: string, child: boolean, kid: string) => {
       const m0 = metaOf(r.name)
       const key = slug(r.name)
@@ -1125,19 +1111,18 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const title = plain(m0.title || prettyName(r.name))
       const label = fitLabel(title, col)
       const finished = r.mark === '✔'
-      const tail = finished ? 'just finished' : stuck ? `⚠ stuck ${stuck}` : waitOn ? `waiting on ${short(waitOn)}` : timeTail(r)
+      // Room after mark, label, bar and percent (4 + col + 17) and two spaces.
+      const room = width - ind.length - col - 23
+      const fit = (x: string) => (x.length > room ? (room > 1 ? `${x.slice(0, room - 1)}…` : '') : x)
+      const tail = fit(finished ? 'just finished' : stuck ? `⚠ stuck ${stuck}` : waitOn ? `waiting on ${short(waitOn)}` : r.left ? `${r.left} left` : r.pct === null && r.ran ? `${r.ran} running` : '')
       const why = (m0.why ?? '').replace(/^unlocks:?\s*/i, '')
       const tags = lensTags(goal, m0.gains)
       const ar = runArea(r.name, r.step)
-      // The open card names the raw job when it says something the title does not, and the machine on its own line.
-      const idName = sameName(r.name, title) || sameName(r.name, full) ? '' : r.name
       return [
         <Box key={`r${k}`}>
           <Box flexShrink={0}>
           <Text color={stuck ? 'yellow' : finished ? 'green' : 'cyan'}>{`${ind}  ${mark} `}</Text>
-          <Button key={`open-${key}`} plain onPress={() => toggleCard(key)}>
-            {`${isOpen ? '▾' : '▸'} ${label}`}
-          </Button>
+          <Button key={`open-${key}`} plain onPress={() => toggleCard(key)}>{label}</Button>
           {frac === null
             ? [
                 // No % known: a still, dotted bar. A sliding piece redrew every second and read as flashing.
@@ -1150,26 +1135,33 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 <Text key="c" bold>{` ${String(Math.round(r.pct!)).padStart(3)}%`}</Text>,
               ]}
           </Box>
+          {tail ? <Text color={stuck ? 'yellow' : undefined} dimColor={!stuck} wrap="truncate-end">{`  ${tail}`}</Text> : null}
         </Box>,
-        <Box key={`rw${k}`} paddingLeft={ind.length + 6}>
-          {lead(ar, tags, !!(tail || why))}
-          {tail ? <Box flexShrink={0}><Text color={stuck ? 'yellow' : undefined} dimColor={!stuck}>{tail}</Text></Box> : null}
-          {why ? <Text dimColor wrap="truncate-end">{tail ? ` · ${why}` : why}</Text> : null}
-        </Box>,
-        ...(isOpen ? details(r, k, pad, waitOn, idName, tags, ar, machineOf(full, title)) : []),
+        second(`rw${k}`, ind.length + 4, ar, why),
+        ...(isOpen ? details(r, k, pad, waitOn, tags, machineOf(full, title)) : []),
       ].filter(Boolean)
     }
     const toggleCard = (key: string) => update($, openAtom, l => (l.includes(key) ? l.filter(x => x !== key) : [...l, key]))
-    // An open card's details: machine, id and badge, count, step, facts, watcher and named gains, each wrapped under its indent.
-    const details = (r: RunCard, k: string, pad: string, waitOn: string, idName: string, tags: LensTag[] = [], ar?: GoalArea, machine = '') => [
-      hang(`id${k}`, pad, idName ? `${idName}   ${badge(r.kind)}` : badge(r.kind)),
+    // A row's second line, under the title text: the area word (a step brighter), then " · <text>" dim. Both parts are
+    // cut so the line fits the pane: it never wraps.
+    const second = (key: string, indent: number, ar: GoalArea, text: string) => {
+      const room = Math.max(4, width - indent)
+      const tag = clip(ar.tag, room)
+      const rest = text && room - tag.length > 4 ? clip(` · ${text}`, room - tag.length) : ''
+      return (
+        <Box key={key} paddingLeft={indent}>
+          <Box flexShrink={0}><Text>{tag}</Text></Box>
+          {rest ? <Text dimColor wrap="truncate-end">{rest}</Text> : null}
+        </Box>
+      )
+    }
+    // An open card: the step (or what it waits on, or the count), the machine, the time, and the gains it named.
+    const details = (r: RunCard, k: string, pad: string, waitOn: string, tags: LensTag[] = [], machine = '') => [
+      waitOn ? hang(`t${k}`, pad, `waiting on: ${waitOn}`, false) : r.step || r.count ? hang(`t${k}`, pad, r.step || r.count, false) : null,
       machine ? hang(`mc${k}`, pad, `machine: ${machine}`) : null,
-      r.count || r.pct === null ? hang(`c${k}`, pad, r.count || 'steps not reported') : null,
-      waitOn ? hang(`t${k}`, pad, `waiting on: ${waitOn}`, false) : r.step ? hang(`t${k}`, pad, r.step, false) : null,
-      r.facts ? hang(`f${k}`, pad, r.facts) : null,
+      r.ran || r.elapsed ? hang(`f${k}`, pad, r.ran ? `${r.ran} running` : `${r.elapsed} so far`) : null,
       r.watchedBy ? hang(`wb${k}`, pad, `watched by ${r.watchedBy}`) : null,
       ...gainLines(tags).map((g, j) => hang(`gn${k}-${j}`, pad, g)),
-      ar ? hang(`ar${k}`, pad, `area: ${ar.name}`) : null,
     ].filter(Boolean)
     // The running rows as top jobs, each with its children (drawn under it while it is open).
     const runTops = (rows: string[]) => {
@@ -1198,22 +1190,20 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const whole = `${phrase || 'waiting, no reason reported'}${c.waited ? ` · for ${c.waited}` : ''}`
       const said = phrase.replace(/^(waiting on |last step: |paused by a rate limit: )/, '')
       const inStep = !c.waited && !!said && c.step.includes(said)
-      const note = [c.waited, phrase || 'waiting', why].filter(Boolean).join(' · ')
       const ar = runArea(c.name, c.step)
-      const idName = sameName(c.name, title) || sameName(c.name, full) ? '' : c.name
       return [
         <Box key={`rw${i}`}>
           <Text color="yellow" dimColor>{'  ⏸ '}</Text>
-          <Button key={`open-${key}`} plain onPress={() => toggleCard(key)}>{`${isOpen ? '▾' : '▸'} ${clip(title, Math.max(4, width - 6))}`}</Button>
+          <Button key={`open-${key}`} plain onPress={() => toggleCard(key)}>{clip(title, Math.max(4, width - 4))}</Button>
         </Box>,
-        <Box key={`rwn${i}`} paddingLeft={6}>{lead(ar, tags)}<Text dimColor wrap="truncate-end">{note}</Text></Box>,
-        ...(isOpen ? [inStep ? null : hang(`wr${i}`, '    ', whole, false), ...details(c, `w${i}`, '    ', '', idName, tags, ar, machineOf(full, title))].filter(Boolean) : []),
+        second(`rwn${i}`, 4, ar, phrase || why || 'waiting'),
+        ...(isOpen ? [inStep ? null : hang(`wr${i}`, '    ', whole, false), ...details(c, `w${i}`, '    ', '', tags, machineOf(full, title))].filter(Boolean) : []),
       ]
     }
 
-    // A finished job reads like a changelog line: "✓ ▸ <title>  14:05", then its impact sentence (dim) under it, with
-    // the lens icons it named (or one inferred from the impact, dim). Open, it shows the rest of its impact, its named
-    // gains, "finished 14:05 · ran 1h20m" with its machine badge, and what it unlocks. An agent that finished before
+    // A finished job reads like a changelog line: "✓ ▸ <title>  14:05", then "<Area> · <impact>" dim under it, one
+    // line. Open, it shows the rest of its impact, the gains it named ("quality: ..."), "finished 14:05 · ran 1h20m ·
+    // machine: Mac", and what it unlocks. An agent that finished before
     // records were kept gets one from its transcript when first opened.
     const doneTags = (d: DoneItem) => {
       const rec = recs[d.key]
@@ -1241,18 +1231,20 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const tags = doneTags(d)
       const said = tags.find(t => !t.inferred)?.text ?? ''
       const impact = rec?.impact[0] || said
-      const more = doneDetails(rec, d.at, mach).filter(t => t !== impact)
+      // The first impact line shows again in the open card only when line two had to cut it.
+      const cut = `${ar.tag} · ${impact}`.length > width - 4
+      const more = doneDetails(rec, d.at, mach).filter(t => cut || t !== impact)
       return [
         <Box key={`dn${i}`}>
           <Text color="green">{'  ✓ '}</Text>
-          <Button key={`dno-${d.key}`} plain onPress={press}>{`${isOpen ? '▾' : '▸'} ${title}`}</Button>
+          <Button key={`dno-${d.key}`} plain onPress={press}>{clip(title, Math.max(4, width - 4 - (d.at ? 7 : 0)))}</Button>
           <Text dimColor>{d.at ? `  ${d.at}` : ''}</Text>
         </Box>,
-        <Box key={`dni${i}`} paddingLeft={6}>{lead(ar, tags, !!impact)}<Text dimColor>{impact}</Text></Box>,
+        second(`dni${i}`, 4, ar, impact),
         ...(isOpen
           ? [
-              ...gainLines(tags).filter(g => !g.endsWith(`: ${impact}`)).map((g, j) => hang(`dg${i}-${j}`, '      ', g)),
-              ...(impact && more[0] === 'no impact reported' ? more.slice(1) : more).map((t, j) => hang(`dd${i}-${j}`, '      ', t, !rec?.impact.length || !rec.impact.includes(t))),
+              ...gainLines(tags).filter(g => !g.endsWith(`: ${impact}`)).map((g, j) => hang(`dg${i}-${j}`, '    ', g)),
+              ...(impact && more[0] === 'no impact reported' ? more.slice(1) : more).map((t, j) => hang(`dd${i}-${j}`, '    ', t, !rec?.impact.length || !rec.impact.includes(t))),
             ]
           : []),
       ].filter(Boolean)
@@ -1680,94 +1672,55 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // then opens a new visible terminal window. Slash commands have no Run (they are typed in Claude Code).
     const actBlock = await actionBox($, e, homeDir, width, false)
 
-    // The List tab: the anchor (the goal, today's counts, today's count per lens), one line of area chips, then the
-    // sections as always: TO-DO, PROBLEMS, RUNNING, WAITING, DONE, foldable, with hotkeys 1, 2, 3... Every row has its
-    // area icon in front of its title, and rows cluster by area inside a section. A chip filters every section to its
-    // area. Pressing it again shows all.
+    // The List tab: the anchor on one line (the goal, done today, running), then the sections as always: TO-DO,
+    // PROBLEMS, RUNNING, WAITING, DONE, foldable, with hotkeys 1, 2, 3... Each job's area is the first word of its dim
+    // second line, and rows cluster by area inside a section.
     const tops = runTops(sections.find(x => x.key === 'running')?.rows ?? []).map(t => ({ ...t, ar: runArea(t.c.name, t.c.step) }))
-    const waits = (sections.find(x => x.key === 'waiting')?.rows ?? []).map(row => ({ row, ar: runArea(runCard(row).name, runCard(row).step) }))
+    const waits = (sections.find(x => x.key === 'waiting')?.rows ?? []).map((row, i) => ({ row, i, ar: runArea(runCard(row).name, runCard(row).step) }))
     const dones = doneList.map((d, i) => ({ d, i, ar: doneArea(d) }))
-    const queued = rankTodos(todos.filter(t => !t.done), running).map(t => ({ t, ar: todoArea(t.text) }))
     const doneN = doneList.filter(d => d.text === undefined).length
-    const lens = lensSummary(goal, dones.filter(x => x.d.text === undefined && !x.d.finishing).map(x => doneTags(x.d)))
-    // Chips: each area with something today, in the goal's order: "Boards 1 ◒ 2 ✓" (in progress, done), "Places 1 ○" when only queued.
-    const chipAreas = groupByArea(goal, [...tops.map(x => ({ area: x.ar, k: 'live' })), ...waits.map(x => ({ area: x.ar, k: 'live' })), ...dones.filter(x => x.d.text === undefined).map(x => ({ area: x.ar, k: 'done' })), ...queued.map(x => ({ area: x.ar, k: 'queued' }))])
-    const chips = chipAreas.map(g => {
-      const n = (k: string) => g.items.filter(x => x.k === k).length
-      const parts = [n('live') ? `${n('live')} ◒` : '', n('done') ? `${n('done')} ✓` : '', !n('live') && !n('done') ? `${n('queued')} ○` : ''].filter(Boolean)
-      return { area: g.area, text: `${g.area.tag} ${parts.join(' ')}` }
-    })
-    // Chips wrap onto more lines in a narrow pane, two spaces apart.
-    const chipLines: (typeof chips)[] = []
-    for (const c of chips) {
-      const line = chipLines[chipLines.length - 1]
-      const w = line ? line.reduce((a, x) => a + cells(x.text) + 2, 0) : 0
-      if (line && w + cells(c.text) <= width - 3) line.push(c)
-      else chipLines.push([c])
-    }
-    const setFilter = (id: string) => update($, openAtom, l => [...l.filter(k => !k.startsWith(FILTER)), ...(id === filterId ? [] : [`${FILTER}${id}`])])
-    const shownArea = filterId ? chips.find(c => c.area.id === filterId)?.area ?? (filterId === OTHER.id ? OTHER : undefined) : undefined
     const anchor = (
-      <Box key="anchor" flexDirection="column" marginBottom={1}>
-        <Text bold color="cyan" wrap="truncate-end">{goal.anchor}</Text>
-        <Text dimColor wrap="truncate-end">{`   ${anchorSummary(doneN, tops.length + waits.length, queued.length)}`}</Text>
-        {lens ? <Text dimColor wrap="truncate-end">{`   ${lens}`}</Text> : null}
-        {chipLines.map((line, j) => (
-          <Box key={`chips${j}`}>
-            <Text>{'   '}</Text>
-            {line.flatMap((c, k) => [
-              k ? <Text key={`cs${k}`}>{'  '}</Text> : null,
-              <Button key={`chip-${c.area.id}`} plain onPress={() => setFilter(c.area.id)}>
-                <Text bold={c.area.id === filterId} dimColor={!!filterId && c.area.id !== filterId}>{c.text}</Text>
-              </Button>,
-            ].filter(Boolean))}
-          </Box>
-        ))}
-        {shownArea ? <Text dimColor wrap="truncate-end">{`   showing ${shownArea.name} only, press it again for all`}</Text> : null}
+      <Box key="anchor" marginBottom={1}>
+        <Text bold color="cyan" wrap="truncate-end">{clip(anchorLine(goal.anchor, doneN, tops.length), width)}</Text>
       </Box>
     )
-
-    // Section rows, filtered to the chosen area and clustered by area.
-    const runRows = () => byArea(tops.filter(x => keep(x.ar)), x => x.ar).flatMap(x => x.draw())
-    const waitRows = () => byArea(waits.map((w, i) => ({ ...w, i })).filter(x => keep(x.ar)), x => x.ar).flatMap(x => waitRow(x.row, x.i))
-    const checked = doneTodos.filter(t => keep(todoArea(t.text)))
+    const runRows = () => byArea(tops, x => x.ar).flatMap(x => x.draw())
+    const waitRows = () => byArea(waits, x => x.ar).flatMap(x => waitRow(x.row, x.i))
+    // DONE shows the latest DONE_FOLD in time order, then "+N more" to show the rest.
+    const allDone = openCards.has('done:all')
+    const extra = Math.max(0, dones.length - DONE_FOLD)
     const doneRows = () => [
-      ...byArea(dones.filter(x => keep(x.ar)), x => x.ar).flatMap(x => finishedRow(x.d, x.i)),
-      ...(checked.length ? [<Text key="w-checked" bold color="magenta">{'  Checked-off to-dos'}</Text>, ...checked.flatMap(todoItem)] : []),
-    ]
+      ...(allDone ? dones : dones.slice(0, DONE_FOLD)).flatMap(x => finishedRow(x.d, x.i)),
+      extra ? <Button key="done-more" plain onPress={() => toggleCard('done:all')}><Text dimColor>{allDone ? '    show fewer' : `    +${extra} more`}</Text></Button> : null,
+      ...(doneTodos.length ? [<Text key="w-checked" dimColor>{'    Checked-off to-dos'}</Text>, ...doneTodos.flatMap(todoItem)] : []),
+    ].filter(Boolean)
+    // What matters now first: problems, running, waiting, to-do, done.
+    const ORDER: Key[] = ['problems', 'running', 'waiting', 'todo', 'done']
+    const shown = [...sections].sort((a, b) => ORDER.indexOf(a.key) - ORDER.indexOf(b.key))
     const count = (sec: (typeof sections)[number], isFolded: boolean) => {
-      if (sec.key === 'todo') return String(filterId ? queued.filter(x => keep(x.ar)).length : openTodos)
-      if (sec.key === 'done') return String(isFolded ? sec.count : dones.filter(x => keep(x.ar)).length + checked.length)
-      if (sec.key === 'running' && sec.rows.length) return filterId ? String(tops.filter(x => keep(x.ar)).length) : runCount(sec.rows.map(r => runCard(r).name), meta)
-      if (sec.key === 'waiting' && filterId && !isFolded) return String(waits.filter(x => keep(x.ar)).length)
+      if (sec.key === 'todo') return String(openTodos)
+      if (sec.key === 'done') return String((isFolded ? sec.count : doneList.length) + doneTodos.length)
+      if (sec.key === 'running' && sec.rows.length) return runCount(sec.rows.map(r => runCard(r).name), meta)
       return String(sec.count)
     }
-    const machOpen = openCards.has('machines')
-    const machShort = machineLines.map(l => { const m = /^(?:🖥|machine)\s+(\S+)\s+(\S+)/.exec(l); return m ? `${m[1]} ${m[2]}` : l }).join('  ')
 
     return (
       <Box flexDirection="column">
         {tabBar}
-        {machineLines.length
-          ? <Box key="machines" flexDirection="column" marginBottom={1}>
-              <Button key="machines" plain onPress={() => toggleCard('machines')}><Text dimColor wrap="truncate-end">{`${machOpen ? '▾' : '▸'} machines: ${machShort}`}</Text></Button>
-              {machOpen ? machineLines.map((l, i) => <Text key={`mc${i}`} dimColor wrap="truncate-end">{`  ${l.replace(/^🖥\s+/, 'machine ')}`}</Text>) : null}
-            </Box>
-          : null}
         {actBlock}
         {inboxBlock}
         {chanBlock}
         {banner}
         {healthBlock}
         {anchor}
-        {openTodos === 0 && <Text key="no-todos" dimColor>{`No to-dos for ${project || 'this project'}. Add one with /progress-bar todo add`}</Text>}
         {sections.length === 0 && <Text dimColor>Nothing running.</Text>}
-        {sections.map((sec, n) => {
+        {shown.map((sec, n) => {
           const isFolded = folded.has(sec.key) || sec.folded
           return (
-            <Box key={`s-${sec.key}`} flexDirection="column" marginBottom={n < sections.length - 1 || other.length ? 1 : 0}>
+            <Box key={`s-${sec.key}`} flexDirection="column" marginBottom={n < shown.length - 1 || other.length ? 1 : 0}>
               <Button key={`h-${sec.key}`} hotkey={String(n + 1)} plain onPress={() => flip($, homeDir, sec.key)}>
-                {`${isFolded ? '▸' : '▾'} ${ICON[sec.key]} ${sec.title}  ${count(sec, isFolded)}`}
+                <Text bold>{`${isFolded ? '▸' : '▾'} ${sec.title}`}</Text>
+                <Text dimColor>{`  ${count(sec, isFolded)}`}</Text>
               </Button>
               {!isFolded && (sec.key === 'todo' ? todoRows() : sec.key === 'running' ? runRows() : sec.key === 'waiting' ? waitRows() : sec.key === 'done' ? doneRows() : plainRows(sec.rows, sec.key))}
             </Box>

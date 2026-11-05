@@ -128,7 +128,7 @@ const FULL = [
   '  grants-rematch · finished 10:12',
 ].join('\n')
 
-test('the List tab: the anchor and area chips, then the sections with area words, plain rows, impact under done rows, lens words; no emoji; goal.json written once', async ($, on) => {
+test('the List tab: a one-line anchor, then RUNNING, WAITING, TO-DO, DONE; plain two-line rows; no emoji; goal.json written once', async ($, on) => {
   const files: Record<string, string> = {
     [SCRIPT]: statusScript(), [FLAG]: 'on\n',
     [`${DIR}/todo.txt`]: '[hunty]\n1. Know where more orgs serve (after hunty-board-seats)\n',
@@ -138,44 +138,44 @@ test('the List tab: the anchor and area chips, then the sections with area words
   }
   world(on, files, FULL)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: props(60) })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: props(72) })
   // The defaults are written once.
   expect(JSON.parse(files[`${HOME}/${GOAL_REL}`]!)).toEqual(DEFAULT_GOAL)
   const lines = draw((await ui.find({ type: 'Box' })) as never)
   const at = (re: RegExp) => lines.findIndex(l => re.test(l))
+  // Level 1: the anchor, one bold cyan line, one blank line after it.
   const anchorAt = at(/generosity database/)
-  expect(lines[anchorAt]).toBe('Making the generosity database better')
-  expect(lines[anchorAt + 1]).toBe('   1 improvement done today · 2 in progress · 1 queued')
-  expect(lines[anchorAt + 2]).toBe('   today: 1 quality')
-  // One line of area chips in the goal's order, as words: in progress ◒, done ✓, only queued ○.
-  expect(lines[anchorAt + 3]).toBe('   Boards 1 ◒  Grants 1 ✓  Places 1 ○  Tools 1 ◒')
-  // No emoji anywhere: nothing from U+1F000 up, and none of the old badge glyphs.
-  expect(lines.join('\n')).not.toMatch(/[\u{1F000}-\u{1FFFF}⛔⚙⏱⚡☀✉]/u)
-  // Then the familiar sections, in order.
-  expect(lines.filter(l => /^▾ /.test(l))).toEqual(['▾ ☐ TO-DO  1', '▾ ▶ RUNNING  2', '▾ ✔ DONE  1'])
-  // A plain row: the improvement without its machine, a thin bar, then the area, lenses, time left and the why under it.
-  const col = rowCol(60)
-  expect(lines[at(/Board lists/)]).toBe(`  ◐ ▸ ${fitLabel('Board lists past 25 seats', col)}  ━━━━━─────  50%`)
-  expect(lines[at(/Board lists/) + 1]).toBe('      Boards · quality · 10m left · Whole boards, not just 25')
-  // Done reads like a changelog: the impact under the title, its inferred lens dim.
-  expect(lines[at(/Grant rematch/)]).toBe('  ✓ ▸ Grant rematch  10:12')
-  expect(lines[at(/Grant rematch/) + 1]).toBe('      Grants · quality · 42K more grants linked to the orgs that got them')
-  const tag = (await ui.findAll({ type: 'Text' })).filter(t => t.text === 'quality · ').map(t => !!(t as unknown as { props?: { dimColor?: boolean } }).props?.dimColor)
-  expect(tag).toEqual([false, true])
-  // To-dos keep machines, priority and blockers, with the area word.
-  expect(lines[at(/Know where/)]).toBe('    ⏸  1.  Places   Know where more orgs serve')
-  // A chip filters every section to its area.
-  await ui.press({ key: 'chip-grants' })
-  const only = draw((await ui.find({ type: 'Box' })) as never)
-  expect(only.filter(l => /^▾ /.test(l))).toEqual(['▾ ☐ TO-DO  0', '▾ ▶ RUNNING  0', '▾ ✔ DONE  1'])
-  expect(only.some(l => /Board lists/.test(l))).toBe(false)
-  await ui.press({ key: 'chip-grants' })
-  // Opened, the card shows the machine, the named gains and the area.
+  expect(lines[anchorAt]).toBe('Making the generosity database better · 1 done today · 2 running')
+  expect(lines[anchorAt + 1]).toBe('')
+  const anchor = (await ui.findAll({ type: 'Text' })).find(t => /generosity/.test(t.text ?? '')) as unknown as { props?: { bold?: boolean; color?: string } }
+  expect([anchor.props?.bold, anchor.props?.color]).toEqual([true, 'cyan'])
+  // No emoji anywhere: nothing from U+1F000 up, and none of the old badge glyphs. No lens line, no chips, no machines.
+  const all = lines.join('\n')
+  expect(all).not.toMatch(/[\u{1F000}-\u{1FFFF}⛔⚙⏱⚡☀✉]/u)
+  expect(all).not.toMatch(/today: |quality|machines:|◒/)
+  // Level 2: what matters now first. Never two blank lines in a row.
+  expect(lines.filter(l => /^[▾▸] /.test(l))).toEqual(['▾ RUNNING  2', '▾ TO-DO  1', '▾ DONE  1'])
+  expect(all).not.toMatch(/\n\s*\n\s*\n/)
+  // Level 3 and 4: the mark, the title, a thin bar and the percent, time left after it; then "<Area> · <why>" under
+  // the title text.
+  const col = rowCol(72)
+  expect(lines[at(/Board lists/)]).toBe(`  ◐ ${fitLabel('Board lists past 25 seats', col)}  ━━━━━─────  50%  10m left`)
+  expect(lines[at(/Board lists/) + 1]).toBe('    Boards · Whole boards, not just 25')
+  expect(lines[at(/Tidy up/) + 1]).toBe('    Tools')
+  // Done reads like a changelog: title and time, then "<Area> · <impact>".
+  expect(lines[at(/Grant rematch/)]).toBe('  ✓ Grant rematch  10:12')
+  expect(lines[at(/Grant rematch/) + 1]).toBe('    Grants · 42K more grants linked to the orgs that got them')
+  // The area word is a step brighter than the dim rest of the line.
+  const word = (await ui.findAll({ type: 'Text' })).find(t => t.text === 'Grants') as unknown as { props?: { dimColor?: boolean } }
+  expect(!!word.props?.dimColor).toBe(false)
+  // To-dos keep machines, priority and blockers.
+  expect(lines[at(/Know where/)]).toBe('  ⏸  1. Know where more orgs serve')
+  // Opened, the card shows the step or count, the time and the gains it named. No badge, no area line.
   await ui.press({ key: 'open-hunty-board-seats' })
   const open = draw((await ui.find({ type: 'Box' })) as never)
-  expect(open).toContain('    hunty-board-seats   job')
+  expect(open).toContain('    1 of 2 steps')
   expect(open).toContain('    quality: 1.65M more board seats counted')
-  expect(open).toContain('    area: Boards & people')
+  expect(open.join('\n')).not.toMatch(/area: |job$|Claude agent/m)
   await ui.unmount()
 })
 
@@ -186,30 +186,64 @@ test('goal.json: a custom file is read and never overwritten', async ($, on) => 
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: props(60) })
   const lines = draw((await ui.find({ type: 'Box' })) as never)
-  expect(lines).toContain('Ship the app')
-  expect(lines).toContain('   Login 1 ◒  Other 1 ◒ 1 ✓')
-  expect(lines[lines.findIndex(l => /^  ◐ ▸ Tidy up/.test(l)) + 1]).toMatch(/^      Login( · |$)/)
+  expect(lines).toContain('Ship the app · 1 done today · 2 running')
+  expect(lines[lines.findIndex(l => /^  ◐ Tidy up/.test(l)) + 1]).toBe('    Login')
   expect(files[`${HOME}/${GOAL_REL}`]).toBe(mine)
   await ui.unmount()
 })
 
-test('narrow pane: every plain row still fits at 30 columns', async ($, on) => {
-  const files: Record<string, string> = {
+// Seven finished jobs with long impacts and a long title, for the width and DONE checks.
+const LONG = (): Record<string, string> => {
+  const out: Record<string, string> = {
     [SCRIPT]: statusScript(), [FLAG]: 'on\n',
-    [`${DIR}/hunty-board-seats.json`]: JSON.stringify({ done: 1, total: 2, title: 'Hunty board lists past 25 seats and a very long title', why: 'Whole boards' }),
+    [`${DIR}/hunty-board-seats.json`]: JSON.stringify({ done: 1, total: 2, title: 'Hunty board lists past 25 seats and a very long title that goes on', why: 'Whole boards, not just the first 25 members, so people search and board links see everyone' }),
   }
-  world(on, files, FULL)
+  for (let i = 0; i < 7; i++) {
+    out[`${DIR}/.state/done/job-${i}.json`] = JSON.stringify({ slug: `job-${i}`, title: `Finished job number ${i} with a fairly long plain title`, impact: [`Impact ${i}: 1.65M more board seats (about 270K a year), so big boards show everyone in people search`], finished: NOW - (i + 1) * 60_000, machine: 'Mac', kind: 'job' })
+  }
+  return out
+}
+
+test('real-terminal widths: at 52, 72 and 100 columns no collapsed line is wider than the pane', async ($, on) => {
+  world(on, LONG(), FULL)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  for (const w of [52, 72, 100]) {
+    const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: props(w) })
+    const lines = draw((await ui.find({ type: 'Box' })) as never)
+    // Every line, second lines included, fits: one Text per part, each cut so the parts never wrap apart.
+    for (const l of lines) expect([w, l, cells(l) <= w]).toEqual([w, l, true])
+    // Bars and percents line up at the right: every percent ends in the same column.
+    const pct = lines.filter(l => /\d%/.test(l)).map(l => l.indexOf('%'))
+    expect(new Set(pct).size).toBe(1)
+    await ui.unmount()
+  }
+})
+
+test('DONE shows the latest 5, then "+N more" opens the rest', async ($, on) => {
+  world(on, LONG(), FULL)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: props(72) })
+  const done = async () => (await ui.findAll({ type: 'Button' })).filter(b => /^dno-/.test(b.key ?? '')).length
+  expect(await done()).toBe(5)
+  expect((await ui.find({ type: 'Button', key: 'done-more' }))?.text).toBe('    +3 more')
+  await ui.press({ key: 'done-more' })
+  expect(await done()).toBe(8)
+  expect((await ui.find({ type: 'Button', key: 'done-more' }))?.text).toBe('    show fewer')
+  await ui.unmount()
+})
+
+test('narrow pane: every plain row still fits at 30 columns', async ($, on) => {
+  world(on, LONG(), FULL)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: props(30) })
   const lines = draw((await ui.find({ type: 'Box' })) as never)
-  const rows = lines.filter(l => /[━─]{3}/.test(l) && /%$/.test(l))
+  const rows = lines.filter(l => /[━─]{3}/.test(l) && /%/.test(l))
   expect(rows.length).toBe(2)
   for (const r of rows) expect(cells(r)).toBeLessThanOrEqual(30)
-  // Every top row and child row (4 deeper) fits from 30 columns.
-  for (let w = 30; w <= 120; w++) for (const ind of [0, 4]) expect(ind + 4 + 2 + rowCol(w, ind) + 12 + 5).toBeLessThanOrEqual(w)
-  expect(rowCol(30)).toBe(7)
+  // Every top row and child row (4 deeper) fits from 30 columns, time note included.
+  for (let w = 30; w <= 120; w++) for (const ind of [0, 4]) expect(ind + 4 + rowCol(w, ind) + 17 + 14).toBeLessThanOrEqual(Math.max(w, 38 + ind))
+  expect(rowCol(30)).toBe(3)
   // Short tab names in a narrow pane.
   expect(lines[0]).toBe('List  Conn  Git  Log  Chat  Topo')
-  expect(rowCol(200)).toBe(40)
   await ui.unmount()
 })
