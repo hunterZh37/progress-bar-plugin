@@ -23,7 +23,8 @@ export const HEARTBEAT_MS = 2 * 60_000
 export type TopoJob = { name: string; title: string; pct: number | null; mark: string; step: string; reads?: string; writes?: string; proc?: boolean; waitOn?: string; why?: string }
 export type TopoQueue = { count: number; top: string }
 export type Flow = { from: string; to: string; label: string; jobs: string[]; service?: boolean }
-export type Seg = { text: string; color?: 'green' | 'red' | 'cyan'; dim?: boolean; bold?: boolean }
+/** A run of text. `press`: the open-card key a press on it flips (a machine's name in the tree). */
+export type Seg = { text: string; color?: 'green' | 'red' | 'cyan'; dim?: boolean; bold?: boolean; press?: string }
 /** One row of the tab. `press`: the open-card key a press on it flips. */
 export type TopoLine = { segs: Seg[]; press?: string }
 
@@ -86,7 +87,7 @@ const PREFIX = /^([A-Za-z0-9_.-]+):\s/
 
 /**
  * The machine a job runs on: a title that starts with a known machine ("Hunty board lists"), a "<host>: " row prefix
- * (a configured machine, else the host itself), else `self`.
+ * (a configured machine, else the host itself), a name that starts with one ("mac-label-x"), else `self`.
  */
 export function jobHost(c: TopoConfig, name: string, title: string, self: string, extra: string[] = []): string {
   const lead = LEAD.exec(title.split(' · ')[0]!)?.[1] ?? ''
@@ -95,7 +96,8 @@ export function jobHost(c: TopoConfig, name: string, title: string, self: string
   const pre = PREFIX.exec(name)?.[1]
   if (pre) return resolveMachine(c, pre) || pre.toLowerCase()
   const nameLead = LEAD.exec(name)?.[1] ?? ''
-  return resolveMachine(c, nameLead) || self
+  // A slug name's first word counts too: "mac-label-top-ups" is on mac (work-mac), "hunty-interlocks" on hunty.
+  return resolveMachine(c, nameLead) || resolveMachine(c, nameLead.split('-')[0]!) || self
 }
 
 /** A job's title without its machine word: "Hunty board lists past 25 seats" on hunty is "Board lists past 25 seats". */
@@ -217,32 +219,47 @@ export const lineWidth = (l: TopoLine) => l.segs.reduce((a, s) => a + s.text.len
 /** A row as plain text (for tests and logs). */
 export const plainLine = (l: TopoLine) => l.segs.map(s => s.text).join('').replace(/\s+$/, '')
 
-/**
- * A helper's link to the data host, read from the helper's side: "◀─ reads ── work-mac" (it reads from there),
- * "◀─ reads + writes ─▶ work-mac" both ways, "── writes ─▶ work-mac" back only, "(N)" when several jobs share it,
- * "┄┄ work-mac" for nothing moving and "─ ✕ ─ work-mac" when the helper is offline. Narrow panes drop the dashes.
- */
-export function linkOf(flows: Flow[], data: string, helper: string, offline: boolean, narrow = false): Seg {
-  if (offline) return { text: narrow ? '✕' : `─ ✕ ─ ${data}`, color: 'red' }
-  const r = flows.find(f => f.from === data && f.to === helper && !f.service)
-  const w = flows.find(f => f.from === helper && f.to === data && !f.service)
-  const n = Math.max(r?.jobs.length ?? 0, w?.jobs.length ?? 0)
-  const count = n > 1 ? ` (${n})` : ''
-  if (r && w) return { text: narrow ? `◀ reads + writes${count} ▶` : `◀─ reads + writes${count} ─▶ ${data}`, color: 'green' }
-  if (r) return { text: narrow ? `◀ reads${count}` : `◀─ reads${count} ── ${data}`, color: 'green' }
-  if (w) return { text: narrow ? `writes${count} ▶` : `── writes${count} ─▶ ${data}`, color: 'green' }
-  return { text: narrow ? '┄' : `┄┄ ${data}`, dim: true }
-}
-
 /** The key that opens a machine, or one of its jobs, in the panel's open cards. */
 export const machineKey = (id: string) => `topo:${id}`
 export const jobKey = (id: string, name: string) => `topo:${id}:${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`
 
+/** A row built from pieces at given columns, gaps filled with spaces. A piece that would overlap the one before is cut. */
+export function place(pieces: (Seg & { col: number })[], w: number): Seg[] {
+  const out: Seg[] = []
+  let at = 0
+  for (const { col, ...sg } of [...pieces].sort((x, y) => x.col - y.col)) {
+    const start = Math.max(col, at)
+    const text = cut(sg.text, w - start)
+    if (!text) continue
+    if (start > at) out.push({ text: ' '.repeat(start - at) })
+    out.push({ ...sg, text })
+    at = start + text.length
+  }
+  return out
+}
+
 /**
- * The whole tab as rows, smallest first. Closed, each machine is one row: "▸ ● hunty  1 job · load 0.93/12" and its
- * link to the data host. A row with `press` is a button that opens or closes that key. An open machine lists its jobs
- * (percent and what each moves), the services it calls and its queued count. An open job shows its reads, writes,
- * step, why and what it waits on.
+ * What a helper's branch says, read top-down from the data host: "▼ reads" (data goes down to the helper), "▲ writes"
+ * (back up), "▲▼ reads + writes" both ways, "(N)" when several jobs share it, "┊" nothing moving, "✕" offline.
+ */
+export function branchOf(flows: Flow[], data: string, helper: string, offline: boolean): Seg {
+  if (offline) return { text: '✕ offline', color: 'red' }
+  const r = flows.find(f => f.from === data && f.to === helper && !f.service)
+  const w = flows.find(f => f.from === helper && f.to === data && !f.service)
+  const n = Math.max(r?.jobs.length ?? 0, w?.jobs.length ?? 0)
+  const count = n > 1 ? ` (${n})` : ''
+  if (r && w) return { text: `▲▼ reads + writes${count}`, color: 'green' }
+  if (r) return { text: `▼ reads${count}`, color: 'green' }
+  if (w) return { text: `▲ writes${count}`, color: 'green' }
+  return { text: '┊', dim: true }
+}
+
+/**
+ * The whole tab as rows. First a tree: the data host on top as the root, each helper a leaf below it, spread evenly
+ * across the width, with what moves written on its branch (▼ reads, ▲ writes). Names are buttons. Services in use
+ * show as a dim "→ Jev API" above the root (beside it in the narrow tree). Under 60 columns the tree is drawn down the left (├─ └─).
+ * Below the tree, each open machine lists its jobs (percent and what each moves), the services it calls and its
+ * queued count. An open job shows its reads, writes, step, why and what it waits on.
  */
 export function renderTopology(inp: TopoInput, width: number, open: ReadonlySet<string> = new Set()): TopoLine[] {
   const W = Math.min(120, Math.max(20, width))
@@ -252,30 +269,75 @@ export function renderTopology(inp: TopoInput, width: number, open: ReadonlySet<
   const placed = placeJobs(cfg, inp.jobs, inp.self, inp.extra)
   const flows = flowsOf(cfg, placed)
   const ids = [...placed.keys()]
+  const helpers = ids.filter(id => id !== data)
   const healthOf = (id: string): TopoHealth | undefined => (id === inp.self ? { ...inp.health[id], state: 'online' } : inp.health[id])
   const states = new Map(ids.map(id => [id, stateOf(healthOf(id), placed.get(id)!)]))
-  const idW = Math.max(...ids.map(id => id.length))
-  const infos = new Map(ids.map(id => {
+  const info = (id: string) => {
     const s = states.get(id)!
     const n = placed.get(id)!.filter(active).length
-    return [id, [id === data ? 'data host' : '', s === 'busy' ? `${n} job${n === 1 ? '' : 's'}` : s, narrow ? '' : healthOf(id)?.load ?? ''].filter(Boolean).join(' · ')]
-  }))
-  const infoW = narrow ? 0 : Math.max(...[...infos.values()].map(x => x.length))
+    return [id === data ? 'data host' : '', s === 'busy' ? `${n} job${n === 1 ? '' : 's'}` : s, healthOf(id)?.load ?? ''].filter(Boolean).join(' · ')
+  }
+  const dot = (id: string): Seg => {
+    const s = states.get(id)!
+    return { text: '● ', color: s === 'busy' ? 'green' : s === 'offline' ? 'red' : undefined, dim: s === 'idle' || s === 'unknown' }
+  }
+  const name = (id: string): Seg => ({ text: `${id}${open.has(machineKey(id)) ? ' ▾' : ''}`, bold: true, press: machineKey(id) })
+  // A branch's colour: green while data moves, red offline, dim otherwise.
+  const tone = (b: Seg): Partial<Seg> => ({ color: b.color, dim: !b.color })
+  const svc = flows.filter(f => f.service).map(f => `→ ${f.to}`).filter((x, i, a) => a.indexOf(x) === i)
   const out: TopoLine[] = []
   const row = (segs: Seg[], press?: string): TopoLine => ({ segs: cutLine(segs.filter(x => x.text), W), ...(press ? { press } : {}) })
 
-  for (const id of ids) {
+  if (narrow || helpers.length === 0) {
+    out.push(row([dot(data), name(data), { text: `  ${info(data)}`, dim: true }, { text: svc.length ? `  ${svc.join('  ')}` : '', dim: true }]))
+    helpers.forEach((id, i) => {
+      const b = branchOf(flows, data, id, states.get(id) === 'offline')
+      out.push(row([{ text: i === helpers.length - 1 ? '└─ ' : '├─ ', ...tone(b) }, { ...b, text: `${b.text} ── ` }, dot(id), name(id), { text: `  ${info(id)}`, dim: true }]))
+    })
+  } else {
+    const n = helpers.length
+    const slot = Math.floor(W / n)
+    const centers = helpers.map((_, i) => slot * i + Math.floor(slot / 2))
+    const mid = n === 1 ? centers[0]! : Math.floor((centers[0]! + centers[n - 1]!) / 2)
+    const centred = (text: string, c: number) => Math.max(0, Math.min(W - text.length, c - Math.floor(text.length / 2)))
+    const rootText = `● ${data}${open.has(machineKey(data)) ? ' ▾' : ''}`
+    const rootCol = centred(rootText, mid)
+    const branches = helpers.map(id => branchOf(flows, data, id, states.get(id) === 'offline'))
+    // Services in use sit above the root, dim.
+    if (svc.length) out.push(row(place([{ col: centred(svc.join('  '), mid), text: svc.join('  '), dim: true }], W)))
+    out.push(row(place([
+      { col: rootCol, ...dot(data) },
+      { col: rootCol + 2, ...name(data) },
+      { col: rootCol + rootText.length, text: `  ${info(data)}`, dim: true },
+    ], W)))
+    // The trunk under the root, then one bar across to every leaf.
+    if (n === 1) out.push(row(place([{ col: mid, text: '│', ...tone(branches[0]!) }], W)))
+    else {
+      const bar = [...' '.repeat(centers[n - 1]! + 1)].map((_, x) => (x < centers[0]! ? ' ' : '─'))
+      centers.forEach((c, i) => { bar[c] = i === 0 ? '┌' : i === n - 1 ? '┐' : '┬' })
+      bar[mid] = bar[mid] === '┬' ? '┼' : '┴'
+      out.push(row(place([{ col: mid, text: '│', dim: true }], W)))
+      out.push(row([{ text: bar.join(''), dim: true }]))
+    }
+    out.push(row(place(centers.map((c, i) => ({ col: c, text: '│', ...tone(branches[i]!) })), W)))
+    out.push(row(place(centers.map((c, i) => ({ col: centred(cut(branches[i]!.text, slot - 1), c), ...branches[i]!, text: cut(branches[i]!.text, slot - 1) })), W)))
+    out.push(row(place(centers.map((c, i) => ({ col: c, text: '│', ...tone(branches[i]!) })), W)))
+    const leafText = (id: string) => `● ${id}${open.has(machineKey(id)) ? ' ▾' : ''}`
+    out.push(row(place(helpers.flatMap((id, i) => {
+      const at = centred(leafText(id), centers[i]!)
+      return [{ col: at, ...dot(id) }, { col: at + 2, ...name(id) }]
+    }), W)))
+    out.push(row(place(helpers.map((id, i) => {
+      const t = cut(info(id), slot - 1)
+      return { col: centred(t, centers[i]!), text: t, dim: true }
+    }), W)))
+  }
+
+  // Details: each open machine below the tree, so the tree never breaks.
+  for (const id of ids.filter(x => open.has(machineKey(x)))) {
     const s = states.get(id)!
-    const isOpen = open.has(machineKey(id))
-    const info = infos.get(id)!
-    out.push(row([
-      { text: `${isOpen ? '▾' : '▸'} ` },
-      { text: '● ', color: s === 'busy' ? 'green' : s === 'offline' ? 'red' : undefined, dim: s === 'idle' || s === 'unknown' },
-      { text: narrow ? id : id.padEnd(idW), bold: true },
-      { text: `  ${narrow ? info : info.padEnd(infoW)}`, color: s === 'offline' ? 'red' : undefined, dim: s !== 'offline' },
-      ...(id === data ? [] : [{ text: '  ' }, linkOf(flows, data, id, s === 'offline', narrow)]),
-    ], machineKey(id)))
-    if (!isOpen) continue
+    out.push(row([{ text: '' }]))
+    out.push(row([{ text: '▾ ' }, dot(id), { text: id, bold: true }, { text: `  ${info(id)}`, dim: true }], machineKey(id)))
     const jobs = shown(placed.get(id)!)
     if (!jobs.length) out.push(row([{ text: `    ${s === 'offline' ? 'unreachable' : 'no jobs'}`, dim: true }]))
     for (const j of jobs) {
@@ -297,8 +359,8 @@ export function renderTopology(inp: TopoInput, width: number, open: ReadonlySet<
         if (v) out.push(row([{ text: `        ${label}: `, dim: true }, { text: v }]))
       }
     }
-    const svc = flows.filter(f => f.service && f.from === id).map(f => f.to)
-    if (svc.length) out.push(row([{ text: '    → ', color: 'cyan' }, { text: svc.join(' · '), color: 'cyan' }]))
+    const used = flows.filter(f => f.service && f.from === id).map(f => f.to)
+    if (used.length) out.push(row([{ text: '    → ', color: 'cyan' }, { text: used.join(' · '), color: 'cyan' }]))
     const q = inp.queues.get(id)
     if (q) out.push(row([{ text: `    ${q.count} queued`, dim: true }]))
   }

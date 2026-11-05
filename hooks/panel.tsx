@@ -35,7 +35,7 @@ import type { Action, ActionUi, Channel, ChatMsg, ChatState, Checkpoint, Conn, D
 // and `parent` in its progress file or ~/.claude-progress/titles.txt. A running child shows under its open parent.
 // Six tabs: List (the sections), Connectors (see connectors.ts), GitHub (see github.ts), Log (events.ts), Chat
 // (chat.ts: the secure channel as a chat room, one thread per channel, with a compose field) and Topology
-// (topology.ts: the machines as boxes, their jobs and queued to-dos, and what data moves between them).
+// (topology.ts: the machines as a tree, what data moves on each branch, and each open machine's jobs).
 // Connector checks run only while the pane is open; GitHub reads only while its tab shows.
 // Overnight recap: `/progress-bar checkpoint` (or checkpoint.py) saves the running jobs. Once you are back (4 h later, or
 // a tick gap over 30 min shows the computer slept) the List tab opens with "While you were away": what finished, failed
@@ -1359,7 +1359,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     if (tab === 'topology') {
       // The same running and waiting rows the List tab draws, with each job's title, reads and writes.
       const topo = await read($, topoAtom)
-      const live = sections.filter(x => x.key === 'running' || x.key === 'waiting').flatMap(x => x.rows.map(row => ({ row, wait: x.key === 'waiting' })))
+      // A DONE row that still has a bar is a job at 100% that still reports (a second pass), so it still runs here.
+      const live = [
+        ...sections.filter(x => x.key === 'running' || x.key === 'waiting').flatMap(x => x.rows.map(row => ({ row, wait: x.key === 'waiting' }))),
+        ...(sections.find(x => x.key === 'done')?.rows ?? []).filter(r => /[█░]/.test(r)).map(r => ({ row: r.replace(/^[✔✓]\s*/, ''), wait: false })),
+      ]
       const jobs: TopoJob[] = live.map(({ row, wait }) => {
         const c = runCard(row)
         const m0 = metaOf(c.name)
@@ -1367,10 +1371,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       })
       const self = topo.cfg.self || resolveMachine(topo.cfg, mach.local) || resolveMachine(topo.cfg, localMachine) || topo.cfg.machines.find(m => m.role === 'data')?.id || 'local'
       const queues = queuesOf(topo.cfg, rankTodos(todos.filter(t => !t.done), running).map(t => ({ owner: t.owner, text: t.text })), self)
-      // Smallest first: one row per machine. A press opens a machine (its jobs, services, queued count), a press on a
-      // job opens its reads, writes, step and why. Open keys live in the same open-cards list as the List tab's.
+      // A tree of the machines. A press on a name opens it in the details below (its jobs, services, queued count), a
+      // press on a job opens its reads, writes, step and why. Open keys live in the same open-cards list as the List tab's.
       const drawn = renderTopology({ cfg: topo.cfg, self, jobs, health: topo.health, queues, extra: mach.remote }, width, openCards)
-      const segs = (l: (typeof drawn)[number], i: number) => l.segs.map((sg, k) => <Text key={`tp${i}-${k}`} color={sg.color} dimColor={sg.dim} bold={sg.bold}>{sg.text}</Text>)
+      // A name in the tree is its own button, so a row can hold several (one per leaf).
+      const segs = (l: (typeof drawn)[number], i: number) => l.segs.map((sg, k) => sg.press
+        ? <Button key={`tpn-${sg.press}`} plain onPress={() => toggleCard(sg.press!)}><Text color={sg.color} dimColor={sg.dim} bold={sg.bold}>{sg.text}</Text></Button>
+        : <Text key={`tp${i}-${k}`} color={sg.color} dimColor={sg.dim} bold={sg.bold}>{sg.text}</Text>)
       return (
         <Box flexDirection="column">
           {tabBar}

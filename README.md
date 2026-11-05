@@ -410,35 +410,48 @@ The **Log** tab of the Status panel lists what happened to your jobs, newest fir
 
 ## Topology tab
 
-The **Topology** tab of the Status panel shows your machines, what runs on each and what data moves between them. It starts as the smallest summary and opens on a press. It redraws on the panel's refresh tick.
+The **🌐 Topology** tab of the Status panel draws your machines as a tree: the data host on top, each helper below it, and what data moves on each branch. It redraws on the panel's refresh tick.
 
 ```
-▸ ● work-mac      data host · 1 job
-▸ ● hunty         1 job · load 0.37/12  ◀─ reads + writes ─▶ work-mac
-▸ ● personal-mac  1 job                 ◀─ reads ── work-mac
+                               → Jev API  → Claude
+                                   ● work-mac  data host · 1 job
+                                        │
+                    ┌───────────────────┴───────────────────┐
+                    │                                       │
+            ▲▼ reads + writes                            ▼ reads
+                    │                                       │
+                 ● hunty                             ● personal-mac
+          1 job · load 0.37/12                            1 job
 ```
 
-Press a machine to open it, and press a job inside it to see what it moves:
+Press a machine's name to open it below the tree. Press a job there to see what it moves:
 
 ```
-▾ ● hunty         1 job · load 0.37/12  ◀─ reads + writes ─▶ work-mac
+▾ ● hunty  1 job · load 0.37/12
     ▾ Board lists past 25 seats         83%  reads + writes
         reads: nombot.board_members_history
         writes: Postgres via work-mac
     1 queued
 ```
 
-- **Closed:** one row per machine. A green dot is busy, dim is idle or unknown, red is offline. Then the job count, the load when known, and the link to the data host.
-- **Links:** `◀─ reads ── work-mac` the helper reads from the data host, `◀─ reads + writes ─▶ work-mac` both ways, `── writes ─▶ work-mac` back only, `(N)` when several jobs share it, `┄┄ work-mac` nothing moving, `─ ✕ ─ work-mac` offline.
-- **Open machine:** its running jobs, one row each with percent and what each moves, the services it calls (`→ Jev API · Claude`) and how many to-dos are queued for it. Waiting jobs show only when they say what they wait on.
+- **Tree:** the data host is the root, helpers are leaves spread evenly across the width. More helpers add more leaves.
+- **Branches:** `▼ reads` the helper reads from the data host, `▲ writes` it writes back, `▲▼ reads + writes` both, `(N)` when several jobs share it, `┊` nothing moving, `✕ offline`. A branch is green while data moves, dim when idle, red when offline.
+- **Dots:** green busy, dim idle or unknown, red offline. Under each leaf: its job count and load.
+- **Services:** `→ Jev API`, `→ Claude` or `→ GitHub` show dim above the root while a running job's name, title, step, reads or writes match their pattern.
+- **Open machine:** below the tree, so the tree never breaks. Its running jobs, one row each with percent and what each moves, the services it calls and how many to-dos are queued for it. Waiting jobs show only when they say what they wait on.
 - **Open job:** its reads, writes, what it waits on, its step and why.
 - **Open state:** kept with the List tab's open cards, so a machine stays open across refreshes.
-- **Jobs:** the same rows as the List tab. A job's machine is its `<host>: ` row prefix or the machine word its title starts with (`Hunty board lists`, `Personal-mac tools setup`), else this machine.
+- **Jobs:** the same rows as the List tab, plus a DONE row that still has a bar (a job at 100% that still reports). A job's machine is its `<host>: ` row prefix, the machine word its title starts with (`Hunty board lists`, `Mac label top-ups`), or the first word of its slug (`mac-label-top-ups`), else this machine. `Mac` and `local` are aliases of `work-mac`.
 - **Flows:** a job on a helper reads from the data host (its `reads` names what, else the data host's database as the read-only `dbRole`, `helper`). It writes back only when its progress file has `writes`.
-- **Services:** `Jev API`, `Claude` and `GitHub` show on a machine while a running job's name, title, step, reads or writes match their pattern.
 - **Health:** this machine is online. A machine with a `status` file (hunty: `.lines/linux.txt`) is online while that file is under 2 minutes old and says `✓`, else offline. A machine without one is `unknown` until a job reports from it. The plugin runs no network checks of its own.
 - **Machines:** `~/.claude-progress/topology.json`, written once with defaults. Each machine has an `id`, `ip`, `role` (`data` for the one that holds the database, else `compute`), `aliases` (other names in titles and to-do headings), `about` and an optional `status` heartbeat file. `services` lists `name`, `match` (a regex) and an optional `from`. Add `"self": "<id>"` when this machine's to-do headings do not say which one it is.
-- **Width:** under 60 columns the load is left out and links are short (`◀ reads`).
+- **Width:** under 60 columns the tree runs down the left:
+
+```
+● work-mac  data host · 1 job  → Jev API
+├─ ▲▼ reads + writes ── ● hunty  1 job
+└─ ▼ reads ── ● personal-mac  1 job
+```
 
 ## Overnight recap
 

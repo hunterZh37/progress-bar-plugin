@@ -21,7 +21,7 @@ progress_report(title: "Login fix, tests and deploy", why: "people can sign in a
 
 - It writes `~/.claude-progress/<slug of title>.json` with this session's id, folder and `startedAt` filled in, so the bar shows in this session's Status panel on any machine.
 - Pass `slug` to pick the file name, `parent` to nest it under a bigger job.
-- Pass `reads` and `writes` for a job that moves data between machines (`reads: "nombot.board_members_history"`, `writes: "Postgres via work-mac"`). The Status panel's Topology tab shows them on the link between machines.
+- Pass `reads` and `writes` for a job that moves data between machines (`reads: "nombot.board_members_history"`, `writes: "Postgres via work-mac"`). The Status panel's Topology tab shows them on the branch between machines.
 - At the end call it with `finished: true` and `impact`: what the job changed and why it matters, one to three short lines (`Board links rebuilt: 1.29M pairs, 109K split people merged`). That removes the bar and keeps the impact on its DONE row.
 - No tool (a shell script, a job on another machine)? Write the file yourself (below).
 
@@ -44,7 +44,7 @@ Path: `~/.claude-progress/<slug>.json`
 - **parent**: the slug of the bigger job this is part of. Set it when a subagent or script works for another job that has a progress file. While both run, the child draws inside the parent's card, and the parent reads `waiting on: <child>` instead of stuck.
 - **session**: the Claude Code session id, so the bar shows only in this session. In Bash it is `$CLAUDE_CODE_SESSION_ID`. Add it whenever you can.
 - **impact**: set it just before the job ends. What changed and why it matters, in numbers when you have them, one to three short lines (newlines split them). The Status panel shows it when the job's DONE row is opened. Without it the row says `no impact reported`.
-- **reads**, **writes**: optional short strings, what the job reads and writes (`nombot.board_members_history`, `Postgres via work-mac`). The Topology tab shows them on the link between machines and in the job's details. Without `reads` a job on a helper machine is drawn reading from the data host's database. Set `writes` only when the job writes back.
+- **reads**, **writes**: optional short strings, what the job reads and writes (`nombot.board_members_history`, `Postgres via work-mac`). The Topology tab shows them on the branch between machines and in the job's details. Without `reads` a job on a helper machine is drawn reading from the data host's database. Set `writes` only when the job writes back.
 - **cwd**: always add it, the absolute folder you work in. The bar then shows in the sessions of that project, even when the session id is missing or that session has closed.
 - Without `session` and `cwd`, the bar goes to the shared list, which may show in no session on a machine that routes it elsewhere.
 - A job that can't write these (a log-only job) can get a line in `~/.claude-progress/titles.txt`: `<job id><TAB><title><TAB><why><TAB><parent>`.
