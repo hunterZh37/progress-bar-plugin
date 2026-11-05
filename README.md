@@ -280,7 +280,7 @@ Making the generosity database better · 6 done today · 4 running
 - **Second line:** `<Area> · <why>` for running jobs, `<Area> · <why it waits>` for waiting ones, `<Area> · <impact>` for done ones. It is one line, cut with `…` to fit, never wrapped. Press the row's title and that same line shows in full, wrapped.
 - **Plain titles:** the title is the improvement, with its machine left out (`Hunty grants linked to own filer` reads `Grants linked to own filer`).
 - **Opened card:** press a title. A running or waiting job shows its step (or what it waits on, or its count), its machine and its time. A done job shows the rest of its impact, finish and run time with its machine, and what it unlocked. Gains a job named show here, `quality: 1.65M more board seats counted`.
-- **Lenses:** cost, quality and speed show only in an opened card, from the job's `gains`.
+- **Lenses:** cost, quality and speed show only in an opened card, from the job's `gains`. A job that named none shows its likely lens from its title and why, `likely improves: speed`, so every card says which of the three it helps.
 - **Machines:** the helper machine lines live on the Topology tab, not the List tab.
 - **No emoji:** the panel and status line use words and single-width symbols only (`✓ ▸ ▾ ◐ ━ ┄ ⏸ ▶ ○ ·`), so every terminal draws them the same.
 

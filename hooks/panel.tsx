@@ -1086,7 +1086,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const areaRank = (a: GoalArea) => { const i = goal.areas.findIndex(x => x.id === a.id); return i >= 0 ? i : a.id === OTHER.id ? 1e6 : 1e5 }
     const byArea = <T,>(xs: T[], of: (x: T) => GoalArea) => xs.map((x, i) => ({ x, i, r: areaRank(of(x)) })).sort((a, b) => a.r - b.r || a.i - b.i).map(y => y.x)
     // The gains a job named, one line each, for its open card.
-    const gainLines = (tags: LensTag[]) => tags.filter(t => !t.inferred).map(t => `${t.name}: ${t.text}`)
+    // Named gains as "quality: <line>". A job that named none gets its likely lens from its wording: "likely improves: speed".
+    const gainLines = (tags: LensTag[]) => tags.map(t => (t.inferred ? `likely improves: ${t.name}` : `${t.name}: ${t.text}`))
     // A to-do's area as a short dim word, padded so the titles line up.
     // A detail line under an open card: wrapped with a hanging indent, so long text never runs back to column 0.
     const hang = (key: string, pad: string, text: string, dim = true) => (
@@ -1116,7 +1117,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const fit = (x: string) => (x.length > room ? (room > 1 ? `${x.slice(0, room - 1)}…` : '') : x)
       const tail = fit(finished ? 'just finished' : stuck ? `⚠ stuck ${stuck}` : waitOn ? `waiting on ${short(waitOn)}` : r.left ? `${r.left} left` : r.pct === null && r.ran ? `${r.ran} running` : '')
       const why = (m0.why ?? '').replace(/^unlocks:?\s*/i, '')
-      const tags = lensTags(goal, m0.gains)
+      const tags = lensTags(goal, m0.gains, `${m0.title ?? ''} ${m0.why ?? ''}`)
       const ar = runArea(r.name, r.step)
       return [
         <Box key={`r${k}`}>
@@ -1187,7 +1188,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const full = machineTitle(c.name, m0.title || c.name, mach)
       const title = plain(m0.title || prettyName(c.name))
       const why = (m0.why ?? '').replace(/^unlocks:?\s*/i, '')
-      const tags = lensTags(goal, m0.gains)
+      const tags = lensTags(goal, m0.gains, `${m0.title ?? ''} ${m0.why ?? ''}`)
       const whole = `${phrase || 'waiting, no reason reported'}${c.waited ? ` · for ${c.waited}` : ''}`
       const said = phrase.replace(/^(waiting on |last step: |paused by a rate limit: )/, '')
       const inStep = !c.waited && !!said && c.step.includes(said)
