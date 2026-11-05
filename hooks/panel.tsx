@@ -884,7 +884,8 @@ async function actionBox($: EngineInterface, e: RenderEv, homeDir: string, width
         ui.confirm === a.id
           ? <Box key={`act-q-${a.id}`} flexDirection="column">
               <Text key="q" bold>{`Run this in ${ui.term || 'Terminal'}?`}</Text>
-              <Text key="qc" color="red">{`$ ${a.command ?? ''}`}</Text>
+              {/* The full command again only when the line above was cut short. */}
+              {cutA(`$ ${a.command ?? ''}`, popup ? w * 4 : w) !== `$ ${a.command ?? ''}` ? <Text key="qc" color="red">{`$ ${a.command ?? ''}`}</Text> : null}
               <Box key="qb">
                 <Button key={`act-yes-${a.id}`} plain onPress={() => confirmRun($, homeDir, a)}>{'▶ Run'}</Button>
                 {gap('g0')}
@@ -893,7 +894,8 @@ async function actionBox($: EngineInterface, e: RenderEv, homeDir: string, width
             </Box>
           : null,
         ui.failId === a.id && ui.fail ? <Text key={`act-f-${a.id}`} color="red">{cutA(ui.fail, w * 2)}</Text> : null,
-        <Box key={`act-b-${a.id}`}>
+        // While Run waits for its confirm, only the confirm's Run and Cancel show.
+        ui.confirm === a.id ? null : <Box key={`act-b-${a.id}`}>
           {canRun(a) ? <Button key={`act-run-${a.id}`} plain onPress={() => runAction($, homeDir, a)}>{'▶ Run'}</Button> : null}
           {canRun(a) ? gap('g1') : null}
           {a.command ? <Button key={`act-copy-${a.id}`} plain onPress={() => copyCommand($, a)}>{'Copy'}</Button> : null}
