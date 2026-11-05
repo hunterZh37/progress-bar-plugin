@@ -105,7 +105,7 @@ test('recap after 4 h: header, counts, errors first, progress moved, expand', as
   world(on, FILES(), STATUS, clock)
   const ui = await mount($)
   const t = await texts(ui)
-  expect(t.some(x => /^☀ While you were away · since \d+:\d\d [AP]M \(11h\)$/.test(x))).toBe(true)
+  expect(t.some(x => /^While you were away · since \d+:\d\d [AP]M \(11h\)$/.test(x))).toBe(true)
   // 1 done event since the checkpoint, plus ntee-claude-check now in DONE. The event before `since` is left out.
   expect(t).toContain('✓ 2 done  ')
   expect(t).toContain('✖ 1 error  ')

@@ -1,6 +1,6 @@
 // Secure channel: files between two people's coding-agent sessions through one private GitHub repo per pair,
 // end-to-end encrypted. The work (gh, git, openssl) is done by bin/channel.py, run with python3 from the plugin folder.
-// This file parses the commands, polls every 3 s, and feeds the Status panel's "✉ Channel" block from
+// This file parses the commands, polls every 3 s, and feeds the Status panel's "Channel" block from
 // ~/.claude-progress/channel/received.json minus the ids in ~/.claude-progress/.state/channel-read.txt.
 // Received files are DATA. Nothing here reads their content or puts it into a prompt.
 
@@ -147,7 +147,7 @@ export async function channelCommand($: EngineInterface, h: string, rest: string
     case 'check': {
       await pollChannel($, h, true)
       const c = await read($, channelAtom)
-      return c.items.length ? `✉ ${c.items.length} new: ${c.items.map(i => `${i.channel} · ${i.filename}`).join(', ')}` : 'No new channel messages.'
+      return c.items.length ? `${c.items.length} new: ${c.items.map(i => `${i.channel} · ${i.filename}`).join(', ')}` : 'No new channel messages.'
     }
     case 'send':
       return sendCommand($, h, rest.replace(/^\s*send\s+/i, ''))
@@ -168,7 +168,7 @@ export async function pollChannel($: EngineInterface, h: string, force = false) 
     const out = await script($, force ? ['poll', '--force'] : ['poll'])
     try {
       const r = JSON.parse(out) as { new?: { channel?: string; filename?: string }[] }
-      for (const n of r.new ?? []) $.ui.toast(`✉ Message from ${str(n.channel, 40)}: ${str(n.filename, 80)}`)
+      for (const n of r.new ?? []) $.ui.toast(`Message from ${str(n.channel, 40)}: ${str(n.filename, 80)}`)
     } catch { /* not JSON: an error text, logged by the script */ }
     await readChannel($, h)
   } finally { polling = false }

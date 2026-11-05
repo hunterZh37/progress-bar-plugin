@@ -43,8 +43,12 @@ test('goal.json: defaults for a missing or bad file, custom areas kept, lenses m
   expect(G.lenses.map(l => l.id)).toEqual(['cost', 'quality', 'speed'])
   const g = parseGoal(JSON.stringify({ anchor: 'Ship the app', areas: [{ name: 'Login', icon: '🔑', keywords: ['Auth'] }, { icon: 'x' }], lenses: [{ id: 'speed', icon: '⏩' }] }))
   expect(g.anchor).toBe('Ship the app')
-  expect(g.areas).toEqual([{ id: 'login', name: 'Login', icon: '🔑', keywords: ['auth'] }])
-  expect(g.lenses.find(l => l.id === 'speed')).toEqual({ ...G.lenses[2]!, icon: '⏩' })
+  // An icon from an older file is read and ignored, the tag defaults to the name's first word.
+  expect(g.areas).toEqual([{ id: 'login', name: 'Login', tag: 'Login', keywords: ['auth'] }])
+  expect(g.lenses.find(l => l.id === 'speed')).toEqual(G.lenses[2])
+  expect(G.areas.map(a => a.tag)).toEqual(['Orgs', 'Finances', 'Boards', 'Grants', 'Places', 'Causes', 'Answers', 'Tools'])
+  // A default area written by 0.26 with icons and no tags gets its default tag.
+  expect(parseGoal(JSON.stringify({ areas: [{ id: 'organizations', name: 'Organizations', icon: '🏢' }] })).areas[0]!.tag).toBe('Orgs')
   expect(g.lenses.find(l => l.id === 'cost')).toBe(G.lenses[0])
   // No areas: the default ones.
   expect(parseGoal('{"anchor":"A"}').areas).toBe(G.areas)
@@ -73,7 +77,7 @@ test('area inference: a named area wins, else keywords (title counts double), el
   expect(area({ area: 'answer quality', title: 'x' })).toBe('Answer quality')
   expect(area({ area: 'other', title: 'grants' })).toBe('Other')
   // A name that matches none is its own area.
-  expect(areaOf(G, { area: 'Billing', title: 'grants' })).toEqual({ id: 'billing', name: 'Billing', icon: '•', keywords: [] })
+  expect(areaOf(G, { area: 'Billing', title: 'grants' })).toEqual({ id: 'billing', name: 'Billing', tag: 'Billing', keywords: [] })
 })
 
 test('grouping by area: the goal\'s order, job-named areas next, Other last, empty areas left out', () => {
@@ -97,14 +101,14 @@ test('lenses: named gains in order, else one inferred from the impact, a count p
   expect(pickGains({ speed: ' labels in 7h instead of 12h ', quality: '', other: 'x' })).toEqual({ speed: 'labels in 7h instead of 12h' })
   expect(pickGains('quality')).toBe(undefined)
   const named = lensTags(G, { speed: 'labels in 7h instead of 12h', quality: '1.65M more board seats counted' })
-  expect(named.map(t => [t.id, t.icon, t.inferred])).toEqual([['quality', '💎', false], ['speed', '🚀', false]])
+  expect(named.map(t => [t.id, t.name, t.inferred])).toEqual([['quality', 'quality', false], ['speed', 'speed', false]])
   expect(inferLens(G, '$14 of Jev instead of 34h of Claude')).toBe('cost')
   expect(inferLens(G, 'Labels now finish 3 hours sooner')).toBe('speed')
   expect(inferLens(G, 'labels in 7h instead of 12h')).toBe('speed')
   expect(inferLens(G, '1.65M more board seats, so people search sees whole boards')).toBe('quality')
   expect(lensTags(G, undefined, 'cheaper runs').map(t => [t.id, t.inferred])).toEqual([['cost', true]])
   expect(lensTags(G, undefined, '')).toEqual([])
-  expect(lensSummary(G, [named, lensTags(G, undefined, 'more seats'), lensTags(G, { cost: '$14' })])).toBe('today: 💎 2 quality · 💲 1 cost · 🚀 1 speed')
+  expect(lensSummary(G, [named, lensTags(G, undefined, 'more seats'), lensTags(G, { cost: '$14' })])).toBe('today: 2 quality · 1 cost · 1 speed')
   expect(lensSummary(G, [[]])).toBe('')
 })
 
@@ -124,7 +128,7 @@ const FULL = [
   '  grants-rematch · finished 10:12',
 ].join('\n')
 
-test('the List tab: the anchor and area chips, then the sections with area icons, plain rows, impact under done rows, gains as tags; goal.json written once', async ($, on) => {
+test('the List tab: the anchor and area chips, then the sections with area words, plain rows, impact under done rows, lens words; no emoji; goal.json written once', async ($, on) => {
   const files: Record<string, string> = {
     [SCRIPT]: statusScript(), [FLAG]: 'on\n',
     [`${DIR}/todo.txt`]: '[hunty]\n1. Know where more orgs serve (after hunty-board-seats)\n',
@@ -139,24 +143,27 @@ test('the List tab: the anchor and area chips, then the sections with area icons
   expect(JSON.parse(files[`${HOME}/${GOAL_REL}`]!)).toEqual(DEFAULT_GOAL)
   const lines = draw((await ui.find({ type: 'Box' })) as never)
   const at = (re: RegExp) => lines.findIndex(l => re.test(l))
-  expect(lines[at(/🎯/)]).toBe('🎯 Making the generosity database better')
-  expect(lines[at(/🎯/) + 1]).toBe('   1 improvement done today · 2 in progress · 1 queued')
-  expect(lines[at(/🎯/) + 2]).toBe('   today: 💎 1 quality')
-  // One line of area chips in the goal's order: in progress ◒, done ✓, only queued ○.
-  expect(lines[at(/🎯/) + 3]).toBe('   👥 1 ◒  🎁 1 ✓  📍 1 ○  🔧 1 ◒')
+  const anchorAt = at(/generosity database/)
+  expect(lines[anchorAt]).toBe('Making the generosity database better')
+  expect(lines[anchorAt + 1]).toBe('   1 improvement done today · 2 in progress · 1 queued')
+  expect(lines[anchorAt + 2]).toBe('   today: 1 quality')
+  // One line of area chips in the goal's order, as words: in progress ◒, done ✓, only queued ○.
+  expect(lines[anchorAt + 3]).toBe('   Boards 1 ◒  Grants 1 ✓  Places 1 ○  Tools 1 ◒')
+  // No emoji anywhere: nothing from U+1F000 up, and none of the old badge glyphs.
+  expect(lines.join('\n')).not.toMatch(/[\u{1F000}-\u{1FFFF}⛔⚙⏱⚡☀✉]/u)
   // Then the familiar sections, in order.
   expect(lines.filter(l => /^▾ /.test(l))).toEqual(['▾ ☐ TO-DO  1', '▾ ▶ RUNNING  2', '▾ ✔ DONE  1'])
-  // A plain row: its area icon, the improvement without its machine, a thin bar, then tags, time left and the why under it.
+  // A plain row: the improvement without its machine, a thin bar, then the area, lenses, time left and the why under it.
   const col = rowCol(60)
-  expect(lines[at(/Board lists/)]).toBe(`  ◐ 👥 ▸ ${fitLabel('Board lists past 25 seats', col)}  ━━━━━─────  50%`)
-  expect(lines[at(/Board lists/) + 1]).toBe('         💎 10m left · Whole boards, not just 25')
+  expect(lines[at(/Board lists/)]).toBe(`  ◐ ▸ ${fitLabel('Board lists past 25 seats', col)}  ━━━━━─────  50%`)
+  expect(lines[at(/Board lists/) + 1]).toBe('      Boards · quality · 10m left · Whole boards, not just 25')
   // Done reads like a changelog: the impact under the title, its inferred lens dim.
-  expect(lines[at(/Grant rematch/)]).toBe('  ✓ 🎁 ▸ Grant rematch  10:12')
-  expect(lines[at(/Grant rematch/) + 1]).toBe('         💎 42K more grants linked to the orgs that got them')
-  const tag = (await ui.findAll({ type: 'Text' })).find(t => t.text === '💎 ' && (t as unknown as { props?: { dimColor?: boolean } }).props?.dimColor)
-  expect(tag).toBeDefined()
-  // To-dos keep machines, priority and blockers, with the area icon.
-  expect(lines[at(/Know where/)]).toBe('    ⏸  1.  📍 Know where more orgs serve')
+  expect(lines[at(/Grant rematch/)]).toBe('  ✓ ▸ Grant rematch  10:12')
+  expect(lines[at(/Grant rematch/) + 1]).toBe('      Grants · quality · 42K more grants linked to the orgs that got them')
+  const tag = (await ui.findAll({ type: 'Text' })).filter(t => t.text === 'quality · ').map(t => !!(t as unknown as { props?: { dimColor?: boolean } }).props?.dimColor)
+  expect(tag).toEqual([false, true])
+  // To-dos keep machines, priority and blockers, with the area word.
+  expect(lines[at(/Know where/)]).toBe('    ⏸  1.  Places   Know where more orgs serve')
   // A chip filters every section to its area.
   await ui.press({ key: 'chip-grants' })
   const only = draw((await ui.find({ type: 'Box' })) as never)
@@ -166,22 +173,22 @@ test('the List tab: the anchor and area chips, then the sections with area icons
   // Opened, the card shows the machine, the named gains and the area.
   await ui.press({ key: 'open-hunty-board-seats' })
   const open = draw((await ui.find({ type: 'Box' })) as never)
-  expect(open).toContain('    Hunty board lists past 25 seats   ⚙  job')
-  expect(open).toContain('    💎 quality: 1.65M more board seats counted')
-  expect(open).toContain('    area: 👥 Boards & people')
+  expect(open).toContain('    hunty-board-seats   job')
+  expect(open).toContain('    quality: 1.65M more board seats counted')
+  expect(open).toContain('    area: Boards & people')
   await ui.unmount()
 })
 
 test('goal.json: a custom file is read and never overwritten', async ($, on) => {
-  const mine = JSON.stringify({ anchor: 'Ship the app', areas: [{ id: 'login', name: 'Login', icon: '🔑', keywords: ['tidy'] }] })
+  const mine = JSON.stringify({ anchor: 'Ship the app', areas: [{ id: 'login', name: 'Login', tag: 'Login', keywords: ['tidy'] }] })
   const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [`${HOME}/${GOAL_REL}`]: mine, [`${DIR}/tidy-up.json`]: JSON.stringify({ done: 1, total: 2, title: 'Tidy up' }) }
   world(on, files, FULL)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: props(60) })
   const lines = draw((await ui.find({ type: 'Box' })) as never)
-  expect(lines).toContain('🎯 Ship the app')
-  expect(lines).toContain('   🔑 1 ◒  📦 1 ◒ 1 ✓')
-  expect(lines.some(l => /^  ◐ 🔑 ▸ Tidy up/.test(l))).toBe(true)
+  expect(lines).toContain('Ship the app')
+  expect(lines).toContain('   Login 1 ◒  Other 1 ◒ 1 ✓')
+  expect(lines[lines.findIndex(l => /^  ◐ ▸ Tidy up/.test(l)) + 1]).toMatch(/^      Login( · |$)/)
   expect(files[`${HOME}/${GOAL_REL}`]).toBe(mine)
   await ui.unmount()
 })
@@ -197,11 +204,12 @@ test('narrow pane: every plain row still fits at 30 columns', async ($, on) => {
   const lines = draw((await ui.find({ type: 'Box' })) as never)
   const rows = lines.filter(l => /[━─]{3}/.test(l) && /%$/.test(l))
   expect(rows.length).toBe(2)
-  // The area icon is 2 cells wide.
   for (const r of rows) expect(cells(r)).toBeLessThanOrEqual(30)
-  // A top row fits from 30 columns, a child row (4 deeper) from 34.
-  for (let w = 30; w <= 120; w++) for (const ind of [0, 4]) if (w >= 30 + ind) expect(ind + 4 + 3 + 2 + rowCol(w, ind) + 12 + 5).toBeLessThanOrEqual(w)
-  expect(rowCol(30)).toBe(4)
+  // Every top row and child row (4 deeper) fits from 30 columns.
+  for (let w = 30; w <= 120; w++) for (const ind of [0, 4]) expect(ind + 4 + 2 + rowCol(w, ind) + 12 + 5).toBeLessThanOrEqual(w)
+  expect(rowCol(30)).toBe(7)
+  // Short tab names in a narrow pane.
+  expect(lines[0]).toBe('List  Conn  Git  Log  Chat  Topo')
   expect(rowCol(200)).toBe(40)
   await ui.unmount()
 })

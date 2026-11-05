@@ -472,19 +472,18 @@ test('the panel parser: sections, counts, folded headers and trailing lines', as
   expect(sections.map(s => [s.key, s.folded, s.count, s.rows.length])).toEqual([['todo', false, 3, 2], ['running', false, 2, 2], ['done', true, 2, 0]])
   expect(other).toEqual(['opus 4 · main'])
   expect(runCard(sections[1]!.rows[0]!)).toEqual({
-    mark: '⚠', stuck: '12m', name: 'nightly-import', pct: 80, count: '4 of 5 steps', kind: { icon: '⚙', text: 'job' },
-    step: 'batch 4', facts: '⏱ 12m so far', maxUsed: null, waitOn: '', watchedBy: '', waited: '', note: '', left: '', ran: '', elapsed: '12m',
+    mark: '⚠', stuck: '12m', name: 'nightly-import', pct: 80, count: '4 of 5 steps', kind: { text: 'job' },
+    step: 'batch 4', facts: '12m so far', maxUsed: null, waitOn: '', watchedBy: '', waited: '', note: '', left: '', ran: '', elapsed: '12m',
   })
   expect(runCard(sections[1]!.rows[1]!).mark).toBe('◐')
 })
 
 test('running cards: a kind badge per kind', async () => {
-  expect(runCard('◐ healthcare-classify ██░░ 40.0% · 2/5 batches').kind).toEqual({ icon: '🏷', text: 'labeling' })
-  expect(runCard('◐ orgs-verify ██░░ 40.0%').kind.icon).toBe('🏷')
-  expect(runCard('◐ hunty:embed ██░░ 40.0% · 2/5').kind).toEqual({ icon: '🖥', text: 'on hunty' })
-  expect(runCard('◐ gpu-box:train ██░░ 10.0%').kind).toEqual({ icon: '🖥', text: 'on gpu-box' })
-  expect(runCard('◐ Build docs working · 3m · 12 tools · Edit').kind).toEqual({ icon: '🤖', text: 'Claude agent' })
-  expect(runCard('◐ nightly-import ██░░ 40.0% · 2/5').kind).toEqual({ icon: '⚙', text: 'job' })
+  expect(runCard('◐ healthcare-classify ██░░ 40.0% · 2/5 batches').kind).toEqual({ text: 'labeling' })
+  expect(runCard('◐ hunty:embed ██░░ 40.0% · 2/5').kind).toEqual({ text: 'on hunty' })
+  expect(runCard('◐ gpu-box:train ██░░ 10.0%').kind).toEqual({ text: 'on gpu-box' })
+  expect(runCard('◐ Build docs working · 3m · 12 tools · Edit').kind).toEqual({ text: 'Claude agent' })
+  expect(runCard('◐ nightly-import ██░░ 40.0% · 2/5').kind).toEqual({ text: 'job' })
 })
 
 test('running cards: facts, step, count and the status word left out of the name', async () => {
@@ -493,7 +492,7 @@ test('running cards: facts, step, count and the status word left out of the name
   expect(a.count).toBe('1,234 of 2,000 batches')
   expect(a.step).toBe('scoring')
   // Time left shows on the job's line, never again in the facts.
-  expect(a.facts).toBe('⏱ 42m so far   ⚡ 31/min')
+  expect(a.facts).toBe('42m so far · 31/min')
   expect(a.left).toBe('1h19m')
   expect(runCard('◐ import ██░░ 40.0% · 2/5 · done in 1h').left).toBe('1h')
   expect(runCard('◐ import ██░░ 40.0% · 2/5 · done in 1h').facts).toBe('')
@@ -501,7 +500,7 @@ test('running cards: facts, step, count and the status word left out of the name
   const b = runCard('◐ Build docs working · 3m · 12 tools · Edit')
   expect(b.name).toBe('Build docs')
   expect(b.pct).toBe(null)
-  expect(b.facts).toBe('⏱ 3m so far   🔧 12 actions · last: Edit')
+  expect(b.facts).toBe('3m so far · 12 actions · last: Edit')
 })
 
 test('one-line card time: a real time left, else an estimate from an item count, else time so far', async () => {
@@ -583,10 +582,10 @@ test('the panel draws sections and rows, and a header press writes folded.txt', 
   expect(ran).toContainEqual({ argv: ['/bin/sh', SCRIPT], env: { PB_FULL: '1' }, stdin: '{"session_id":"","cwd":"","workspace":{"current_dir":""}}' })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { title: 'Status', isFocused: false, bodyColumns: 52, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } })
   expect((await ui.find({ type: 'Text', text: /^  You$/ }))?.text).toBe('  You')
-  expect((await ui.find({ type: 'Button', text: /call Sam/ }))?.text).toBe(' 2.  📦 call Sam')
+  expect((await ui.find({ type: 'Button', text: /call Sam/ }))?.text).toBe(' 2.  Other    call Sam')
   expect((await ui.find({ type: 'Button', text: /TO-DO/ }))?.text).toBe('▾ ☐ TO-DO  3')
   // One line per job by default: the plain title button, the bar and %, then a yellow no-progress note under it. No details yet.
-  expect((await ui.find({ type: 'Button', key: 'open-nightly-import' }))?.text).toBe(`▸ ${'Nightly import'.padEnd(26)}`)
+  expect((await ui.find({ type: 'Button', key: 'open-nightly-import' }))?.text).toBe(`▸ ${'Nightly import'.padEnd(29)}`)
   expect((await ui.find({ type: 'Text', text: /⚠ stuck/ }))?.text).toBe('⚠ stuck 12m')
   expect(await ui.find({ type: 'Text', text: /4 of 5 steps/ })).toBe(undefined)
   expect(await ui.find({ type: 'Text', text: /🤖/ })).toBe(undefined)
@@ -595,9 +594,9 @@ test('the panel draws sections and rows, and a header press writes folded.txt', 
   // Details sit in a box indented 4, so long text wraps under its indent, not back to column 0.
   expect((await ui.find({ type: 'Text', text: /4 of 5 steps/ }))?.text).toBe('4 of 5 steps')
   expect((await ui.find({ type: 'Text', text: /^batch 4$/ }))?.text).toBe('batch 4')
-  expect((await ui.find({ type: 'Text', text: /so far/ }))?.text).toBe('⏱ 12m so far')
+  expect((await ui.find({ type: 'Text', text: /so far/ }))?.text).toBe('12m so far')
   // The id says nothing the title already says: the badge alone.
-  expect((await ui.find({ type: 'Text', text: /⚙  job/ }))?.text).toBe('nightly-import   ⚙  job')
+  expect((await ui.find({ type: 'Text', text: /job/ }))?.text).toBe('job')
   expect(await ui.find({ type: 'Text', text: /🤖/ })).toBe(undefined)
   await ui.press({ key: 'open-nightly-import' })
   expect(await ui.find({ type: 'Text', text: /4 of 5 steps/ })).toBe(undefined)
@@ -618,20 +617,22 @@ test('the panel draws an indeterminate bar without a %, and one compact usage me
   expect(await ui.find({ type: 'Text', text: /steps not reported/ })).toBe(undefined)
   await ui.press({ key: 'open-build-docs' })
   expect((await ui.find({ type: 'Text', text: /steps not reported/ }))?.text).toBe('steps not reported')
-  // At 40 columns the meter ("Max 62% ━━━── 7d", 16) does not fit after the icon tabs (25 cells): its own line, right-aligned.
+  // At 40 columns the meter ("Max 62% ━━━── 7d", 16) does not fit after the short tabs: its own line, right-aligned.
   const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   const at = texts.indexOf('Max ')
   expect(texts.slice(at - 1, at + 4)).toEqual([' '.repeat(40 - 16), 'Max ', '62% ', '━━━', '── 7d'])
   // Above the tabs, not after them.
-  expect(at).toBeLessThan(texts.indexOf('☰ List'))
+  expect(at).toBeLessThan(texts.indexOf('List'))
   await ui.press({ key: 'open-orgs-judge' })
   expect((await ui.find({ type: 'Text', text: /3 of 10 steps/ }))?.text).toBe('3 of 10 steps')
   await ui.unmount()
-  // The usual 52 columns: the meter sits on the tab row's right end.
-  const wide = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  // Tabs are words: short ones in a narrow pane, full ones (45 cells) from 45 columns.
+  expect(texts).toContain('Topo')
+  // 70 columns: the full tabs and the meter share the row, the meter at its right end.
+  const wide = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 70 } })
   const wt = (await wide.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  expect(wt.indexOf('Max ')).toBeGreaterThan(wt.indexOf('🌐'))
-  expect(wt[wt.indexOf('Max ') - 1]).toBe(' '.repeat(52 - 25 - 16))
+  expect(wt.indexOf('Max ')).toBeGreaterThan(wt.indexOf('Topology'))
+  expect(wt[wt.indexOf('Max ') - 1]).toBe(' '.repeat(70 - 45 - 16))
   await wide.unmount()
 })
 
@@ -660,12 +661,12 @@ test('open to-dos under TO-DO, checked-off ones under DONE; the menu marks done,
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
   expect((await ui.find({ type: 'Button', text: /TO-DO/ }))?.text).toBe('▾ ☐ TO-DO  2')
-  expect((await ui.find({ type: 'Button', text: /review PR/ }))?.text).toBe(' 1.  📦 review PR')
+  expect((await ui.find({ type: 'Button', text: /review PR/ }))?.text).toBe(' 1.  Other    review PR')
   expect(await ui.find({ type: 'Text', text: /^  Mac$/ })).toBe(undefined)
   expect((await ui.find({ type: 'Button', text: /DONE/ }))?.text).toBe('▾ ✔ DONE  3')
   expect((await ui.find({ type: 'Button', key: 'dno-nightly' }))?.text).toBe('▸ Nightly')
   expect((await ui.find({ type: 'Text', text: /Checked-off to-dos/ }))?.text).toBe('  Checked-off to-dos')
-  expect((await ui.find({ type: 'Button', text: /old thing/ }))?.text).toBe('    ✓ 📦 old thing')
+  expect((await ui.find({ type: 'Button', text: /old thing/ }))?.text).toBe('    ✓ Other    old thing')
   expect(await ui.find({ type: 'Button', text: /✓ Done/ })).toBe(undefined)
 
   await ui.press({ key: 't-2' })
@@ -674,13 +675,13 @@ test('open to-dos under TO-DO, checked-off ones under DONE; the menu marks done,
   await ui.press({ key: 'a-done-2' })
   expect(files[TODO_FILE]).toBe('# note\n[you]\nx review PR | https://x.test/1\nx old thing\ncall Sam\n[mac]\nx all done here\n')
   expect((await ui.find({ type: 'Button', text: /TO-DO/ }))?.text).toBe('▾ ☐ TO-DO  1')
-  expect((await ui.find({ type: 'Button', text: /review PR/ }))?.text).toBe('    ✓ 📦 review PR')
+  expect((await ui.find({ type: 'Button', text: /review PR/ }))?.text).toBe('    ✓ Other    review PR')
 
   await ui.press({ key: 't-3' })
   expect((await ui.find({ type: 'Button', text: /Move back/ }))?.text).toBe('○ Move back to to-do  ')
   await ui.press({ key: 'a-todo-3' })
   expect(files[TODO_FILE]).toBe('# note\n[you]\nx review PR | https://x.test/1\nold thing\ncall Sam\n[mac]\nx all done here\n')
-  expect((await ui.find({ type: 'Button', text: /old thing/ }))?.text).toBe(' 1.  📦 old thing')
+  expect((await ui.find({ type: 'Button', text: /old thing/ }))?.text).toBe(' 1.  Other    old thing')
 
   await ui.press({ key: 't-4' })
   await ui.press({ key: 'a-del-4' })
@@ -760,17 +761,17 @@ test('the Connectors tab: checks claude mcp list, caches name and status only, n
   expect(files[CACHE]).not.toContain('postgres')
   expect(files[CACHE]).not.toContain('https')
 
-  expect((await ui.find({ type: 'Button', key: 'tab-list' }))?.text).toBe('☰ List')
+  expect((await ui.find({ type: 'Button', key: 'tab-list' }))?.text).toBe('List')
   // Icons only, with the badge. The shown tab adds its name.
-  expect((await ui.find({ type: 'Button', key: 'tab-connectors' }))?.text).toBe('🔌 !3')
-  expect((await ui.find({ type: 'Text', text: /🎯/ }))?.text).toBe('🎯 Making the generosity database better')
+  expect((await ui.find({ type: 'Button', key: 'tab-connectors' }))?.text).toBe('Connectors !3')
+  expect((await ui.find({ type: 'Text', text: /generosity/ }))?.text).toBe('Making the generosity database better')
   expect((await ui.find({ type: 'Button', text: /RUNNING/ }))?.text).toBe('▾ ▶ RUNNING  1')
   expect(await ui.find({ type: 'Text', text: /CONNECTORS/ })).toBe(undefined)
 
   await ui.press({ key: 'tab-connectors' })
-  expect((await ui.find({ type: 'Button', key: 'tab-connectors' }))?.text).toBe('🔌 Connectors !3')
-  expect(await ui.find({ type: 'Text', text: /🎯/ })).toBe(undefined)
-  expect((await ui.find({ type: 'Text', text: /CONNECTORS/ }))?.text).toBe('⚡ CONNECTORS  2 ok · 2 need sign-in · 1 failed')
+  expect((await ui.find({ type: 'Button', key: 'tab-connectors' }))?.text).toBe('Connectors !3')
+  expect(await ui.find({ type: 'Text', text: /generosity/ })).toBe(undefined)
+  expect((await ui.find({ type: 'Text', text: /CONNECTORS/ }))?.text).toBe('CONNECTORS  2 ok · 2 need sign-in · 1 failed')
   expect((await ui.find({ type: 'Text', text: /Claude:/ }))?.text).toBe('  Claude: me@x.test · Acme')
   // Since 0.13.3 a connector with a known web page is a button that opens it as the connected account;
   // one with no page (db, broken) stays plain text.
@@ -805,9 +806,9 @@ test('a fresh shared cache is read, not refreshed', async ($, on) => {
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
   expect(ran.some(r => r.argv[0] === 'claude')).toBe(false)
-  expect((await ui.find({ type: 'Button', key: 'tab-connectors' }))?.text).toBe('🔌 !1')
+  expect((await ui.find({ type: 'Button', key: 'tab-connectors' }))?.text).toBe('Connectors !1')
   await ui.press({ key: 'tab-connectors' })
-  expect((await ui.find({ type: 'Text', text: /CONNECTORS/ }))?.text).toBe('⚡ CONNECTORS  1 ok · 1 need sign-in')
+  expect((await ui.find({ type: 'Text', text: /CONNECTORS/ }))?.text).toBe('CONNECTORS  1 ok · 1 need sign-in')
   await ui.unmount()
 })
 
@@ -879,7 +880,7 @@ test('the GitHub tab draws the repo, other branches and commits, and a press ope
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
   expect(ran.some(r => r.argv[0] === 'git')).toBe(false)
   await ui.press({ key: 'tab-github' })
-  expect((await ui.find({ type: 'Button', text: /GitHub/ }))?.text).toBe('⎇ GitHub')
+  expect((await ui.find({ type: 'Button', text: /GitHub/ }))?.text).toBe('GitHub')
   expect((await ui.find({ type: 'Text', text: /repo \d of/ }))?.text).toBe('repo 1 of 2')
   expect((await ui.find({ type: 'Button', text: /↗/ }))?.text).toBe('app  ↗')
   expect((await ui.find({ type: 'Text', text: /^acme$/ }))?.text).toBe('acme')
@@ -921,11 +922,11 @@ test('titles: progress-file fields and titles.txt columns', async () => {
 test('running cards: N% CPU is a busy process, not progress; waiting on; spaced badges', async () => {
   const c = runCard('◐ box: train.py · 540% CPU · 12:50')
   expect(c.pct).toBe(null)
-  expect(c.kind).toEqual({ icon: '🖥', text: 'on box' })
-  expect(c.facts).toBe('⚙ 5.4 cores busy   ⏱ 12:50 running')
+  expect(c.kind).toEqual({ text: 'on box' })
+  expect(c.facts).toBe('5.4 cores busy · 12:50 running')
   expect(c.step).toBe('')
   expect(runCard('◐ big ██░░ 50.0% · 1/2 · a step · waiting on: Child job').waitOn).toBe('Child job')
-  expect(badge({ icon: '🏷', text: 'labeling' })).toBe('🏷  labeling')
+  expect(badge({ text: 'labeling' })).toBe('labeling')
 })
 
 test('nesting: one level under a running parent, loops keep their own cards', async () => {
@@ -981,7 +982,7 @@ const TITLED_FULL = [
   '  ◐ child-step ██░░ 50.0% · 1/2 · y',
   '  ◐ box: train.py · 540% CPU · 12:50',
   '  ◐ other ██░░ 50.0% · 1/2 · a step · waiting on: Child job',
-  '🖥 hunty ✓ helper healthy · load 1.96 on 12 cores · busy: 1 job running',
+  'machine hunty ✓ helper healthy · load 1.96 on 12 cores · busy: 1 job running',
   '▾ ✔ DONE',
   '  finisher ████████████████████ 100.0% · 7/7 · tests pass · 6m · 38 tools',
   '  nightly · finished 10:12',
@@ -1007,9 +1008,9 @@ test('the panel: titles, ids with badges, unlocks, a nested child, waiting on an
   // At 60 columns the label column is 22 (labelCol leaves 13 columns for the note); a child's 4-space indent takes 4.
   expect(labelCol(60)).toBe(22)
   expect(labelCol(60, 4)).toBe(18)
-  // Rows cluster by area inside RUNNING (Answer quality for "better search", else Other), each with its area icon. The
-  // title gets the room left after the bar (rowCol: 34 at 60 columns), and the note and why go on a dim line under it.
-  expect(await buttons()).toEqual([`▸ ${'Train the model'.padEnd(34)}`, `▸ ${'Big batch'.padEnd(34)}`, `▸ ${'Other'.padEnd(34)}`])
+  // Rows cluster by area inside RUNNING (Answer quality for "better search", else Other), each with its area word under it. The
+  // title gets the room left after the bar (rowCol: 37 at 60 columns), and the note and why go on a dim line under it.
+  expect(await buttons()).toEqual([`▸ ${'Train the model'.padEnd(37)}`, `▸ ${'Big batch'.padEnd(37)}`, `▸ ${'Other'.padEnd(37)}`])
   let texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   expect(texts.some(t => /⚠ stuck/.test(t))).toBe(false)
   expect(texts).toContain('waiting on Child step')
@@ -1021,29 +1022,29 @@ test('the panel: titles, ids with badges, unlocks, a nested child, waiting on an
   expect(texts.some(t => /unlocks/.test(t))).toBe(false)
   for (const k of ['open-big-batch', 'open-box-train-py', 'open-other']) await ui.press({ key: k })
   texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  expect(texts).toContain('🤖  Claude agent')
+  expect(texts).toContain('Claude agent')
   expect(texts).toContain('6 of 8 steps')
   expect(texts).toContain('waiting on: Child step')
   // The child shows under its open parent, marked ↳, with its own one line.
-  expect(await buttons()).toContain(`▾ ${'Big batch'.padEnd(34)}`)
-  expect(await buttons()).toContain(`▸ ${'Child step'.padEnd(30)}`)
+  expect(await buttons()).toContain(`▾ ${'Big batch'.padEnd(37)}`)
+  expect(await buttons()).toContain(`▸ ${'Child step'.padEnd(33)}`)
   expect(texts).toContain('      ↳ ')
   // A busy process: no bar at 540%, cores and run time instead.
-  expect(texts).toContain('box: train.py   🖥  on box')
+  expect(texts).toContain('box: train.py   on box')
   expect(texts.some(t => /540/.test(t))).toBe(false)
-  expect(texts).toContain('⚙ 5.4 cores busy   ⏱ 12:50 running')
+  expect(texts).toContain('5.4 cores busy · 12:50 running')
   // The grouper already said what it waits on.
   expect(texts).toContain('waiting on: Child job')
   // The open details never repeat the % or the time left.
   expect(texts.filter(t => /%/.test(t)).every(t => /^\s*\d+%$/.test(t))).toBe(true)
   // DONE: one dim line for a row at 100%, titles for finished jobs.
-  expect(texts).toContain('  ✓ 📦 Finisher  finishing · 7/7')
+  expect(texts).toContain('  ✓ Finisher  finishing · 7/7')
   expect(texts.some(t => /█/.test(t) && /finish/.test(t))).toBe(false)
   // The machine status line is one short button at the end, its load only once opened, never a DONE row.
-  expect(texts).toContain('▸ 🖥 hunty ✓')
+  expect(texts).toContain('▸ machines: hunty ✓')
   expect(texts.some(t => /load 1.96/.test(t))).toBe(false)
   await ui.press({ key: 'machines' })
-  expect((await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')).toContain('  🖥 hunty ✓ helper healthy · load 1.96 on 12 cores · busy: 1 job running')
+  expect((await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')).toContain('  machine hunty ✓ helper healthy · load 1.96 on 12 cores · busy: 1 job running')
   // Finished jobs are buttons with their titles: the grouper's row, then a record from the last 12 h. Older ones stay out.
   const done = async () => (await ui.findAll({ type: 'Button' })).filter(b => /^dno-/.test(b.key ?? '')).map(b => b.text ?? '')
   expect(await done()).toEqual(['▸ Nightly import', '▸ Person matcher fix'])
@@ -1060,13 +1061,13 @@ test('the panel: titles, ids with badges, unlocks, a nested child, waiting on an
   expect(texts.filter(t => t === 'Board links rebuilt: 1.29M pairs').length).toBe(1)
   expect(texts).toContain('Board links rebuilt: 1.29M pairs')
   expect(texts).toContain('109K split people merged')
-  expect(texts).toContain(`finished ${clock(NOW - 60_000)} · ran 1h19m   🖥  Mac`)
+  expect(texts).toContain(`finished ${clock(NOW - 60_000)} · ran 1h19m · machine: Mac`)
   expect(texts).toContain('unlocks: the morning dashboard')
   // No impact: it says so.
   await ui.press({ key: 'dno-hunty-person-matcher-fix' })
   texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   expect(texts).toContain('no impact reported')
-  expect(texts).toContain(`finished ${clock(NOW - 2 * 3_600_000)} · ran 1h00m   🖥  Mac`)
+  expect(texts).toContain(`finished ${clock(NOW - 2 * 3_600_000)} · ran 1h00m · machine: Mac`)
   await ui.unmount()
 })
 
@@ -1088,10 +1089,10 @@ test('the Log tab: !N unseen errors, counts, filters, detail, open log only insi
   const { ran } = panelWorld(on, files, '▾ ▶ RUNNING\n  ◐ job ██░░ 50.0% · 1/2\n')
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
-  expect((await ui.find({ type: 'Button', key: 'tab-log' }))?.text).toBe('📜 !2')
+  expect((await ui.find({ type: 'Button', key: 'tab-log' }))?.text).toBe('Log !2')
   await ui.press({ key: 'tab-log' })
   expect(files[`${DIR}/.state/log-seen.txt`]).toBe(String(S))
-  expect((await ui.find({ type: 'Button', key: 'tab-log' }))?.text).toBe('📜 Log')
+  expect((await ui.find({ type: 'Button', key: 'tab-log' }))?.text).toBe('Log')
   expect((await ui.find({ type: 'Text', text: /✖ 2 errors/ }))?.text).toBe('✖ 2 errors  ')
   expect((await ui.find({ type: 'Text', text: /⚠ 1 warning / }))?.text).toBe('⚠ 1 warning  ')
   expect((await ui.find({ type: 'Text', text: /✓ 1 done/ }))?.text).toBe('✓ 1 done')
@@ -1153,17 +1154,17 @@ test('running jobs: one aligned line each, a press opens the details', async ($,
   // Plain titles leave the machine out ("hunty-rebuild" reads "Rebuild"). The nested one is a sub-job.
   expect((await ui.find({ type: 'Text', text: /in progress/ }))?.text).toBe('   2 in progress')
   expect((await ui.find({ type: 'Button', key: 'h-running' }))?.text).toBe('▾ ▶ RUNNING  2 (+1 sub-job)')
-  expect(await lines()).toEqual([`▸ ${'Rebuild'.padEnd(26)}`, `▸ ${fitLabel('A much longer job name than fits', 26)}`])
+  expect(await lines()).toEqual([`▸ ${'Rebuild'.padEnd(29)}`, `▸ ${fitLabel('A much longer job name than fits', 29)}`])
   expect(new Set((await lines()).map(l => l.length)).size).toBe(1)
   let texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   expect(texts).toContain('  40%')
   expect(texts).toContain('1h left')
   expect(texts.some(t => /2 of 5/.test(t))).toBe(false)
   await ui.press({ key: 'open-hunty-rebuild' })
-  expect(await lines()).toEqual([`▾ ${'Rebuild'.padEnd(26)}`, `▸ ${'Embed.py'.padEnd(22)}`, `▸ ${fitLabel('A much longer job name than fits', 26)}`])
+  expect(await lines()).toEqual([`▾ ${'Rebuild'.padEnd(29)}`, `▸ ${'Embed.py'.padEnd(25)}`, `▸ ${fitLabel('A much longer job name than fits', 29)}`])
   texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   expect(texts).toContain('2 of 5 steps')
-  expect(texts).toContain('hunty-rebuild   ⚙  job')
+  expect(texts).toContain('job')
   expect(texts.filter(t => /1h left/.test(t))).toEqual(['1h left'])
   expect(texts.filter(t => /40%/.test(t))).toEqual(['  40%'])
   expect(texts).toContain('3:10 running')
@@ -1193,7 +1194,8 @@ test('waiting rows: no bar, one line "⏸ <title> · waiting on <what>", a press
   texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   expect(texts).toContain('6 of 8 steps')
   // The machine shows only in the open card.
-  expect(texts).toContain('Hunty: Schedule O places grant rematch   🤖  Claude agent')
+  expect(texts).toContain('Claude agent')
+  expect(texts).toContain('machine: Hunty')
   expect(texts).toContain('graded 50/50 x4, waiting on 2021-22 grant adds before load')
   await ui.unmount()
 })
@@ -1207,12 +1209,12 @@ test('section hotkeys follow the display order, and a watcher shows on the job i
   const heads = (await ui.findAll({ type: 'Button' })).filter(b => /^h-/.test(b.key ?? ''))
   expect(heads.map(b => [b.key, (b as unknown as { props?: { hotkey?: string } }).props?.hotkey ?? (b as unknown as { hotkey?: string }).hotkey])).toEqual([['h-todo', '1'], ['h-running', '2'], ['h-waiting', '3'], ['h-done', '4']])
   // An area chip filters every section to its area (label work is Causes), a second press shows all again.
-  expect((await ui.find({ type: 'Button', key: 'chip-causes' }))?.text).toBe('💚 1 ◒')
+  expect((await ui.find({ type: 'Button', key: 'chip-causes' }))?.text).toBe('Causes 1 ◒')
   await ui.press({ key: 'chip-causes' })
   expect(await ui.find({ type: 'Button', key: 'open-label-top-ups' })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'open-deploy-waits-for-build' })).toBe(undefined)
   expect((await ui.find({ type: 'Button', key: 'h-waiting' }))?.text).toBe('▾ ⏸ WAITING  0')
-  expect((await ui.find({ type: 'Text', text: /showing/ }))?.text).toBe('   showing 💚 Causes only, press it again for all')
+  expect((await ui.find({ type: 'Text', text: /showing/ }))?.text).toBe('   showing Causes only, press it again for all')
   await ui.press({ key: 'chip-causes' })
   expect(await ui.find({ type: 'Button', key: 'open-deploy-waits-for-build' })).toBeDefined()
   await ui.press({ key: 'open-label-top-ups' })

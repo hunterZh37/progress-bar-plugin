@@ -121,7 +121,7 @@ export function doneDetails(r: Pick<DoneRec, 'impact' | 'started' | 'finished' |
   const fin = r?.finished ? clock(r.finished) : at
   const ran = r?.started && r.finished ? ranFor(r.finished - r.started) : ''
   const when = [fin && `finished ${fin}`, ran && `ran ${ran}`].filter(Boolean).join(' · ')
-  if (when || machine) out.push([when, machine && `🖥  ${machine}`].filter(Boolean).join('   '))
+  if (when || machine) out.push([when, machine && `machine: ${machine}`].filter(Boolean).join(' · '))
   if (r?.why) out.push(`unlocks: ${r.why.replace(/^unlocks:?\s*/i, '')}`)
   return out
 }

@@ -1,5 +1,5 @@
 // Inbox: emails (or anything) that need you, shown at the top of the Status panel's List tab and as
-// "✉ N need you" in the status line. Any script may write ~/.claude-progress/inbox.json:
+// "inbox: N need you" in the status line. Any script may write ~/.claude-progress/inbox.json:
 //   { "checked": <epoch s>, "items": [{ "id": "...", "from": "...", "subject": "...", "why": "...", "due": "...", "url": "https://..." }] }
 // "✓ handled" adds the id to ~/.claude-progress/.state/inbox-handled.txt, which hides it here and in the status line.
 // Pressing an item opens its url, only when it is https.
@@ -89,7 +89,7 @@ export async function inboxCommand($: EngineInterface, h: string, arg: string): 
       `   INBOX_ACCOUNT=you@example.com FORCE=1 ~/${INBOX_CHECK_REL}`,
       '2. Run it every 10 min. On macOS add a launchd agent, or with cron:',
       `   */10 * * * * INBOX_ACCOUNT=you@example.com ~/${INBOX_CHECK_REL}`,
-      '3. The status line shows "✉ N need you" and the Status panel lists each email. Press one to open it in Gmail.',
+      '3. The status line shows "inbox: N need you" and the Status panel lists each email. Press one to open it in Gmail.',
       '',
       'Runs skip 11 PM to 6 AM and never overlap. The log is ~/.claude-progress/.state/inbox-check.log.',
     ].join('\n')
@@ -97,7 +97,7 @@ export async function inboxCommand($: EngineInterface, h: string, arg: string): 
   await readInbox($, h)
   const b = await read($, inboxAtom)
   if (!b.items.length) return 'Inbox: nothing needs you. Any script can write ~/.claude-progress/inbox.json. Run /progress-bar inbox setup for the Gmail example.'
-  return [`✉ ${b.items.length} need you`, ...b.items.map(i => `  ${i.from} · ${i.subject}${i.why ? `  (${i.why})` : ''}`)].join('\n')
+  return [`${b.items.length} need you`, ...b.items.map(i => `  ${i.from} · ${i.subject}${i.why ? `  (${i.why})` : ''}`)].join('\n')
 }
 
 export const INBOX_CHECK_SH = String.raw`#!/bin/zsh

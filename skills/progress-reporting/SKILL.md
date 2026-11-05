@@ -51,7 +51,7 @@ Path: `~/.claude-progress/<slug>.json`
 - **startedAt**: optional, milliseconds since the epoch. Without it the file's time is used.
 - **title**: plain words for the improvement the job makes, so a person knows at a glance why it runs. Name the outcome, not the mechanism: `Every board member counted, not just 25` rather than `Board lists past 25 seats`, `Know where more orgs serve` rather than `Service places round 3`. The Status panel shows it in bold above the slug.
 - **area**: the goal area the job improves, by name from `~/.claude-progress/goal.json` (`Grants`, `Boards & people`). Always set it.
-- **gains**: an object with any of `cost`, `quality`, `speed`, each a short plain line with a number when possible. State which of the three your job improves. They show as 💲 💎 🚀 tags on its row.
+- **gains**: an object with any of `cost`, `quality`, `speed`, each a short plain line with a number when possible. State which of the three your job improves. They show as the words cost, quality, speed on its row.
 - **why**: what the job unlocks for the person (`the weekly report`). Shown dim under its row.
 - **parent**: the slug of the bigger job this is part of. Set it when a subagent or script works for another job that has a progress file. While both run, the child draws inside the parent's card, and the parent reads `waiting on: <child>` instead of stuck.
 - **session**: the Claude Code session id, so the bar shows only in this session. In Bash it is `$CLAUDE_CODE_SESSION_ID`. Add it whenever you can.

@@ -47,8 +47,8 @@ test('prettyName, ranFor and pruneList', () => {
 })
 
 test('doneDetails: impact or "no impact reported", finish and run time with the machine, then why', () => {
-  expect(doneDetails({ impact: ['a', 'b'], started: NOW - 80 * 60_000, finished: NOW, why: 'unlocks: x' }, '', 'Mac').slice(2)).toEqual([expect.stringMatching(/^finished \d\d:\d\d · ran 1h20m   🖥  Mac$/), 'unlocks: x'])
-  expect(doneDetails(undefined, '11:50', 'Hunty')).toEqual(['no impact reported', 'finished 11:50   🖥  Hunty'])
+  expect(doneDetails({ impact: ['a', 'b'], started: NOW - 80 * 60_000, finished: NOW, why: 'unlocks: x' }, '', 'Mac').slice(2)).toEqual([expect.stringMatching(/^finished \d\d:\d\d · ran 1h20m · machine: Mac$/), 'unlocks: x'])
+  expect(doneDetails(undefined, '11:50', 'Hunty')).toEqual(['no impact reported', 'finished 11:50 · machine: Hunty'])
 })
 
 test('doneItems: the grouper rows, then recent records not shown or running, newest first; titles', () => {

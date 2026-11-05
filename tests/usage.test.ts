@@ -46,11 +46,12 @@ test('meterLabel and meterText: named by the plan, Max when unknown, compact, th
   expect(meterText(undefined, 85, 'as of 07:38')).toBe('Max 85% ━━━━─ 7d · as of 07:38')
   expect(meterText('Team', 48, 'as of 07:38').match(/[;—]/)).toBeNull()
   // On the tab row only when it fits with two spaces to spare.
-  // Icon tabs: emoji count two cells, the shown tab adds its name, two spaces between tabs.
-  expect(tabLabel('list', true)).toBe('☰ List')
-  expect(tabLabel('connectors', false, '!2')).toBe('🔌 !2')
-  expect(cells('🔌 !2')).toBe(5)
-  expect(tabsWidth(['☰ List', '🔌 !2', '⎇', '📜', '💬', '🌐'])).toBe(28)
+  // Tabs are words, short ones in a narrow pane, two spaces between tabs.
+  expect(tabLabel('list', true)).toBe('List')
+  expect(tabLabel('connectors', false, '!2')).toBe('Connectors !2')
+  expect(tabLabel('connectors', false, '!2', true)).toBe('Conn !2')
+  expect(tabsWidth(['List', 'Conn !2', 'Git', 'Log', 'Chat', 'Topo'])).toBe(35)
+  expect(cells('🔌')).toBe(2)
   expect(meterOnTabRow(28, 18, 48)).toBe(true)
   expect(meterOnTabRow(28, 18, 47)).toBe(false)
 })

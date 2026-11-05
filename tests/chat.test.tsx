@@ -86,7 +86,7 @@ test('Chat tab: badge, thread in order, received left with the name, sent as You
   const files = seed()
   world(on, files)
   const ui = await mount($)
-  expect((await ui.find({ type: 'Button', key: 'tab-chat' }))?.text).toBe('💬 3')
+  expect((await ui.find({ type: 'Button', key: 'tab-chat' }))?.text).toBe('Chat 3')
   await ui.press({ key: 'tab-chat' })
   const t = await texts(ui)
   const heads = t.filter(x => / · (\w+ \d+ )?\d\d:\d\d/.test(x))
@@ -94,12 +94,12 @@ test('Chat tab: badge, thread in order, received left with the name, sent as You
   const bubble = (await ui.find({ type: 'Button', key: 'chm-aaaa1111aaaa1111' }))?.text ?? ''
   expect(bubble).toBe('hey red there')
   expect((await ui.find({ type: 'Button', key: 'chm-bbbb2222bbbb2222' }))?.text).toBe('hi sam')
-  expect((await ui.find({ type: 'Button', key: 'chm-dddd4444dddd4444' }))?.text).toBe('📎 pic.png (120 KB)')
+  expect((await ui.find({ type: 'Button', key: 'chm-dddd4444dddd4444' }))?.text).toBe('file: pic.png (120 KB)')
   expect(await ui.find({ type: 'Button', key: 'chm-eeee5555eeee5555' }).catch(() => undefined)).toBeUndefined()
   expect(t.some(x => x.includes('line 1\nline 2\nline 3'))).toBe(true)
   // Viewing the thread marked both received unread messages read.
   expect(files[`${P}/.state/channel-read.txt`]!.split('\n').filter(Boolean).sort()).toEqual(['aaaa1111aaaa1111', 'cccc3333cccc3333', 'dddd4444dddd4444'])
-  expect((await ui.find({ type: 'Button', key: 'tab-chat' }))?.text).toBe('💬 Chat')
+  expect((await ui.find({ type: 'Button', key: 'tab-chat' }))?.text).toBe('Chat')
   await ui.unmount()
 })
 

@@ -183,7 +183,7 @@ test('the Topology tab: writes topology.json once, draws jobs from progress file
   world(on, files, ['▾ ▶ RUNNING', '  ◑ Hunty board lists █████████████████░░░ 83.3% · 5/6 · rebuilding'].join('\n'))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { title: 'Status', isFocused: false, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 60 }, view: {} } })
-  expect((await ui.find({ type: 'Button', key: 'tab-topology' }))?.text).toBe('🌐')
+  expect((await ui.find({ type: 'Button', key: 'tab-topology' }))?.text).toBe('Topology')
   await ui.press({ key: 'tab-topology' })
   expect(JSON.parse(files[`${D}/${TOPOLOGY_REL.split('/').pop()}`]!).machines[1].ip).toBe('100.66.167.126')
   // Closed: one row per machine. Opening hunty shows its job, opening the job shows what it reads.

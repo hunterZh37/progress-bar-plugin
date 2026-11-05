@@ -67,7 +67,7 @@ test('Channel block: unread files, a press opens the local copy, ✓ read hides 
   const ran = world(on, files)
   const ui = await mount($)
   const t = (await ui.findAll({ type: 'Text' })).map(x => x.text ?? '')
-  expect(t).toContain('✉ Channel  2 new')
+  expect(t).toContain('Channel  2 new')
   expect(await ui.find({ type: 'Button', key: 'ch-o-bbbb2222bbbb2222' }).catch(() => undefined)).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: 'ch-o-eeee5555eeee5555' }).catch(() => undefined)).toBeUndefined()
   await ui.press({ key: 'ch-o-aaaa1111aaaa1111' })
@@ -75,7 +75,7 @@ test('Channel block: unread files, a press opens the local copy, ✓ read hides 
   await ui.press({ key: 'ch-x-aaaa1111aaaa1111' })
   expect(files[`${P}/.state/channel-read.txt`]).toBe('cccc3333cccc3333\naaaa1111aaaa1111\n')
   const t2 = (await ui.findAll({ type: 'Text' })).map(x => x.text ?? '')
-  expect(t2).toContain('✉ Channel  1 new')
+  expect(t2).toContain('Channel  1 new')
   expect(t2.filter(x => /Channel|new/.test(x)).some(x => /[;—]/.test(x))).toBe(false)
   // Nothing in the panel ever ran the received file through a shell or a prompt: only open with its path.
   expect(ran.filter(a => a.some(x => x.includes('plan.md'))).every(a => a[0] === 'open' && a.length === 2)).toBe(true)

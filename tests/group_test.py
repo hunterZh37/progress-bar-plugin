@@ -57,7 +57,7 @@ class Group(unittest.TestCase):
 
     def test_already_grouped_input_is_dropped_and_never_saved(self):
         # A status line chained twice feeds our own output back in: headers, indented rows, stuck marks, badges.
-        grouped = ('\033[31m⛔ 1 action needed\033[0m\n'
+        grouped = ('\033[31m! 1 action needed\033[0m\n'
                    '▾ ☐ TO-DO\n  YOU: review PR\n'
                    '▾ ▶ RUNNING\n  \033[33m⚠ stuck 12m\033[0m build ████░░░░ 40.0% · 2/5\n  ◐ docs ██░░ 10.0% · 1/9\n'
                    '▸ ✔ DONE (2)\n'
@@ -134,10 +134,10 @@ class Group(unittest.TestCase):
         self.assertEqual(out, [
             '▾ ▶ RUNNING',
             '  ◐ build ████░░░░ 40.0% · 2/5 · in progress',
-            '🖥 hunty ✓ helper healthy · load 0.22 on 12 cores · idle',
+            'machine hunty ✓ helper healthy · load 0.22 on 12 cores · idle',
         ])
         # Fed back in (a status line chained twice), the machine line is dropped.
-        self.assertEqual(self.g.ours(['🖥 hunty ✓ helper healthy · idle', 'Opus']), ['Opus'])
+        self.assertEqual(self.g.ours(['machine hunty ✓ helper healthy · idle', 'Opus']), ['Opus'])
         # When it goes away it is not reported as a finished job.
         self.assertFalse(any('hunty' in l for l in self.run_('', now=t + 60)))
 
@@ -145,14 +145,14 @@ class Group(unittest.TestCase):
         out = self.run_('▶ hunty ✓ helper healthy · load 1.96 on 12 cores · idle\n'
                         '▶ hunty: hunty-board-cap-extract ████████░░░░ 40.2% · 55000/136911 · parsing\n'
                         '▶ hunty: board_cap.py · 86.8% CPU · 00:29\n')
-        self.assertIn('🖥 hunty ✓ helper healthy · load 1.96 on 12 cores · busy: 1 job running', out)
+        self.assertIn('machine hunty ✓ helper healthy · load 1.96 on 12 cores · busy: 1 job running', out)
         self.assertFalse(any(l.startswith('▾ ✔ DONE') for l in out))
         # Only busy processes: they count.
         out = self.run_('▶ hunty ✓ helper healthy · load 1.96 on 12 cores · idle\n▶ hunty: a.py · 86.8% CPU · 00:29\n▶ hunty: b.py · 50.0% CPU · 00:10\n', T0 + 1)
-        self.assertIn('🖥 hunty ✓ helper healthy · load 1.96 on 12 cores · busy: 2 processes running', out)
+        self.assertIn('machine hunty ✓ helper healthy · load 1.96 on 12 cores · busy: 2 processes running', out)
         # Another host's job does not make it busy.
         out = self.run_('▶ hunty ✓ helper healthy · load 0.2 on 12 cores · idle\n▶ gpu: train ██░░ 10.0% · 1/9\n', T0 + 2)
-        self.assertIn('🖥 hunty ✓ helper healthy · load 0.2 on 12 cores · idle', out)
+        self.assertIn('machine hunty ✓ helper healthy · load 0.2 on 12 cores · idle', out)
 
     def test_folded_sections(self):
         self.write('.state/folded.txt', 'todo\nrunning\n')
@@ -299,15 +299,15 @@ class Group(unittest.TestCase):
         os.makedirs(os.path.join(self.root, 'channel'))
         self.write('channel/received.json', json.dumps([{'id': 'a1'}, {'id': 'b2'}, {'id': 'b2'}, 'x']))
         self.write('.state/channel-read.txt', 'a1\n')
-        self.assertTrue(self.g.main(io.StringIO(''), T0, summary=True)[0].startswith('\033[36m📨 1 new\033[0m · '))
-        self.assertIn('📨 1 new', strip_links('\n'.join(self.g.main(io.StringIO(''), T0))))
+        self.assertTrue(self.g.main(io.StringIO(''), T0, summary=True)[0].startswith('\033[36mchannel: 1 new\033[0m · '))
+        self.assertIn('channel: 1 new', strip_links('\n'.join(self.g.main(io.StringIO(''), T0))))
         self.write('.state/channel-read.txt', 'a1\nb2\n')
-        self.assertNotIn('📨', self.g.main(io.StringIO(''), T0, summary=True)[0])
+        self.assertNotIn('channel:', self.g.main(io.StringIO(''), T0, summary=True)[0])
 
     def test_summary_says_recap_ready_after_4_h_or_a_wake(self):
         self.write('.state/overnight.json', json.dumps({'since': T0, 'label': 'x', 'running': []}))
         self.assertNotIn('recap ready', self.g.main(io.StringIO(''), T0 + 3 * 3600, summary=True)[0])
-        self.assertTrue(self.g.main(io.StringIO(''), T0 + 4 * 3600, summary=True)[0].endswith(' · \033[2m☀ recap ready\033[0m'))
+        self.assertTrue(self.g.main(io.StringIO(''), T0 + 4 * 3600, summary=True)[0].endswith(' · \033[2mrecap ready\033[0m'))
         self.write('.state/overnight.json', json.dumps({'since': T0, 'label': 'x', 'running': [], 'woke': T0 + 60}))
         self.assertIn('recap ready', self.g.main(io.StringIO(''), T0 + 60, summary=True)[0])
         os.remove(os.path.join(self.root, '.state', 'overnight.json'))
@@ -317,8 +317,8 @@ class Group(unittest.TestCase):
         self.assertNotIn('need you', self.run_summary('')[0])
         self.write('inbox.json', json.dumps({'checked': T0, 'items': [{'id': 'a1'}, {'id': 'b2'}, {'id': 'c3'}, {'from': 'no id'}]}))
         self.write('.state/inbox-handled.txt', 'b2\n')
-        self.assertTrue(self.run_summary('')[0].startswith('\033[33m✉ 2 need you\033[0m · ▶ 0 running'))
-        self.assertEqual(self.run_('▶ import ██░░ 50.0%\n')[0], '\033[33m✉ 2 need you\033[0m')
+        self.assertTrue(self.run_summary('')[0].startswith('\033[33minbox: 2 need you\033[0m · ▶ 0 running'))
+        self.assertEqual(self.run_('▶ import ██░░ 50.0%\n')[0], '\033[33minbox: 2 need you\033[0m')
         os.environ['PB_FULL'] = '1'
         try:
             self.assertNotIn('need you', ''.join(self.run_('▶ import ██░░ 50.0%\n')))
@@ -641,15 +641,15 @@ class Projects(unittest.TestCase):
         self.assertEqual(self.g.action_count(os.path.join(self.home, 'loose', 'dir')), 1)
         os.environ['PB_CWD'] = nb
         line = self.g.main(io.StringIO(''), T0, summary=True)[0]
-        self.assertTrue(line.startswith('\033[1;31m⛔ 2 actions needed\033[0m · '), line)
-        self.assertEqual(self.g.main(io.StringIO(''), T0)[0], '\033[1;31m⛔ 2 actions needed\033[0m')
+        self.assertTrue(line.startswith('\033[1;31m! 2 actions needed\033[0m · '), line)
+        self.assertEqual(self.g.main(io.StringIO(''), T0)[0], '\033[1;31m! 2 actions needed\033[0m')
         os.environ['PB_FULL'] = '1'
         try:
             self.assertNotIn('needed', ''.join(self.g.main(io.StringIO(''), T0)))
         finally:
             del os.environ['PB_FULL']
         os.environ['PB_CWD'] = os.path.join(self.home, 'loose', 'dir')
-        self.assertIn('⛔ 1 action needed', self.g.main(io.StringIO(''), T0, summary=True)[0])
+        self.assertIn('! 1 action needed', self.g.main(io.StringIO(''), T0, summary=True)[0])
         self.write('actions.json', 'not json')
         self.assertEqual(self.g.action_count(nb), 0)
 

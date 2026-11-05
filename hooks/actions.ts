@@ -111,7 +111,7 @@ export function isGated(e: { text: string; command?: unknown; isMeta?: unknown; 
 /** The message a held prompt shows. */
 export function blockText(open: Action[], width = 100): string {
   const a = open[0]!
-  const out = [`⛔ Action needed: ${a.title}`]
+  const out = [`Action needed: ${a.title}`]
   if (a.why) out.push(`Why: ${a.why}`)
   if (a.command) out.push(`Run: ${cut(a.command, Math.max(40, width * 3))}`)
   out.push(a.check
@@ -370,7 +370,7 @@ export async function popup($: EngineInterface, h: string, a: Action, force = fa
   popping = true
   try {
     try { await $.ui.open({ id: ACTION_PANE, title: 'Action needed', focus: true, rows: 12 }) } catch { /* the Status panel banner still shows it */ }
-    $.ui.toast(`⛔ Action needed: ${cut(a.title, 80)}`)
+    $.ui.toast(`Action needed: ${cut(a.title, 80)}`)
     if (darwin === null) darwin = await isDarwin($)
     if (!darwin) return
     let termProgram = ''
@@ -504,7 +504,7 @@ export async function actionCommand($: EngineInterface, h: string, rest: string)
     case '':
     case 'list': {
       const closed = (await loadActions($, h)).filter(a => a.status !== 'open').slice(-3).reverse()
-      const head = open.length ? `⛔ ${open.length} action${open.length === 1 ? '' : 's'} needed\n${open.map(line).join('\n')}` : 'No open actions.'
+      const head = open.length ? `${open.length} action${open.length === 1 ? '' : 's'} needed\n${open.map(line).join('\n')}` : 'No open actions.'
       const tail = closed.length ? `\nRecently closed:\n${closed.map(a => `  ${a.status === 'done' ? '✓' : '↷'} ${a.title}${a.skipReason ? `  (skipped: ${a.skipReason})` : ''}`).join('\n')}` : ''
       return `${head}${tail}\n\n${ACTION_USAGE}`
     }

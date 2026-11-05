@@ -5,7 +5,8 @@ import type { Gains, Goal, GoalArea, GoalLens } from '../types'
 
 // The goal view of the List tab: one anchor goal ("Making the generosity database better"), the areas of it a job
 // improves (Organizations, Finances, ...) and the lenses of "better" (lower cost, better quality, faster speed).
-// ~/.claude-progress/goal.json holds them per person: {anchor, areas:[{id,name,icon,keywords}], lenses:[{id,name,icon,keywords}]}.
+// ~/.claude-progress/goal.json holds them per person: {anchor, areas:[{id,name,tag,keywords}], lenses:[{id,name,keywords}]}. An `icon` from older files is read and ignored:
+// the panel shows words, never emoji.
 // The panel writes the defaults once when the file is missing, and never overwrites it.
 // A job names its area with `area` and what it made better with `gains` ({cost, quality, speed}) in its progress file
 // or progress_report. With no `area`, the area comes from keywords in its title, why and impact, else Other.
@@ -17,28 +18,31 @@ export const GOAL_REL = '.claude-progress/goal.json'
 export const DEFAULT_GOAL: Goal = {
   anchor: 'Making the generosity database better',
   areas: [
-    { id: 'organizations', name: 'Organizations', icon: '🏢', keywords: ['organization', 'duplicate', 'dedupe', 'merge', 'merged', 'ein', 'eins', 'ntee', 'pub78', 'who exists', 'org once', 'nonprofit list'] },
-    { id: 'finances', name: 'Finances', icon: '💵', keywords: ['finance', 'financial', 'return', 'returns', '990', 'revenue', 'expense', 'assets', 'trend', 'trends', 'flag', 'flags', 'flagged', 'amended', 'filing', 'filings'] },
-    { id: 'boards', name: 'Boards & people', icon: '👥', keywords: ['board', 'boards', 'people', 'person', 'officer', 'member', 'seat', 'seats', 'director', 'trustee', 'compensation', 'interlock'] },
-    { id: 'grants', name: 'Grants', icon: '🎁', keywords: ['grant', 'grants', 'funder', 'funders', 'funds', 'schedule i', 'recipient', 'grantee'] },
-    { id: 'places', name: 'Places', icon: '📍', keywords: ['place', 'places', 'where', 'serve', 'serves', 'location', 'county', 'city', 'geo', 'address', 'map', 'service area'] },
-    { id: 'causes', name: 'Causes', icon: '💚', keywords: ['cause', 'causes', 'label', 'labels', 'labeling', 'classify', 'classifier', 'health care', 'healthcare', 'arts', 'sdg', 'jev', 'lightgbm', 'workforce', 'environment'] },
-    { id: 'answers', name: 'Answer quality', icon: '💬', keywords: ['nombot', 'answer', 'answers', 'eval', 'evals', 'search', 'chat'] },
-    { id: 'tools', name: 'Tools', icon: '🔧', keywords: ['plugin', 'panel', 'status line', 'topology', 'infra', 'setup', 'tools', 'install', 'venv', 'helper', 'machine'] },
+    { id: 'organizations', name: 'Organizations', tag: 'Orgs', keywords: ['organization', 'duplicate', 'dedupe', 'merge', 'merged', 'ein', 'eins', 'ntee', 'pub78', 'who exists', 'org once', 'nonprofit list'] },
+    { id: 'finances', name: 'Finances', tag: 'Finances', keywords: ['finance', 'financial', 'return', 'returns', '990', 'revenue', 'expense', 'assets', 'trend', 'trends', 'flag', 'flags', 'flagged', 'amended', 'filing', 'filings'] },
+    { id: 'boards', name: 'Boards & people', tag: 'Boards', keywords: ['board', 'boards', 'people', 'person', 'officer', 'member', 'seat', 'seats', 'director', 'trustee', 'compensation', 'interlock'] },
+    { id: 'grants', name: 'Grants', tag: 'Grants', keywords: ['grant', 'grants', 'funder', 'funders', 'funds', 'schedule i', 'recipient', 'grantee'] },
+    { id: 'places', name: 'Places', tag: 'Places', keywords: ['place', 'places', 'where', 'serve', 'serves', 'location', 'county', 'city', 'geo', 'address', 'map', 'service area'] },
+    { id: 'causes', name: 'Causes', tag: 'Causes', keywords: ['cause', 'causes', 'label', 'labels', 'labeling', 'classify', 'classifier', 'health care', 'healthcare', 'arts', 'sdg', 'jev', 'lightgbm', 'workforce', 'environment'] },
+    { id: 'answers', name: 'Answer quality', tag: 'Answers', keywords: ['nombot', 'answer', 'answers', 'eval', 'evals', 'search', 'chat'] },
+    { id: 'tools', name: 'Tools', tag: 'Tools', keywords: ['plugin', 'panel', 'status line', 'topology', 'infra', 'setup', 'tools', 'install', 'venv', 'helper', 'machine'] },
   ],
   lenses: [
-    { id: 'cost', name: 'cost', icon: '💲', keywords: ['$', 'cost', 'costs', 'cheaper', 'cheap', 'save', 'saved', 'saves', 'spend', 'free', 'budget'] },
-    { id: 'quality', name: 'quality', icon: '💎', keywords: [] },
-    { id: 'speed', name: 'speed', icon: '🚀', keywords: ['faster', 'quicker', 'sooner', 'speed', 'hours', 'hour', 'minutes', 'mins', 'seconds'] },
+    { id: 'cost', name: 'cost', keywords: ['$', 'cost', 'costs', 'cheaper', 'cheap', 'save', 'saved', 'saves', 'spend', 'free', 'budget'] },
+    { id: 'quality', name: 'quality', keywords: [] },
+    { id: 'speed', name: 'speed', keywords: ['faster', 'quicker', 'sooner', 'speed', 'hours', 'hour', 'minutes', 'mins', 'seconds'] },
   ],
 }
 
 /** Where a job's area did not match any: its own name, else Other. */
-export const OTHER: GoalArea = { id: 'other', name: 'Other', icon: '📦', keywords: [] }
+export const OTHER: GoalArea = { id: 'other', name: 'Other', tag: 'Other', keywords: [] }
 export const LENS_IDS = ['cost', 'quality', 'speed'] as const
 
 const str = (x: unknown) => (typeof x === 'string' && x.trim() ? x.trim() : '')
 const words = (x: unknown) => (Array.isArray(x) ? x.map(str).filter(Boolean).map(w => w.toLowerCase()) : [])
+
+/** An area's short tag when goal.json names none: the first word of its name, at most 8 letters ("Boards & people" -> "Boards"). */
+export const tagOf = (name: string) => (name.split(/[^A-Za-z0-9]+/).find(Boolean) ?? name).slice(0, 8)
 
 /** goal.json as a goal. A missing or bad part falls back to the default's. */
 export function parseGoal(text: string): Goal {
@@ -49,11 +53,11 @@ export function parseGoal(text: string): Goal {
     const r = (a ?? {}) as Record<string, unknown>
     const name = str(r.name)
     const id = slug(str(r.id) || name)
-    return id && name ? [{ id, name, icon: str(r.icon) || '•', keywords: words(r.keywords) }] : []
+    return id && name ? [{ id, name, tag: str(r.tag) || DEFAULT_GOAL.areas.find(d => d.id === id)?.tag || tagOf(name), keywords: words(r.keywords) }] : []
   })
   const lenses = DEFAULT_GOAL.lenses.map((d): GoalLens => {
     const r = ((Array.isArray(raw.lenses) ? raw.lenses : []) as Record<string, unknown>[]).find(x => x && str(x.id).toLowerCase() === d.id)
-    return r ? { id: d.id, name: str(r.name) || d.name, icon: str(r.icon) || d.icon, keywords: Array.isArray(r.keywords) ? words(r.keywords) : d.keywords } : d
+    return r ? { id: d.id, name: str(r.name) || d.name, keywords: Array.isArray(r.keywords) ? words(r.keywords) : d.keywords } : d
   })
   return { anchor: str(raw.anchor) || DEFAULT_GOAL.anchor, areas: areas.length ? areas : DEFAULT_GOAL.areas, lenses }
 }
@@ -88,7 +92,7 @@ export function areaOf(goal: Goal, t: AreaText): GoalArea {
       ?? goal.areas.find(a => slug(a.name).startsWith(k) || k.startsWith(a.id))
     if (hit) return hit
     if (k === OTHER.id) return OTHER
-    return { id: k, name: named, icon: '•', keywords: [] }
+    return { id: k, name: named, tag: tagOf(named), keywords: [] }
   }
   const title = str(t.title).toLowerCase()
   const rest = [t.why, t.impact, t.step].map(x => str(x).toLowerCase()).join(' \n ')
@@ -112,8 +116,8 @@ export function pickGains(v: unknown): Gains | undefined {
   return Object.keys(out).length ? out : undefined
 }
 
-/** One lens a job made better: its icon and name, the line when the job said it, and whether it was inferred. */
-export type LensTag = { id: GoalLens['id']; icon: string; name: string; text: string; inferred: boolean }
+/** One lens a job made better: its name, the line when the job said it, and whether it was inferred. */
+export type LensTag = { id: GoalLens['id']; name: string; text: string; inferred: boolean }
 
 /** The lens an impact's wording points to: cost words first, then speed words, else quality. */
 export function inferLens(goal: Goal, impact: string): GoalLens['id'] {
@@ -134,11 +138,11 @@ export function inferLens(goal: Goal, impact: string): GoalLens['id'] {
  */
 export function lensTags(goal: Goal, gains: Gains | undefined, impact = ''): LensTag[] {
   const g = pickGains(gains)
-  if (g) return goal.lenses.filter(l => g[l.id]).map(l => ({ id: l.id, icon: l.icon, name: l.name, text: g[l.id]!, inferred: false }))
+  if (g) return goal.lenses.filter(l => g[l.id]).map(l => ({ id: l.id, name: l.name, text: g[l.id]!, inferred: false }))
   if (!impact.trim()) return []
   const id = inferLens(goal, impact)
   const l = goal.lenses.find(x => x.id === id)!
-  return [{ id, icon: l.icon, name: l.name, text: '', inferred: true }]
+  return [{ id, name: l.name, text: '', inferred: true }]
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
@@ -153,11 +157,11 @@ export function anchorSummary(done: number, live: number, queued: number): strin
   return parts.length ? parts.join(' · ') : 'Nothing moving yet today'
 }
 
-/** Today's count per lens, in the goal's order: "today: 💎 5 quality · 🚀 2 speed · 💲 1 cost". Empty with none. */
+/** Today's count per lens, most first: "today: 5 quality · 2 speed · 1 cost". Empty with none. */
 export function lensSummary(goal: Goal, tags: LensTag[][]): string {
   const n = (id: string) => tags.filter(t => t.some(x => x.id === id)).length
   const order = [...goal.lenses].sort((a, b) => n(b.id) - n(a.id))
-  const parts = order.filter(l => n(l.id)).map(l => `${l.icon} ${n(l.id)} ${l.name}`)
+  const parts = order.filter(l => n(l.id)).map(l => `${n(l.id)} ${l.name}`)
   return parts.length ? `today: ${parts.join(' · ')}` : ''
 }
 

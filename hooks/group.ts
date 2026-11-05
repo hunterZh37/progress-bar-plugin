@@ -10,17 +10,17 @@ Reads status lines on stdin and prints:
   then any line that is not a job (your own status line) as is.
 Jobs that vanish stay under RUNNING as "just finished" for a minute, then show as "finished HH:MM" for 30 min, unless their last row said starting with no progress.
 A machine status row ("<host> ✓ helper healthy · load 0.22 on 12 cores · idle") is not a job: it prints as one
-"🖥 " line after RUNNING. While a "<host>: ..." job runs or waits, its "idle" reads "busy: N jobs running".
+"machine <host> ..." line after RUNNING. While a "<host>: ..." job runs or waits, its "idle" reads "busy: N jobs running".
 Duplicate rows of one job are merged. A trailing status word (working, starting…) is not part of a job's name.
 A stopped row (■) whose job log ends with a finish line counts as done, not a problem.
 To-dos sort by a leading "N. " (1 first). One ending "(after X)" is dim while a running job matches X. The top ready one per machine says next.
 Folded sections (~/.claude-progress/.state/folded.txt) show as one line with a count, unless PB_UNFOLD=1.
 With --summary it prints one count line instead (the status line does this while the Status panel is on).
-It starts with a red "⛔ N actions needed" while ~/.claude-progress/actions.json has open actions for this project or none.
-Then a yellow "✉ N need you" while ~/.claude-progress/inbox.json lists items not in .state/inbox-handled.txt
+It starts with a red "! N actions needed" while ~/.claude-progress/actions.json has open actions for this project or none.
+Then a yellow "inbox: N need you" while ~/.claude-progress/inbox.json lists items not in .state/inbox-handled.txt
 (the full view, outside the Status panel, starts with that line too).
-Then a cyan "📨 N new" while ~/.claude-progress/channel/received.json lists files not in .state/channel-read.txt (secure channel).
-It ends with "☀ recap ready" while an overnight checkpoint (.state/overnight.json) is 4 h old or the panel saw a sleep.
+Then a cyan "channel: N new" while ~/.claude-progress/channel/received.json lists files not in .state/channel-read.txt (secure channel).
+It ends with "recap ready" while an overnight checkpoint (.state/overnight.json) is 4 h old or the panel saw a sleep.
 RUNNING rows get a spinner, or a yellow "stuck" mark when their numbers have not moved for
 ~/.claude-progress/.state/stuck-minutes (default 10) minutes. Stuck rows sort first.
 Job names link to their progress file, or to a URL from ~/.claude-progress/links.txt ("<regex> | <url>").
@@ -83,7 +83,7 @@ ANSI = re.compile(r'\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;]*m')
 STUCK = re.compile(r'^\s*[◐◓◑◒]?\s*⚠\s*stuck(\s+\S+)?\s+')
 OURS_HEAD = re.compile(r'^[▾▸]\s')
 OURS_ROW = re.compile(r'^  (?:[◐◓◑◒⚠✖■✔▶]|[A-Z][A-Z0-9 _-]*: )')
-OURS_BADGE = re.compile(r'^(?:⛔ \d+ actions? needed|✉ \d+ need you|📨 \d+ new|🖥 )')
+OURS_BADGE = re.compile(r'^(?:(?:⛔ |! )?\d+ actions? needed|(?:✉ |inbox: )\d+ need you|(?:📨 |channel: )\d+ new|🖥 |machine \S+ [✓✗✖!])')
 
 
 def plain(l):
@@ -305,7 +305,7 @@ def action_count(cwd=None):
 
 
 def action_label(n):
-    return '\033[1;31m⛔ ' + str(n) + ' action' + ('' if n == 1 else 's') + ' needed\033[0m'
+    return '\033[1;31m! ' + str(n) + ' action' + ('' if n == 1 else 's') + ' needed\033[0m'
 
 
 def parse_todo(text, running=()):
@@ -507,13 +507,13 @@ def main(stdin, now, summary=False):
         n_err = ev.unseen(now) if ev else 0
         line = summary_line(groups, sum(len(v) for v in todo.values()), sum(1 for l in groups['running'] if stuck_for(l) is not None), n_err)
         if recap_ready(now):
-            line += ' · \033[2m☀ recap ready\033[0m'
+            line += ' · \033[2mrecap ready\033[0m'
         n_mail = inbox_count()
         n_chan = channel_count()
         if n_chan:
-            line = '\033[36m📨 ' + str(n_chan) + ' new\033[0m · ' + line
+            line = '\033[36mchannel: ' + str(n_chan) + ' new\033[0m · ' + line
         if n_mail:
-            line = '\033[33m✉ ' + str(n_mail) + ' need you\033[0m · ' + line
+            line = '\033[33minbox: ' + str(n_mail) + ' need you\033[0m · ' + line
         n_act = action_count()
         if n_act:
             line = action_label(n_act) + ' · ' + line
@@ -523,10 +523,10 @@ def main(stdin, now, summary=False):
         out.append(action_label(n_act))
     n_mail = inbox_count()
     if n_mail and os.environ.get('PB_FULL') != '1':
-        out.append('\033[33m✉ ' + str(n_mail) + ' need you\033[0m')
+        out.append('\033[33minbox: ' + str(n_mail) + ' need you\033[0m')
     n_chan = channel_count()
     if n_chan and os.environ.get('PB_FULL') != '1':
-        out.append('\033[36m📨 ' + str(n_chan) + ' new\033[0m')
+        out.append('\033[36mchannel: ' + str(n_chan) + ' new\033[0m')
     if todo:
         n_items = sum(len(v) for v in todo.values())
         if 'todo' in folded:
@@ -543,7 +543,7 @@ def main(stdin, now, summary=False):
 
 
 def machine_line(l, groups):
-    """A machine status row as "🖥 <host> ✓ helper healthy · load ...". The helper's own "idle" comes from its load
+    """A machine status row as "machine <host> ✓ helper healthy · load ...". The helper's own "idle" comes from its load
     alone, so while a "<host>: ..." job runs or waits here it reads "busy: N jobs running" (busy processes, "N% CPU"
     rows, count only when no job does)."""
     t = re.sub(r'^[▶✔]\s*', '', plain(l)).strip()
@@ -554,7 +554,7 @@ def machine_line(l, groups):
     n, what = (len(jobs), 'job') if jobs else (len(rows), 'process')
     if n:
         t = re.sub(r'\s*·\s*idle\s*$', '', t) + ' · busy: ' + str(n) + ' ' + what + ('' if n == 1 else ('es' if what == 'process' else 's')) + ' running'
-    return '🖥 ' + t
+    return 'machine ' + t
 
 
 WATCHER = re.compile(r'\b(watcher|watching|watch|monitor|monitoring)\b', re.I)

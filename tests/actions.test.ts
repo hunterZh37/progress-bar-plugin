@@ -136,7 +136,7 @@ test('parseAdd: title and flags, values run to the next flag, pipes kept', () =>
 
 test('blockText names the action, the command and how to go on, no semicolons or em dashes', () => {
   const t = blockText([A({ id: 'a', title: 'Swap the build', why: 'users see the fix', command: 'make swap', check: 'test -e x' }), A({ id: 'b', title: 'b' })])
-  expect(t).toContain('⛔ Action needed: Swap the build')
+  expect(t).toContain('Action needed: Swap the build')
   expect(t).toContain('Run: make swap')
   expect(t).toContain('type done')
   expect(t).toContain('skip <reason>')
@@ -151,7 +151,7 @@ test('gate: a prompt is held, slash commands pass, done clears an action with no
   const ran = world(on, files, new Set())
   await start($)
   const r1 = await submit($, 'fix the header')
-  expect(r1.drop).toContain('⛔ Action needed: Log in to Vercel')
+  expect(r1.drop).toContain('Action needed: Log in to Vercel')
   expect(r1.drop).toContain('Run: vercel login')
   const slash = await $.prompt.submit({ text: '/progress-bar action list', origin: { kind: 'composer' }, wait: false, command: { name: 'progress-bar', args: 'action list' } } as never) as { drop?: string }
   expect(slash.drop).toBeUndefined()
@@ -218,7 +218,7 @@ test('action_add tool: writes the action, opens the Action needed pane, notifies
   expect(pb.argv).toEqual(['pbcopy'])
   expect(pb.stdin).toBe('echo "a\'b" && make swap')
   const list = (await $.command.run({ command: 'progress-bar', args: 'action list', ...CMD })).text
-  expect(list).toContain('⛔ 1 action needed')
+  expect(list).toContain('1 action needed')
   expect(list).toContain('Run: echo')
 })
 
@@ -249,7 +249,7 @@ test('panel: red banner first on the List tab with Copy, I ran it and Skip', asy
   await start($)
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
   const t = (await ui.findAll({ type: 'Text' })).map(x => x.text ?? '')
-  expect(t).toContain('⛔ Action needed')
+  expect(t).toContain('Action needed')
   expect(t).toContain('Swap in the NomBot build')
   expect(t.some(x => x.startsWith('$ cd ~/x'))).toBe(true)
   await ui.press({ key: 'act-ran-a1' })
@@ -259,7 +259,7 @@ test('panel: red banner first on the List tab with Copy, I ran it and Skip', asy
   await ui.press({ key: 'act-skip-a1' })
   expect(parseActions(files[AF]!)[0]!.status).toBe('skipped')
   const t2 = (await ui.findAll({ type: 'Text' })).map(x => x.text ?? '')
-  expect(t2).not.toContain('⛔ Action needed')
+  expect(t2).not.toContain('Action needed')
 })
 
 test('Run: slash commands and command-less actions have no Run, shell commands do', () => {
@@ -294,7 +294,7 @@ test('the Action needed pane: title, why, command and Run, Copy, I ran it, Later
   await start($)
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: ACTION_PANE, props: { ...PANE_PROPS, title: 'Action needed' } })
   const t = (await ui.findAll({ type: 'Text' })).map(x => x.text ?? '')
-  expect(t).toContain('⛔ Action needed')
+  expect(t).toContain('Action needed')
   expect(t).toContain('Swap the build')
   expect(t).toContain('Why: ships the fix')
   expect(t).toContain('$ make swap')
