@@ -13,9 +13,9 @@ The progress-bar plugin draws a bar for every progress file in `~/.claude-progre
 
 ## Always say which part of the goal gets better, and how
 
-The Status panel groups every job under an area of the person's goal (`~/.claude-progress/goal.json`, for example "Making the generosity database better" with areas Organizations, Finances, Boards & people, Grants, Places, Causes, Answer quality, Tools). Anyone should be able to read it at a glance. On every job, set:
+The Status panel marks every job with an area of the person's goal (`~/.claude-progress/goal.json`, for example "Making the generosity database better" with areas Organizations, Finances, Boards & people, Grants, Places, Causes, Answer quality, Tools). Anyone should be able to read it at a glance. On every job, set:
 
-- **area**: the goal area it improves, by name (`Boards & people`). Pick from goal.json's areas. Never leave it out: a guess from keywords can land a job in the wrong place.
+- **area**: the goal area it improves, by name (`Boards & people`). Pick from goal.json's areas. Never leave it out: a guess from keywords can mark a job with the wrong area.
 - **title**: the improvement itself, in plain words, not the machine or the mechanism (`Every board member counted, not just 25`).
 - **gains**: which of cost, quality, speed the job makes better, each a short plain line with a number when possible: `{"quality": "1.65M more board seats counted", "speed": "labels in 7h instead of 12h", "cost": "$14 of Jev instead of 34h of Claude"}`. Name only the ones that apply.
 - **impact** (before it ends): how the database, or whatever the goal names, is better now, with the key number.

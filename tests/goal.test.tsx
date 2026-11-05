@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { PANE, fitLabel, rowCol } from '../hooks/panel'
+import { PANE, cells, fitLabel, rowCol } from '../hooks/panel'
 import { DEFAULT_GOAL, GOAL_REL, OTHER, anchorSummary, areaOf, areaSummary, groupByArea, inferLens, lensSummary, lensTags, parseGoal, pickGains, plainTitle } from '../hooks/goal'
 import { parseDone } from '../hooks/done'
 import { reportBody } from '../hooks/report'
@@ -62,8 +62,10 @@ test('area inference: a named area wins, else keywords (title counts double), el
   expect(area({ title: 'One return per org and year, amended returns replace originals' })).toBe('Finances')
   expect(area({ title: "Know where more orgs serve, places beyond today's 77K" })).toBe('Places')
   expect(area({ title: 'Check NomBot answers stay right on the bigger database, eval rerun' })).toBe('Answer quality')
-  // Keywords start a word: "ein" is not found inside "being", "map" not inside "mapping"'s neighbors.
+  // Keywords are whole words: "ein" is not found inside "being".
   expect(area({ title: 'being careful' })).toBe('Other')
+  // Whole words or plurals only: "personal-mac" is not a person.
+  expect(area({ title: 'Save a claude setup-token on personal-mac' })).toBe('Tools')
   expect(areaOf(G, { title: 'nothing to see' })).toBe(OTHER)
   // A named area beats the keywords: by name, id or a name's start, any case.
   expect(area({ area: 'Tools', title: 'Grants for boards' })).toBe('Tools')
@@ -122,7 +124,7 @@ const FULL = [
   '  grants-rematch · finished 10:12',
 ].join('\n')
 
-test('the List tab: the anchor, areas with plain rows, impact under done rows, gains as tags; goal.json written once', async ($, on) => {
+test('the List tab: the anchor and area chips, then the sections with area icons, plain rows, impact under done rows, gains as tags; goal.json written once', async ($, on) => {
   const files: Record<string, string> = {
     [SCRIPT]: statusScript(), [FLAG]: 'on\n',
     [`${DIR}/todo.txt`]: '[hunty]\n1. Know where more orgs serve (after hunty-board-seats)\n',
@@ -140,31 +142,33 @@ test('the List tab: the anchor, areas with plain rows, impact under done rows, g
   expect(lines[at(/🎯/)]).toBe('🎯 Making the generosity database better')
   expect(lines[at(/🎯/) + 1]).toBe('   1 improvement done today · 2 in progress · 1 queued')
   expect(lines[at(/🎯/) + 2]).toBe('   today: 💎 1 quality')
-  // Areas in the goal's order, each saying what is getting better.
-  expect(lines.filter(l => /^▾ /.test(l))).toEqual([
-    '▾ 👥 Boards & people  1 improving',
-    '▾ 🎁 Grants  1 done today',
-    '▾ 📍 Places  1 queued',
-    '▾ 🔧 Tools  1 improving',
-    '▾ ☐ TO-DO BY MACHINE  1',
-  ])
-  // A plain row: the improvement without its machine, a thin bar, then tags, time left and the why under it.
+  // One line of area chips in the goal's order: in progress ◒, done ✓, only queued ○.
+  expect(lines[at(/🎯/) + 3]).toBe('   👥 1 ◒  🎁 1 ✓  📍 1 ○  🔧 1 ◒')
+  // Then the familiar sections, in order.
+  expect(lines.filter(l => /^▾ /.test(l))).toEqual(['▾ ☐ TO-DO  1', '▾ ▶ RUNNING  2', '▾ ✔ DONE  1'])
+  // A plain row: its area icon, the improvement without its machine, a thin bar, then tags, time left and the why under it.
   const col = rowCol(60)
-  expect(lines[at(/Board lists/)]).toBe(`  ◐ ▸ ${fitLabel('Board lists past 25 seats', col)}  ━━━━━─────  50%`)
-  expect(lines[at(/Board lists/) + 1]).toBe('      💎 10m left · Whole boards, not just 25')
+  expect(lines[at(/Board lists/)]).toBe(`  ◐ 👥 ▸ ${fitLabel('Board lists past 25 seats', col)}  ━━━━━─────  50%`)
+  expect(lines[at(/Board lists/) + 1]).toBe('         💎 10m left · Whole boards, not just 25')
   // Done reads like a changelog: the impact under the title, its inferred lens dim.
-  expect(lines[at(/Grant rematch/)]).toBe('  ✓ ▸ Grant rematch  10:12')
-  expect(lines[at(/Grant rematch/) + 1]).toBe('      💎 42K more grants linked to the orgs that got them')
+  expect(lines[at(/Grant rematch/)]).toBe('  ✓ 🎁 ▸ Grant rematch  10:12')
+  expect(lines[at(/Grant rematch/) + 1]).toBe('         💎 42K more grants linked to the orgs that got them')
   const tag = (await ui.findAll({ type: 'Text' })).find(t => t.text === '💎 ' && (t as unknown as { props?: { dimColor?: boolean } }).props?.dimColor)
   expect(tag).toBeDefined()
-  // Queued to-dos sit under their area too, without blockers or machines.
-  expect(lines[at(/Places/) + 1]).toBe('  ○ Know where more orgs serve')
-  expect(lines.some(l => /Quiet today: Organizations, Finances, Causes, Answer quality/.test(l))).toBe(true)
-  // Opened, the card shows the machine and the named gains.
+  // To-dos keep machines, priority and blockers, with the area icon.
+  expect(lines[at(/Know where/)]).toBe('    ⏸  1.  📍 Know where more orgs serve')
+  // A chip filters every section to its area.
+  await ui.press({ key: 'chip-grants' })
+  const only = draw((await ui.find({ type: 'Box' })) as never)
+  expect(only.filter(l => /^▾ /.test(l))).toEqual(['▾ ☐ TO-DO  0', '▾ ▶ RUNNING  0', '▾ ✔ DONE  1'])
+  expect(only.some(l => /Board lists/.test(l))).toBe(false)
+  await ui.press({ key: 'chip-grants' })
+  // Opened, the card shows the machine, the named gains and the area.
   await ui.press({ key: 'open-hunty-board-seats' })
   const open = draw((await ui.find({ type: 'Box' })) as never)
   expect(open).toContain('    Hunty board lists past 25 seats   ⚙  job')
   expect(open).toContain('    💎 quality: 1.65M more board seats counted')
+  expect(open).toContain('    area: 👥 Boards & people')
   await ui.unmount()
 })
 
@@ -176,8 +180,8 @@ test('goal.json: a custom file is read and never overwritten', async ($, on) => 
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: props(60) })
   const lines = draw((await ui.find({ type: 'Box' })) as never)
   expect(lines).toContain('🎯 Ship the app')
-  expect(lines).toContain('▾ 🔑 Login  1 improving')
-  expect(lines.some(l => /^▾ 📦 Other/.test(l))).toBe(true)
+  expect(lines).toContain('   🔑 1 ◒  📦 1 ◒ 1 ✓')
+  expect(lines.some(l => /^  ◐ 🔑 ▸ Tidy up/.test(l))).toBe(true)
   expect(files[`${HOME}/${GOAL_REL}`]).toBe(mine)
   await ui.unmount()
 })
@@ -193,9 +197,11 @@ test('narrow pane: every plain row still fits at 30 columns', async ($, on) => {
   const lines = draw((await ui.find({ type: 'Box' })) as never)
   const rows = lines.filter(l => /[━─]{3}/.test(l) && /%$/.test(l))
   expect(rows.length).toBe(2)
-  for (const r of rows) expect([...r].length).toBeLessThanOrEqual(30)
-  for (let w = 30; w <= 120; w++) for (const ind of [0, 4]) expect(ind + 4 + 2 + rowCol(w, ind) + 12 + 5).toBeLessThanOrEqual(Math.max(w, 30))
-  expect(rowCol(30)).toBe(7)
+  // The area icon is 2 cells wide.
+  for (const r of rows) expect(cells(r)).toBeLessThanOrEqual(30)
+  // A top row fits from 30 columns, a child row (4 deeper) from 34.
+  for (let w = 30; w <= 120; w++) for (const ind of [0, 4]) if (w >= 30 + ind) expect(ind + 4 + 3 + 2 + rowCol(w, ind) + 12 + 5).toBeLessThanOrEqual(w)
+  expect(rowCol(30)).toBe(4)
   expect(rowCol(200)).toBe(40)
   await ui.unmount()
 })

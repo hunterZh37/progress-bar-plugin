@@ -17,8 +17,8 @@ export const GOAL_REL = '.claude-progress/goal.json'
 export const DEFAULT_GOAL: Goal = {
   anchor: 'Making the generosity database better',
   areas: [
-    { id: 'organizations', name: 'Organizations', icon: '🏢', keywords: ['organization', 'duplicate', 'dedupe', 'merge', 'ein', 'eins', 'ntee', 'pub78', 'who exists', 'org once', 'nonprofit list'] },
-    { id: 'finances', name: 'Finances', icon: '💵', keywords: ['finance', 'financial', 'return', 'returns', '990', 'revenue', 'expense', 'assets', 'trend', 'trends', 'flag', 'flags', 'amended', 'filing', 'filings'] },
+    { id: 'organizations', name: 'Organizations', icon: '🏢', keywords: ['organization', 'duplicate', 'dedupe', 'merge', 'merged', 'ein', 'eins', 'ntee', 'pub78', 'who exists', 'org once', 'nonprofit list'] },
+    { id: 'finances', name: 'Finances', icon: '💵', keywords: ['finance', 'financial', 'return', 'returns', '990', 'revenue', 'expense', 'assets', 'trend', 'trends', 'flag', 'flags', 'flagged', 'amended', 'filing', 'filings'] },
     { id: 'boards', name: 'Boards & people', icon: '👥', keywords: ['board', 'boards', 'people', 'person', 'officer', 'member', 'seat', 'seats', 'director', 'trustee', 'compensation', 'interlock'] },
     { id: 'grants', name: 'Grants', icon: '🎁', keywords: ['grant', 'grants', 'funder', 'funders', 'funds', 'schedule i', 'recipient', 'grantee'] },
     { id: 'places', name: 'Places', icon: '📍', keywords: ['place', 'places', 'where', 'serve', 'serves', 'location', 'county', 'city', 'geo', 'address', 'map', 'service area'] },
@@ -66,11 +66,11 @@ export async function readGoal($: EngineInterface, h: string): Promise<Goal> {
   return DEFAULT_GOAL
 }
 
-/** Whether `kw` starts a word in `text` (both lower case). A keyword that starts with a sign ("$") matches anywhere. */
+/** Whether `kw` is a word in `text` (both lower case), or its plural ("person" finds "persons", not "personal"). A keyword that starts with a sign ("$") matches anywhere. */
 function hits(text: string, kw: string): boolean {
   if (!/^[a-z0-9]/.test(kw)) return text.includes(kw)
   const esc = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return new RegExp(`(^|[^a-z0-9])${esc}`).test(text)
+  return new RegExp(`(^|[^a-z0-9])${esc}(s|es)?(?![a-z0-9])`).test(text)
 }
 
 export type AreaText = { area?: string; title?: string; why?: string; impact?: string; step?: string }

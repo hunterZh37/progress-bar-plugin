@@ -26,7 +26,7 @@ Live progress bars and a to-do list in the Claude Code status line. One line per
 - **Auto-next:** when a job finishes, the top ready to-do of its machine starts by itself (or is suggested, the default).
 - **Links:** job names open their progress file, or a URL you set in `links.txt`.
 - **Status line:** a small script prints all this above your existing status line.
-- **Status panel:** an optional docked pane beside the chat that anyone can read at a glance: the goal on top (`🎯 Making the generosity database better`), then each area of it with what is getting better, in plain words (see **Goal view**). The status line shrinks to one line.
+- **Status panel:** an optional docked pane beside the chat that anyone can read at a glance: the goal on top (`🎯 Making the generosity database better`), then area chips and the familiar TO-DO, RUNNING, WAITING and DONE sections, each row marked with the area it improves (see **Goal view**). The status line shrinks to one line.
 - **Area and gains:** a job says which part of the goal it improves (`area`) and which of cost, quality, speed it makes better (`gains`), so the panel can group it and tag it.
 - **Connectors:** a second tab in the panel shows which MCP connectors are connected, need sign-in or failed.
 - **GitHub:** a third tab shows the session repo's branch, other branches and recent commits. Click one to open it on GitHub.
@@ -255,31 +255,33 @@ The first match wins. Clicking needs a terminal with link support (iTerm2, WezTe
 
 ## Goal view
 
-The List tab answers one question for anyone who looks at it: how is each task making the goal better? It opens with the anchor, then each area of the goal with what is getting better in it.
+The List tab answers one question for anyone who looks at it: how is each task making the goal better? The anchor sits on top, then one line of area chips, then the familiar sections.
 
 ```
 🎯 Making the generosity database better
-   6 improvements done today · 5 in progress · 7 queued
+   8 improvements done today · 6 in progress · 7 queued
    today: 💎 5 quality · 🚀 2 speed · 💲 1 cost
+   🏢 1 ○  👥 2 ✓  🎁 2 ✓  📍 1 ◒  💚 3 ◒  🔧 2 ◒ 3 ✓
 
-▾ 🎁 Grants  1 improving, 1 queued
-  ◓ ▸ Grants linked to own filer           ━━━━━━━───  67%
-      38m so far · $6.3B of Schedule I grants point back at the funder
-  ○ Link more grants to the orgs that got them
+▾ ▶ RUNNING  5
+  ◑ 📍 ▸ Places for more orgs        ━━━━━─────  50%
+         💎 18m so far · Know where more orgs serve, beyond today's 77K
+  ◑ 💚 ▸ Label top-ups 2021-23       ━━━━━━━━━─  95%
+         1h17m left · Cause labels for orgs added by the 2021-23 IRS load
 
-▾ 👥 Boards & people  2 done today
-  ✓ ▸ Board lists past 25 seats  12:44
-      💎 1.65M more board seats counted
+▾ ✔ DONE  10
+  ✓ 👥 ▸ Board lists past 25 seats  12:44
+         💎 1.65M more board seats counted
 ```
 
-- **Anchor:** the goal in plain words, then today's progress: improvements done (the DONE rows), jobs in progress (running and waiting), to-dos queued. A third line counts today's done jobs per lens of better: cost, quality, speed.
-- **Areas:** each job sits under the part of the goal it improves, with a plain summary (`1 improving, 2 done today, 1 queued`). Areas show in the goal's order, an area a job named that the goal lacks after them, `Other` last. Areas with nothing today are named on one dim `Quiet today:` line. Press an area's header, or its hotkey (`1`, `2`... in the order they show), to fold it.
+- **Anchor:** the goal in plain words, then today's progress: improvements done (the DONE rows), jobs in progress (running and waiting), to-dos queued. The next line counts today's done jobs per lens of better: cost, quality, speed.
+- **Area chips:** one chip per area with something today, in the goal's order: `◒` in progress, `✓` done, `○` only queued. Press a chip to show only that area in every section (`showing 👥 Boards & people only`), press it again for all. The section counts follow the filter. Chips wrap in a narrow pane.
+- **Sections as always:** TO-DO (per machine, priorities, blockers, the menu), PROBLEMS, RUNNING, WAITING, DONE, with the same headers, hotkeys and folding as before. Inside a section, rows cluster by area in the goal's order, `Other` last. To-dos keep their priority order.
+- **Area icon:** every row, to-dos and checked-off to-dos too, shows its area's icon before its title. An opened card names the area in full.
 - **Plain rows:** the title is the improvement, with its machine left out (`Hunty grants linked to own filer` reads `Grants linked to own filer`). Under it, one dim line: lens icons, time left (or stuck, or what it waits on), then the why. Machine, id, badge, step, counts, load and tool counts show only in the opened card, like the Topology tab.
 - **Done rows read like a changelog:** the impact's first line sits dim under the title. Opened, the rest of the impact, the named gains, finish and run time with the machine, and what it unlocked.
-- **Queued:** open to-dos sit under their area as dim `○` lines. **TO-DO BY MACHINE** below keeps the full list per machine with priority, blockers and the menu.
-- **Lenses:** a job's `gains` show as icons on its row (💲 cost, 💎 quality, 🚀 speed), and as `💎 quality: <line>` in its opened card. A done job without `gains` gets one lens from its impact's wording, drawn dim as a guess: cost words (`$`, cost, cheaper, saved) first, then speed words (faster, hours, a time like `7h`), else quality.
-- **Folded in the status line:** a RUNNING, WAITING or DONE section folded with `/progress-bar fold` keeps its rows out of the areas and shows `▸ ▶ RUNNING  3 hidden, press to show`.
-- **Machines:** the helper machine lines are one dim `▸ 🖥 hunty ✓` button at the end. Press it for their load.
+- **Lenses:** a job's `gains` show as icons on its second line (💲 cost, 💎 quality, 🚀 speed), and as `💎 quality: <line>` in its opened card. A done job without `gains` gets one lens from its impact's wording, drawn dim as a guess: cost words (`$`, cost, cheaper, saved) first, then speed words (faster, hours, a time like `7h`), else quality.
+- **Machines:** the helper machine lines are one dim `▸ 🖥 hunty ✓` button under the tabs. Press it for their load.
 
 ### goal.json
 
@@ -301,7 +303,7 @@ The List tab answers one question for anyone who looks at it: how is each task m
 ```
 
 - **Defaults:** Organizations (who exists, duplicates, NTEE), Finances (returns, trends, flags), Boards & people, Grants (who funds whom), Places (where orgs serve), Causes (cause labels), Answer quality (NomBot answers, evals), Tools (plugin, infra, setup).
-- **Matching:** a job's `area` matches an area's id or name, any case, or the start of a name (`Boards` finds `Boards & people`). A name that matches none becomes its own area. Without `area`, each keyword found at the start of a word counts 2 in the title and 1 in the why, impact or step. The top score wins, ties go to the area listed first.
+- **Matching:** a job's `area` matches an area's id or name, any case, or the start of a name (`Boards` finds `Boards & people`). A name that matches none becomes its own area. Without `area`, each keyword found as a whole word or its plural (`person` finds `persons`, not `personal`) counts 2 in the title and 1 in the why, impact or step. The top score wins, ties go to the area listed first.
 - **Lenses:** the three ids are fixed (`cost`, `quality`, `speed`). Change their names, icons or the words that infer them. Icons are emoji every terminal draws two cells wide.
 - `goal` is a data file name, so no progress file or `progress_report` slug may take it.
 
@@ -311,18 +313,21 @@ On by default. Shows the full groups in a docked pane named **Status**, and shri
 
 ```
 🎯 Making the generosity database better
-   2 improvements done today · 1 in progress · 2 queued
+   1 improvement done today · 1 in progress · 2 queued
+   🔧 1 ◒ 1 ✓  📦 2 ○
 
-▾ 🔧 Tools  1 improving, 2 done today
-  ⚠ ▸ Nightly import                       ━━━━━━━━──  80%
-      ⚠ stuck 14m · the morning dashboard
-  ✓ ▸ Docs site  11:27
-      Docs rebuilt: 412 pages
-
-▾ ☐ TO-DO BY MACHINE  2
+▾ ☐ TO-DO  2
   You
-    ○ Review the deploy PR
-    ○ Sign in to the dashboard
+    ○ 📦 Review the deploy PR
+    ○ 📦 Sign in to the dashboard
+
+▾ ▶ RUNNING  1
+  ⚠ 🔧 ▸ Nightly import                 ━━━━━━━━──  80%
+         ⚠ stuck 14m · the morning dashboard
+
+▾ ✔ DONE  1
+  ✓ 🔧 ▸ Docs site  11:27
+         Docs rebuilt: 412 pages
 ```
 
 The status line then reads:
@@ -335,16 +340,16 @@ The status line then reads:
 
 - **Runs the script:** the panel runs `~/.claude/progress-bar/statusline.sh` with `PB_FULL=1` every second while it is open. The first session writes that script, and `panel on` refreshes it and `group.py` and keeps your chained status line.
 - **Never blank:** when the script fails, or prints nothing but an error, the panel shows the reason (for example `Status script failed (exit 1): <first stderr line>`). A pane that cannot draw says why instead of nothing.
-- **Fold:** press a header, or its hotkey. Hotkeys count `1`, `2`, `3`... in the order the headers show (the areas, then TO-DO BY MACHINE and PROBLEMS). An area folds in the panel only. TO-DO BY MACHINE and PROBLEMS write `~/.claude-progress/.state/folded.txt`, the same file `/progress-bar fold` uses.
+- **Fold:** press a header, or its hotkey. Hotkeys count `1`, `2`, `3`... in the order the sections show (to-do, problems, running, waiting, done, whichever are there). It writes `~/.claude-progress/.state/folded.txt`, the same file `/progress-bar fold` uses.
 - **On by default:** the first session writes `~/.claude-progress/.state/panel-on`. With that file the pane opens at session start and the status line prints the summary. `panel off` deletes it, writes `.state/panel-off` so the default never turns it back on, and closes the pane. `panel on` undoes that. With **Open the Status panel** off in `/config`, nothing is written and `/progress-bar` opens it once.
-- **To-do menu:** click a to-do for Done, Up, Down, Start (a ready machine item), Delete or Move back to to-do (a checked-off one). It edits this project's list, on the line that still holds that item's text, so a line added since the panel drew never hits the wrong item. TO-DO lists open items only. Checked-off ones move to **Checked-off to-dos** after the areas.
-- **Rows:** grouped by area (see **Goal view**). Running jobs a line and a dim why each, a press opening the details (see **Running cards**), done jobs with their finish time and impact (see **Done rows**). To-dos one per line under each owner in TO-DO BY MACHINE.
+- **To-do menu:** click a to-do for Done, Up, Down, Start (a ready machine item), Delete or Move back to to-do (a checked-off one). It edits this project's list, on the line that still holds that item's text, so a line added since the panel drew never hits the wrong item. TO-DO lists open items only. Checked-off ones move to DONE under **Checked-off to-dos**, after finished jobs, and count there.
+- **Rows:** each with its area icon, clustered by area (see **Goal view**). To-dos one per line under each owner, running jobs a line and a dim why each, a press opening the details (see **Running cards**), done jobs with their finish time and impact (see **Done rows**).
 - **Status line on:** after **▶ Turn on status line**, the answer (`Status line on: ...`) shows for 3 minutes, then clears.
 - **Tabs:** icons, `☰ List  🔌  ⎇  📜  💬  🌐`. The shown tab adds its name in bold. **☰ List** (the default) shows the goal view above. **🔌 Connectors** shows your connectors, adding `!N` when N need attention (`🔌 !2`). **⎇ GitHub** shows your repos. **📜 Log** shows the events log, adding `!N` for unseen errors. **💬 Chat** adds the unread count (`💬 3`). **🌐 Topology** shows your machines. The icons are one cell (☰ ⎇) or emoji that every terminal draws two cells wide, so the row stays the same width everywhere and leaves room for the usage meter.
 
 ## Done rows
 
-Each finished job sits under its area as a button, `✓ ▸ <title>  11:27`, with its impact's first line dim under it. The title comes from its done record, else its progress file or `titles.txt`, else its id made readable (`hunty: hunty-board-cap-extract` reads `Hunty: Board cap extract`). Press it to open what it changed:
+Each finished job under DONE is a button, `✓ 👥 ▸ <title>  11:27`, with its impact's first line dim under it. The title comes from its done record, else its progress file or `titles.txt`, else its id made readable (`hunty: hunty-board-cap-extract` reads `Hunty: Board cap extract`). Press it to open what it changed:
 
 ```
 ✓ ▾ Board links rebuild  11:50
@@ -357,7 +362,7 @@ Each finished job sits under its area as a button, `✓ ▸ <title>  11:27`, wit
 - **Impact:** the job's `impact` lines, or an agent's short report, each wrapped under its indent. The first line shows before the row is opened. `no impact reported` when there is none. Named `gains` follow as `💎 quality: …`.
 - **Time and machine:** `finished HH:MM · ran 1h20m` from the record's `started` and `finished`, then the machine badge (the record's, else the row's `<host>:`, else this machine).
 - **Why:** `unlocks: …` when the job had a `why`.
-- **Which rows:** the grouper's finished rows (30 minutes), then done records from the last 12 hours not shown yet and not running again, newest first, 20 rows at most. The anchor counts them as done today.
+- **Which rows:** the grouper's finished rows (30 minutes), then done records from the last 12 hours not shown yet and not running again, newest first, 20 rows at most. The header and the anchor count them.
 - **Older agents:** an agent that finished before the plugin kept records gets one from its transcript (this session's `subagents` folder) the first time its row is opened.
 - **Remote jobs:** a `<host>: name` row has a record only on the machine that ran it. Here it opens to `no impact reported` with its finish time.
 
@@ -403,9 +408,9 @@ Waiting jobs draw no bar: `⏸ ▸ <title>`, then a dim line `<how long> · <why
   - **Login only:** it uses your default login. `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `CLAUDE_CONFIG_DIR` are unset for the call, and a run that reports an API key is thrown away. It counts toward your plan's use, about 3.5k tokens a call (about $0.0006 at API prices), so about 48 calls a day at most.
   - **Plan name:** `claude auth status` gives the plan, so the meter reads `Team`, `Pro` and so on. No token is read.
   - **Failure:** offline or logged out, the old reading stays and nothing is shown.
-- **Count:** the anchor counts top-level jobs as in progress. Nested ones are not counted.
+- **Count:** the RUNNING header counts top-level lines and notes nested ones, as `RUNNING  4 (+3 sub-jobs)`. With an area chip pressed it counts that area's lines.
 - **Machine:** left out of the line (`Hunty grants linked` reads `Grants linked`). The opened card names it, like `Hunty: Similar orgs   🖥  on hunty`. Remote machines come from `<host>: name` rows, the to-do headings and topology.json. The local one is the `[mac]` or `[local]` heading.
-- **Line:** a mark, `▸ <title>`, a 10-cell bar and the percent. Under it one dim note: lens icons, then `N left`, the run time, `Nm so far`, `waiting on X`, or a yellow `⚠ stuck Nm`, then ` · <why>`. The why is cut with `…` to fit, and the bar never wraps.
+- **Line:** a mark, the area icon, `▸ <title>`, a 10-cell bar and the percent. Under it one dim note: lens icons, then `N left`, the run time, `Nm so far`, `waiting on X`, or a yellow `⚠ stuck Nm`, then ` · <why>`. The why is cut with `…` to fit, and the bar never wraps.
 - **Time so far:** from the job's real start: `startedAt` in its progress file, else the file's birth time, else when the plugin first saw it (kept in `~/.claude-progress/.state/job-track.json`). Never from the file's last write.
 - **Time left:** a reported time left wins. An item count (over 20) gets one from its rate: items done since the plugin first saw it over the time since (once that is 5 minutes old), else a rate in its step (`7,196/h`), else its average since a known start. A job of 20 steps or fewer gets no estimate, since its steps take uneven time and no estimate beats a wrong one.
 - **Short title:** `title` from the progress file or `titles.txt`, cut at ` · `, its machine word left out. Without a title the job id made readable.
