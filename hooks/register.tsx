@@ -8,6 +8,7 @@ import { inboxCommand } from './inbox'
 import { chainable } from './chain'
 import { SNIPPET, installedPrev, writeLib } from './setup'
 import { resolveHome } from './home'
+import { USAGE_CHECK, probeUsage } from './usage'
 import { macClicks, parseMacClicks } from './mac'
 import { checkpointCommand, noteStatusLine, panelCommand, registerPanel, startPanel } from './panel'
 import { FRESH_MS, eta, expandHome, lines, parseProgress, parseWatch, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
@@ -543,6 +544,9 @@ export const register: Register = (on, options) => {
     // Action needed: checks every 30 s, and the in-app pane for actions not shown in the last 10 min.
     void tickActions($, home).catch(() => undefined)
     $.clock.every(CHECK_EVERY, () => tickActions($, home))
+    // Usage meter: a fresh reading when the saved one is over 30 min old, one session per machine.
+    void probeUsage($, home).catch(() => undefined)
+    $.clock.every(USAGE_CHECK, () => probeUsage($, home))
     return next(e)
   })
 

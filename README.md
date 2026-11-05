@@ -302,7 +302,12 @@ WAITING jobs use the same one-line card, with a dim yellow `⏸` in place of the
 Claude Max this week  ██████░░░░  62% used
 ```
 
-- **Max meter:** `Claude Max this week` reads `Max 7-day used N%` (or `7d N%`) from running lines. With no job reporting it, the last reading stays for up to 7 days with its time, like `22% used · as of 12:39` (saved in `~/.claude-progress/.state/max-usage.json`).
+- **Usage meter:** `Claude Max this week` reads `Max 7-day used N%` (or `7d N%`) from running lines. With no job reporting it, the last reading stays for up to 7 days with its time, like `22% used · as of 12:39` (saved in `~/.claude-progress/.state/max-usage.json`).
+- **Fresh every 30 min:** when the saved reading is over 30 minutes old, the plugin takes its own. At session start and every 5 minutes it checks the age. One session per machine does the check (a lock folder, `.state/max-usage.probe`).
+  - **How:** one tiny Haiku call, `claude -p` with `--tools ""`, `--strict-mcp-config`, `--setting-sources ""` and `--no-session-persistence`, run in an empty temp folder. It reads the 7-day and 5-hour use from the reply's rate limit event.
+  - **Login only:** it uses your default login. `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `CLAUDE_CONFIG_DIR` are unset for the call, and a run that reports an API key is thrown away. It counts toward your plan's use, about 3.5k tokens a call (about $0.0006 at API prices), so about 48 calls a day at most.
+  - **Plan name:** `claude auth status` gives the plan, so the meter reads `Claude Team this week`, `Claude Pro this week` and so on. No token is read.
+  - **Failure:** offline or logged out, the old reading stays and nothing is shown.
 - **Count:** the RUNNING header counts top-level lines and notes nested ones, as `RUNNING  4 (+3 sub-jobs)`.
 - **Machine:** each line starts with its machine, like `Hunty: Similar orgs` or `Mac: Health care`. Remote machines come from `<host>: name` rows and the to-do headings. The local one is the `[mac]` or `[local]` heading. With no remote machine, lines show the plain title.
 - **Line:** a mark, `▸ <short title>`, a 10-cell bar, the percent, then one dim note: `N left`, the run time, `Nm so far`, `waiting on X`, or a yellow `⚠ stuck Nm`. The note is cut with `…` to fit; the bar never wraps. A job that reports steps but no time left (an agent) shows an estimate, `~Nm left`, from its time so far per step done.
@@ -317,7 +322,7 @@ Claude Max this week  ██████░░░░  62% used
 - **Name:** a trailing status word (`working`, `running`, `pending`, `waiting`, `starting`) is left out.
 - **No percent:** a 3-block piece slides along the bar, so it still reads as working.
 - **Facts:** `⚙ N cores busy`, `⏱ 12:50 running`, `⏱ Y so far`, `⚡ N/min`, `🔧 N actions · last: Tool`.
-- **Claude Max meter:** one shared meter under RUNNING, from a row detail `7d N%` or `Max 7-day used N%` (the highest one). Green under 50%, yellow under 80%, red above.
+- **Usage meter:** one shared meter under RUNNING, from a row detail `7d N%` or `Max 7-day used N%` (the highest one). Green under 50%, yellow under 80%, red above.
 - **Done at 100%:** a row that reached 100% but still reports shows under DONE as one dim line, `✓ <title>  finishing · 7/7`, without a bar.
 
 ## Log tab
@@ -657,7 +662,7 @@ Optional. Makes each section header a link that folds or unfolds that section.
 
 ## Privacy
 
-Everything stays on your machine. The plugin reads and writes only files under `~/.claude-progress/`, `~/.claude/progress-bar/` and `~/.cache/progress-bar/`, and reads the `*.log` files in folders you list in `log-dirs.txt`, plus `~/Applications/ProgressBarToggle.app` if you run `setup mac-clicks`. It runs an action's command only when you press **▶ Run** and confirm, in a new terminal window you can see. The plugin makes no network calls itself, except the secure channel once you open one: it then talks to GitHub through your own `gh` and `git`, and stores only ciphertext there. The optional inbox checker (`inbox setup`) runs only when you schedule it, and reads your mail through your own Gmail connector. While the Status panel is open, the Connectors tab runs `claude mcp list`, which contacts your configured connectors to check them. The GitHub tab runs local `git` only, and opens a page in your browser when you click.
+Everything stays on your machine. The plugin reads and writes only files under `~/.claude-progress/`, `~/.claude/progress-bar/` and `~/.cache/progress-bar/`, and reads the `*.log` files in folders you list in `log-dirs.txt`, plus `~/Applications/ProgressBarToggle.app` if you run `setup mac-clicks`. It runs an action's command only when you press **▶ Run** and confirm, in a new terminal window you can see. The plugin makes no network calls itself, except the secure channel once you open one: it then talks to GitHub through your own `gh` and `git`, and stores only ciphertext there. The optional inbox checker (`inbox setup`) runs only when you schedule it, and reads your mail through your own Gmail connector. While the Status panel is open, the Connectors tab runs `claude mcp list`, which contacts your configured connectors to check them. The GitHub tab runs local `git` only, and opens a page in your browser when you click. Every 30 minutes one session on the machine runs a tiny `claude -p` Haiku call on your default login to refresh the usage meter (see Running cards).
 
 ## License
 

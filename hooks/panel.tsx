@@ -14,6 +14,8 @@ import { isDarwin } from './mac'
 import { moveItem, nextPrompt, rankTodos, todoRows as layoutTodos } from './priority'
 import { sessionProject } from './project'
 import { turnOnStatusLine } from './setup'
+import { parseSaved } from './usage'
+import type { UsageReading } from './usage'
 import { FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, slug } from './render'
 import type { Action, ActionUi, Channel, ChatMsg, ChatState, Checkpoint, Conn, Ev, Health, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
 
@@ -391,6 +393,11 @@ export function maxReading(live: number | null, saved: { pct: number; at: number
     return { used: saved.pct, asOf: `as of ${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`, save: false }
   }
   return { used: null, asOf: '', save: false }
+}
+
+/** "Claude Team this week" for the saved plan, "Claude Max this week" when the plan is not known. */
+export function meterLabel(plan?: string): string {
+  return `Claude ${plan && /^[A-Za-z][A-Za-z0-9 ]{0,19}$/.test(plan) ? plan : 'Max'} this week`
 }
 
 export function maxMeter(used: number): { filled: number; color: 'green' | 'yellow' | 'red' } {
@@ -812,8 +819,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const { Box, Button, Text } = $.ui.resolve(e)
     const homeDir = await resolveHome($)
     const maxFile = `${homeDir}/${DIR_REL}/.state/max-usage.json`
-    let maxSaved: { pct: number; at: number } | null = null
-    try { maxSaved = JSON.parse(String(await $.fs.read(maxFile))) } catch { maxSaved = null }
+    let maxSaved: UsageReading | null = null
+    try { maxSaved = parseSaved(String(await $.fs.read(maxFile))) } catch { maxSaved = null }
     const lines = await read($, linesAtom)
     const folded = new Set(await read($, foldedAtom))
     const todos = await read($, todosAtom)
@@ -964,7 +971,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const cards = rows.map(runCard)
       const live = cards.reduce<number | null>((a, c) => (c.maxUsed === null ? a : Math.max(a ?? 0, c.maxUsed)), null)
       const reading = maxReading(live, maxSaved, nowMs)
-      if (reading.save && live !== null) void $.fs.write(maxFile, JSON.stringify({ pct: live, at: nowMs })).catch(() => undefined)
+      if (reading.save && live !== null) void $.fs.write(maxFile, JSON.stringify({ pct: live, at: nowMs, ...(maxSaved?.plan ? { plan: maxSaved.plan } : {}) })).catch(() => undefined)
       const used = reading.used
       const out = nestRows(cards.map(c => c.name), meta).flatMap(({ i, kids }) => {
         const c = cards[i]!
@@ -978,7 +985,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       return [
         ...out,
         <Box key="maxmeter" marginTop={1}>
-          <Text dimColor>{'  Claude Max this week  '}</Text>
+          <Text dimColor>{`  ${meterLabel(maxSaved?.plan)}  `}</Text>
           <Text color={m.color}>{'█'.repeat(m.filled)}</Text>
           <Text dimColor>{'░'.repeat(10 - m.filled)}</Text>
           <Text>{`  ${used}% used`}</Text>
