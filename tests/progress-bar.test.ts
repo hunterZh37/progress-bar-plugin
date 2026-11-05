@@ -1282,6 +1282,13 @@ test('auto-next: machine, mode, caps, prompt and done events', async () => {
   expect(isRunningRow('✔ docs ████████ 100.0% · 5/5')).toBe(false)
 })
 
+test('a just-finished job reads as a check with "just finished", not a job named "✔ …"', () => {
+  const r = runCard('✔ import ██████████ 100.0% · just finished')
+  expect(r.mark).toBe('✔')
+  expect(r.name).toBe('import')
+  expect(r.pct).toBe(100)
+})
+
 test('to-do rows: one line each, ▶ next, ⏸ blocked, one waits for line per run, no (after X) shown', async () => {
   const todos = [
     { owner: 'hunty', text: '1. trends per org (after 2019-20 load)', done: false, line: 1 },

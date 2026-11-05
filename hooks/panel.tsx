@@ -258,7 +258,8 @@ export type RunCard = {
  */
 export function runCard(row: string): RunCard {
   const stuck = /^⚠ stuck (\S+)\s*/.exec(row)
-  const spin = /^([◐◓◑◒])\s*/.exec(row)
+  // ✔: a job that just finished, kept under RUNNING for a minute by the grouper (LINGER).
+  const spin = /^([◐◓◑◒✔])\s*/.exec(row)
   const clean = row.slice((stuck ?? spin)?.[0].length ?? 0)
   const rawName = clean.split(/\s+[█░]|\s+·\s+/)[0]!.trim()
   const name = rawName.replace(/\s+(working|pending|waiting|running|starting)(…|\.\.\.)?$/, '')
@@ -1053,14 +1054,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       // Room left on the line after mark, label and bar (4 + 2 + col + 17) and the note's two spaces.
       const room = width - ind.length - col - 25
       const fit = (x: string) => (x.length > room ? (room > 1 ? `${x.slice(0, room - 1)}…` : '') : x)
-      const tail = fit(stuck ? `⚠ stuck ${stuck}` : waitOn ? `waiting on ${short(waitOn)}` : timeTail(r))
+      const finished = r.mark === '✔'
+      const tail = fit(finished ? 'just finished' : stuck ? `⚠ stuck ${stuck}` : waitOn ? `waiting on ${short(waitOn)}` : timeTail(r))
       // The id line names the job only when the title does not already say it: the full title when the label was cut,
       // else the raw name when it differs. The badge always shows.
       const idName = full.length > col ? full : sameName(r.name, full) ? '' : r.name
       return [
         <Box key={`r${k}`}>
           <Box flexShrink={0}>
-          <Text color={stuck ? 'yellow' : 'cyan'}>{`${ind}  ${mark} `}</Text>
+          <Text color={stuck ? 'yellow' : finished ? 'green' : 'cyan'}>{`${ind}  ${mark} `}</Text>
           <Button key={`open-${key}`} plain onPress={() => toggleCard(key)}>
             {`${isOpen ? '▾' : '▸'} ${label}`}
           </Button>

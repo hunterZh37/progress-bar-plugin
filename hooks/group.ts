@@ -8,7 +8,7 @@ export const GROUP_PY = String.raw`#!/usr/bin/env python3
 Reads status lines on stdin and prints:
   TO-DO (this project's list, see todo_file), then PROBLEMS / RUNNING / WAITING / DONE,
   then any line that is not a job (your own status line) as is.
-Jobs that vanish show as "finished HH:MM" for 30 min, unless their last row said starting with no progress.
+Jobs that vanish stay under RUNNING as "just finished" for a minute, then show as "finished HH:MM" for 30 min, unless their last row said starting with no progress.
 A machine status row ("<host> ✓ helper healthy · load 0.22 on 12 cores · idle") is not a job: it prints as one
 "🖥 " line after RUNNING. While a "<host>: ..." job runs or waits, its "idle" reads "busy: N jobs running".
 Duplicate rows of one job are merged. A trailing status word (working, starting…) is not part of a job's name.
@@ -46,6 +46,7 @@ def state_file():
     sid = re.sub(r'[^A-Za-z0-9_-]', '', os.environ.get('PB_SID', ''))[:12]
     return os.path.join(ROOT, '.state', 'group-seen-' + sid + '.json') if sid else STATE
 KEEP = 30 * 60
+LINGER = 60  # a job that just finished stays under RUNNING this long, so a short one does not just flash
 MARKS = '▶✔✖■'
 SPIN = '◐◓◑◒'  # 4 frames: a full turn every 4 s at refreshInterval 1
 ELAPSED = re.compile(r'^(\d+h)?\d+m$|^\d+s$|^ETA ')
@@ -402,7 +403,10 @@ def main(stdin, now, summary=False):
         if os.path.exists(os.path.join(ROOT, s + '.json')):
             continue  # still reporting, just not shown this poll
         if v.get('kind') not in ('problem', 'info'):
-            groups['done'].append('✔ ' + v.get('name', s) + ' · finished ' + time.strftime('%H:%M', time.localtime(v.get('at', now))))
+            if v.get('kind') == 'running' and now - v.get('at', 0) < LINGER:
+                groups['running'].append('✔ ' + v.get('name', s) + ' ██████████ 100.0% · just finished')
+            else:
+                groups['done'].append('✔ ' + v.get('name', s) + ' · finished ' + time.strftime('%H:%M', time.localtime(v.get('at', now))))
     try:
         os.makedirs(os.path.dirname(state), exist_ok=True)
         tmp = state + '.tmp'
@@ -465,6 +469,8 @@ def main(stdin, now, summary=False):
         return d if d >= stuck_after and not waiting_on(l) else None
 
     def running_deco(i, body):
+        if i.startswith('✔ '):
+            return '✔ ' + body  # just finished (see LINGER): a check, never a spinner or "stuck"
         d = stuck_for(i)
         w = watchers.get(slugify(name_of(i)))
         by = ' · watched by: ' + ', '.join(w) if w else ''
@@ -542,7 +548,8 @@ def machine_line(l, groups):
     rows, count only when no job does)."""
     t = re.sub(r'^[▶✔]\s*', '', plain(l)).strip()
     host = t.split(' ', 1)[0].lower()
-    rows = [r for r in groups['running'] + groups['waiting'] if name_of(r).lower().startswith(host + ':')]
+    # A just-finished row (✔, see LINGER) is not running any more: it does not make the host busy.
+    rows = [r for r in groups['running'] + groups['waiting'] if not r.startswith('✔ ') and name_of(r).lower().startswith(host + ':')]
     jobs = [r for r in rows if not CPU.search(r)]
     n, what = (len(jobs), 'job') if jobs else (len(rows), 'process')
     if n:

@@ -167,6 +167,15 @@ class Group(unittest.TestCase):
         self.assertTrue(out[1].startswith('  import · finished '))
         self.assertEqual(self.run_('', now=t + 31 * 60), [])
 
+    def test_just_finished_job_lingers_under_running_for_a_minute(self):
+        # A short job's bar used to flash and vanish; for a minute it stays under RUNNING as a full green row.
+        t = 1_800_000_000
+        self.run_('▶ import ██░░ 50.0%\n', now=t)
+        out = self.run_('', now=t + 20)
+        self.assertEqual(out[0], '▾ ▶ RUNNING')
+        self.assertEqual(out[1], '  ✔ import ██████████ 100.0% · just finished')
+        self.assertNotIn('▾ ✔ DONE', out)
+
     def test_todo_priority_blocked_and_next(self):
         self.write('todo.txt', '[you]\nreply Sam\n[mac]\nlater thing\n2. second | https://x.org\n1. first (after classify)\n[hunty]\n1. trends (after 2019-20 load)\n2. board links\n')
         raw = self.g.main(io.StringIO('▶ arts-classify ████░░░░ 40.0% · 2/5\n'), T0)
@@ -646,7 +655,8 @@ class Projects(unittest.TestCase):
             os.environ['PB_SID'] = 'bbbb'
             self.assertEqual(self.g.main(io.StringIO(''), T0 + 5), [])
             os.environ['PB_SID'] = 'aaaa'
-            self.assertIn('  hunty load · finished', [strip_links(l)[:23] for l in self.g.main(io.StringIO(''), T0 + 5)])
+            self.assertIn('  ✔ hunty load ██████████', [strip_links(l)[:25] for l in self.g.main(io.StringIO(''), T0 + 5)])
+            self.assertIn('  hunty load · finished', [strip_links(l)[:23] for l in self.g.main(io.StringIO(''), T0 + 65)])
             self.assertTrue(os.path.exists(os.path.join(self.root, '.state', 'group-seen-aaaa.json')))
         finally:
             os.environ.pop('PB_SID', None)
