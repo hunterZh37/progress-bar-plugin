@@ -10,7 +10,7 @@ import { sessionKeyOf } from './route'
 
 const DIR_REL = '.claude-progress'
 // Data files in ~/.claude-progress that are never jobs, so no report may take their names.
-const RESERVED = new Set(['inbox', 'actions', 'max-usage', 'channels'])
+const RESERVED = new Set(['inbox', 'actions', 'max-usage', 'channels', 'topology'])
 
 export const PROGRESS_TOOL = {
   name: 'progress_report',

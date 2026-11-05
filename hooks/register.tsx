@@ -24,7 +24,7 @@ import type { BgSnap, BgTask, Job, TxScan } from './waiting'
 
 const WATCH = '.watch.json'
 // Data files in ~/.claude-progress that are never jobs.
-const DATA_FILES = new Set(['inbox', 'actions', 'max-usage', 'channels'])
+const DATA_FILES = new Set(['inbox', 'actions', 'max-usage', 'channels', 'topology'])
 const MAX_LOG = 4 * 1024 * 1024 // bigger logs are read from their last 4 MB
 
 /** A row for one watch file, or null when its log is missing or the job is long over. */
