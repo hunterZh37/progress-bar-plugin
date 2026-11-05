@@ -202,7 +202,7 @@ export function parseProgress(text: string): Progress | null {
 export function pickMeta(p: unknown): Meta {
   const m: Meta = {}
   if (!p || typeof p !== 'object') return m
-  for (const k of ['title', 'why', 'parent'] as const) {
+  for (const k of ['title', 'why', 'parent', 'reads', 'writes'] as const) {
     const v = (p as Record<string, unknown>)[k]
     if (typeof v === 'string' && v.trim()) m[k] = v.trim()
   }

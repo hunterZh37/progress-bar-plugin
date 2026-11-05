@@ -25,6 +25,8 @@ export const PROGRESS_TOOL = {
       why: { type: 'string', description: 'What the job unlocks for the person. Shown as "unlocks: ...".' },
       parent: { type: 'string', description: 'Optional slug of the bigger job this is part of.' },
       slug: { type: 'string', description: 'Optional file name. Default: the slug of the title.' },
+      reads: { type: 'string', description: 'Optional. What the job reads, a few words. Example: nombot.board_members_history. Shown on the Topology tab.' },
+      writes: { type: 'string', description: 'Optional. What the job writes, a few words. Example: Postgres via work-mac. Shown on the Topology tab.' },
       impact: { type: 'string', description: 'What the finished job changed and why it matters, one to three short lines (newlines split them). Example: Board links rebuilt: 1.29M pairs, 109K split people merged. Shown when its DONE row is opened.' },
       finished: { type: 'boolean', description: 'true removes the bar once the job is over. Pass impact with it.' },
     },
@@ -32,7 +34,7 @@ export const PROGRESS_TOOL = {
   },
 }
 
-export type ReportInput = { title: string; done?: number; total?: number; step?: string; why?: string; parent?: string; slug?: string; impact?: string; finished?: boolean }
+export type ReportInput = { title: string; done?: number; total?: number; step?: string; why?: string; parent?: string; slug?: string; reads?: string; writes?: string; impact?: string; finished?: boolean }
 export type Owner = { session: string; cwd: string }
 
 /** The progress file's JSON for a report. `startedAt` comes from the file it replaces, else now. */
@@ -47,6 +49,8 @@ export function reportBody(i: ReportInput, owner: Owner, startedAt: number): Rec
   out.title = i.title.trim()
   if (i.why?.trim()) out.why = i.why.trim()
   if (i.parent?.trim()) out.parent = slug(i.parent)
+  if (i.reads?.trim()) out.reads = i.reads.trim()
+  if (i.writes?.trim()) out.writes = i.writes.trim()
   const impact = impactLines(i.impact)
   if (impact.length) out.impact = impact.join('\n')
   if (owner.session) out.session = owner.session

@@ -14,6 +14,8 @@ import { isDarwin } from './mac'
 import { backfillAgent, clock, doneDetails, machineName, prettyName, readDone } from './done'
 import { moveItem, nextPrompt, rankTodos, todoRows as layoutTodos } from './priority'
 import { sessionProject } from './project'
+import { DEFAULT_TOPOLOGY, queuesOf, readTopology, renderTopology, resolveMachine } from './topology'
+import type { TopoJob } from './topology'
 import { turnOnStatusLine } from './setup'
 import { parseSaved } from './usage'
 import type { UsageReading } from './usage'
@@ -31,8 +33,9 @@ import type { Action, ActionUi, Channel, ChatMsg, ChatState, Checkpoint, Conn, D
 // RUNNING rows draw as one line per job (short title, a 10-cell bar, %, time left), the bars in one column.
 // Pressing a line opens its card (runCard): id and badge, count, step, facts and what it unlocks, from `title`, `why`
 // and `parent` in its progress file or ~/.claude-progress/titles.txt. A running child shows under its open parent.
-// Five tabs: List (the sections), Connectors (see connectors.ts), GitHub (see github.ts), Log (events.ts) and Chat
-// (chat.ts: the secure channel as a chat room, one thread per channel, with a compose field).
+// Six tabs: List (the sections), Connectors (see connectors.ts), GitHub (see github.ts), Log (events.ts), Chat
+// (chat.ts: the secure channel as a chat room, one thread per channel, with a compose field) and Topology
+// (topology.ts: the machines as boxes, their jobs and queued to-dos, and what data moves between them).
 // Connector checks run only while the pane is open; GitHub reads only while its tab shows.
 // Overnight recap: `/progress-bar checkpoint` (or checkpoint.py) saves the running jobs. Once you are back (4 h later, or
 // a tick gap over 30 min shows the computer slept) the List tab opens with "While you were away": what finished, failed
@@ -65,6 +68,8 @@ const menuAtom = atom({ plugin: 'progress-bar', key: 'menuFor' } as const, -1)
 // The same state connectors.ts writes; the scan wants each atom declared in the file that reads it.
 const connsAtom = atom({ plugin: 'progress-bar', key: 'conns' } as const, { at: 0, checking: false, login: '', list: [] })
 const tabAtom = atom({ plugin: 'progress-bar', key: 'tab' } as const, 'list')
+// Topology tab: topology.json and heartbeat health, read each tick while the tab shows.
+const topoAtom = atom({ plugin: 'progress-bar', key: 'topo' } as const, { cfg: DEFAULT_TOPOLOGY, health: {} })
 const ghAtom = atom({ plugin: 'progress-bar', key: 'gh' } as const, { repos: [], sel: 0, at: 0 })
 // Running jobs whose line is open to show its details, by slug.
 const openAtom = atom({ plugin: 'progress-bar', key: 'openCards' } as const, [] as string[])
@@ -674,9 +679,16 @@ export async function pollPanel($: EngineInterface, h: string) {
     const l = await read($, logAtom)
     if (unseenErrors(l.events, l.seenAt, Math.floor((await $.clock.now()) / 1000))) await markSeen($, h)
   }
+  if ((await read($, tabAtom)) === 'topology') await readTopo($, h)
   await readConns($, h)
   // Runs on past this poll (claude mcp list can take a minute), so a reload or session end can cut it off: never an unhandled rejection.
   void refreshConns($, h).catch(() => undefined)
+}
+
+/** Reads topology.json and the heartbeat files into the Topology tab's state. */
+async function readTopo($: EngineInterface, h: string) {
+  const t = await readTopology($, h)
+  if (JSON.stringify(await read($, topoAtom)) !== JSON.stringify(t)) await update($, topoAtom, () => t)
 }
 
 async function flip($: EngineInterface, h: string, key: Key) {
@@ -929,7 +941,7 @@ export function registerPanel(on: On) {
   })
 }
 
-/** The Status panel's List, Connectors, GitHub, Log and Chat tabs. */
+/** The Status panel's List, Connectors, GitHub, Log, Chat and Topology tabs. */
 async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
   {
     const { Box, Button, Text } = $.ui.resolve(e)
@@ -1190,13 +1202,16 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const reading = maxReading(liveUsed, maxSaved, nowMs)
     if (reading.save && liveUsed !== null) void $.fs.write(maxFile, JSON.stringify({ pct: liveUsed, at: nowMs, ...(maxSaved?.plan ? { plan: maxSaved.plan } : {}) })).catch(() => undefined)
     // The tab labels, then the usage meter: on the tab row's right end when it fits, else right-aligned on its own line.
-    const tabLabels = [
+    // In a pane too narrow for every label, Topology reads Topo, then Connectors reads Conn.
+    const labelsAt = (n: number) => [
       `${mark('list')}List`,
-      `${mark('connectors')}Connectors${badN ? ` !${badN}` : ''}`,
+      `${mark('connectors')}${n < 2 ? 'Connectors' : 'Conn'}${badN ? ` !${badN}` : ''}`,
       `${mark('github')}GitHub`,
       `${mark('log')}Log${unseen ? ` !${unseen}` : ''}`,
       `${mark('chat')}Chat${chatUnread ? ` ${chatUnread}` : ''}`,
+      `${mark('topology')}${n < 1 ? 'Topology' : 'Topo'}`,
     ]
+    const tabLabels = [0, 1, 2].map(labelsAt).find(l => tabsWidth(l) <= width) ?? labelsAt(2)
     const meter = (() => {
       const used = reading.used
       if (used === null) return null
@@ -1227,6 +1242,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         <Button key="tab-log" plain onPress={async () => { await update($, tabAtom, () => 'log'); await markSeen($, homeDir) }}>{tabLabels[3]!}</Button>
         {sep('sep-4')}
         <Button key="tab-chat" plain onPress={async () => { await update($, tabAtom, () => 'chat'); await readChat($, homeDir) }}>{tabLabels[4]!}</Button>
+        {sep('sep-5')}
+        <Button key="tab-topology" plain onPress={async () => { await update($, tabAtom, () => 'topology'); await readTopo($, homeDir) }}>{tabLabels[5]!}</Button>
         {meter && inline ? <Text key="mt-gap">{' '.repeat(Math.max(2, width - tabsW - meter.width))}</Text> : null}
         {meter && inline ? meter.parts : null}
       </Box>
@@ -1323,6 +1340,30 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 chat.note ? <Text key="ch-note" color={chat.sending ? undefined : 'yellow'} dimColor={chat.sending}>{`  ${chat.note}`}</Text> : null,
                 <Text key="ch-safe" dimColor>{'  End-to-end encrypted and signed. Received text is shown, never run.'}</Text>,
               ].filter(Boolean)}
+        </Box>
+      )
+    }
+
+    if (tab === 'topology') {
+      // The same running and waiting rows the List tab draws, with each job's title, reads and writes.
+      const topo = await read($, topoAtom)
+      const live = sections.filter(x => x.key === 'running' || x.key === 'waiting').flatMap(x => x.rows.map(row => ({ row, wait: x.key === 'waiting' })))
+      const jobs: TopoJob[] = live.map(({ row, wait }) => {
+        const c = runCard(row)
+        const m0 = metaOf(c.name)
+        return { name: c.name, title: m0.title || c.name, pct: c.pct, mark: wait ? '⏸' : c.mark === '✔' ? '✔' : c.stuck ? '⚠' : '▶', step: c.step, reads: m0.reads, writes: m0.writes, proc: /\d% CPU\b/.test(row) }
+      })
+      const self = topo.cfg.self || resolveMachine(topo.cfg, mach.local) || resolveMachine(topo.cfg, localMachine) || topo.cfg.machines.find(m => m.role === 'data')?.id || 'local'
+      const queues = queuesOf(topo.cfg, rankTodos(todos.filter(t => !t.done), running).map(t => ({ owner: t.owner, text: t.text })), self)
+      const drawn = renderTopology({ cfg: topo.cfg, self, jobs, health: topo.health, queues, extra: mach.remote }, width)
+      return (
+        <Box flexDirection="column">
+          {tabBar}
+          {drawn.map((l, i) => (
+            <Box key={`tp${i}`}>
+              {l.map((sg, k) => <Text key={`tp${i}-${k}`} color={sg.color} dimColor={sg.dim} bold={sg.bold} wrap="truncate-end">{sg.text || ' '}</Text>)}
+            </Box>
+          ))}
         </Box>
       )
     }

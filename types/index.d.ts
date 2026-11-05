@@ -21,10 +21,11 @@ export type Conn = { name: string; kind: ConnKind; account?: string; url?: strin
 /** Status panel: the last connector check (epoch ms, 0 for none), whether one runs now, the Claude login (email · org) and the list. */
 export type Conns = { at: number; checking: boolean; login: string; list: Conn[] }
 /** Status panel: the tab shown. */
-export type Tab = 'list' | 'connectors' | 'github' | 'log' | 'chat'
+export type Tab = 'list' | 'connectors' | 'github' | 'log' | 'chat' | 'topology'
 
 /** Status panel: a job's plain-language title, what it unlocks and its parent job's slug, from its progress file or titles.txt. */
-export type Meta = { title?: string; why?: string; parent?: string }
+/** `reads` and `writes`: what the job reads and writes, for the Topology tab's flows. */
+export type Meta = { title?: string; why?: string; parent?: string; reads?: string; writes?: string }
 /**
  * Status panel: a finished job's or agent's record, ~/.claude-progress/.state/done/<slug>.json (hooks/done.ts).
  * `impact` is one to three short lines on what it changed. `started` and `finished` are epoch ms.
@@ -77,8 +78,17 @@ export type Action = { id: string; title: string; command?: string; why: string;
 /** Action needed: the in-app popup's state. `confirm` is the id waiting on "Run this in <term>?", `term` the terminal it names, `failId` and `fail` the action whose check still fails and what to show. */
 export type ActionUi = { confirm: string; term: string; failId: string; fail: string }
 
+/** Topology tab: one machine of topology.json. `status`: its heartbeat file in ~/.claude-progress/.lines (hooks/topology.ts). */
+export type TopoMachine = { id: string; ip?: string; role?: 'data' | 'compute'; aliases?: string[]; about?: string[]; status?: string }
+/** Topology tab: an outside service, shown while a running job matches `match` (a regex, any case). `from`: the machine that calls it. */
+export type TopoService = { name: string; match: string; from?: string }
+/** Topology tab: ~/.claude-progress/topology.json. `self`: this machine's id when the to-do headings do not say it. */
+export type TopoConfig = { self?: string; dbRole?: string; machines: TopoMachine[]; services: TopoService[] }
+export type TopoHealth = { state: 'online' | 'offline' | 'unknown'; load?: string; note?: string }
+export type Topo = { cfg: TopoConfig; health: Record<string, TopoHealth> }
+
 declare module 'claude-code' {
   interface PluginState {
-    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; project: Project; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards; recap: Recap; inbox: Inbox; channel: Channel; chat: ChatState; actions: Action[]; actionUi: ActionUi; health: Health; done: Record<string, DoneRec> }
+    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; project: Project; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards; recap: Recap; inbox: Inbox; channel: Channel; chat: ChatState; actions: Action[]; actionUi: ActionUi; health: Health; done: Record<string, DoneRec>; topo: Topo }
   }
 }

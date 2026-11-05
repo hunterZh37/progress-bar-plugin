@@ -618,7 +618,7 @@ test('the panel draws an indeterminate bar without a %, and one compact usage me
   expect(await ui.find({ type: 'Text', text: /steps not reported/ })).toBe(undefined)
   await ui.press({ key: 'open-build-docs' })
   expect((await ui.find({ type: 'Text', text: /steps not reported/ }))?.text).toBe('steps not reported')
-  // At 52 columns the meter ("Max 62% ━━━── 7d", 16) does not fit after the tabs (44): its own line, right-aligned.
+  // At 52 columns the meter ("Max 62% ━━━── 7d", 16) does not fit after the tabs (52, Topology cut to Topo): its own line, right-aligned.
   const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   const at = texts.indexOf('Max ')
   expect(texts.slice(at - 1, at + 4)).toEqual([' '.repeat(52 - 16), 'Max ', '62% ', '━━━', '── 7d'])
@@ -631,7 +631,7 @@ test('the panel draws an indeterminate bar without a %, and one compact usage me
   const wide = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 80 } })
   const wt = (await wide.findAll({ type: 'Text' })).map(t => t.text ?? '')
   expect(wt.indexOf('Max ')).toBeGreaterThan(wt.lastIndexOf(' │ '))
-  expect(wt[wt.indexOf('Max ') - 1]).toBe(' '.repeat(80 - 44 - 16))
+  expect(wt[wt.indexOf('Max ') - 1]).toBe(' '.repeat(80 - 56 - 16))
   await wide.unmount()
 })
 
@@ -760,12 +760,13 @@ test('the Connectors tab: checks claude mcp list, caches name and status only, n
   expect(files[CACHE]).not.toContain('https')
 
   expect((await ui.find({ type: 'Button', text: /List/ }))?.text).toBe('▌List')
-  expect((await ui.find({ type: 'Button', text: /Connectors/ }))?.text).toBe(' Connectors !3')
+  // At 52 columns with a badge, Topology reads Topo and Connectors reads Conn.
+  expect((await ui.find({ type: 'Button', key: 'tab-connectors' }))?.text).toBe(' Conn !3')
   expect((await ui.find({ type: 'Button', text: /RUNNING/ }))?.text).toBe('▾ ▶ RUNNING  1')
   expect(await ui.find({ type: 'Text', text: /CONNECTORS/ })).toBe(undefined)
 
   await ui.press({ key: 'tab-connectors' })
-  expect((await ui.find({ type: 'Button', text: /Connectors/ }))?.text).toBe('▌Connectors !3')
+  expect((await ui.find({ type: 'Button', key: 'tab-connectors' }))?.text).toBe('▌Conn !3')
   expect(await ui.find({ type: 'Button', text: /RUNNING/ })).toBe(undefined)
   expect((await ui.find({ type: 'Text', text: /CONNECTORS/ }))?.text).toBe('⚡ CONNECTORS  2 ok · 2 need sign-in · 1 failed')
   expect((await ui.find({ type: 'Text', text: /Claude:/ }))?.text).toBe('  Claude: me@x.test · Acme')
@@ -802,7 +803,7 @@ test('a fresh shared cache is read, not refreshed', async ($, on) => {
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
   expect(ran.some(r => r.argv[0] === 'claude')).toBe(false)
-  expect((await ui.find({ type: 'Button', text: /Connectors/ }))?.text).toBe(' Connectors !1')
+  expect((await ui.find({ type: 'Button', key: 'tab-connectors' }))?.text).toBe(' Conn !1')
   await ui.press({ key: 'tab-connectors' })
   expect((await ui.find({ type: 'Text', text: /CONNECTORS/ }))?.text).toBe('⚡ CONNECTORS  1 ok · 1 need sign-in')
   await ui.unmount()

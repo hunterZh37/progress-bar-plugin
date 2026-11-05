@@ -676,7 +676,7 @@ export const register: Register = (on, options) => {
     const i = e as unknown as Record<string, unknown>
     const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
     const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
-    const text = await writeReport($, await resolveHome($), { title: str(i.title) ?? '', done: num(i.done), total: num(i.total), step: str(i.step), why: str(i.why), parent: str(i.parent), slug: str(i.slug), impact: str(i.impact), finished: i.finished === true })
+    const text = await writeReport($, await resolveHome($), { title: str(i.title) ?? '', done: num(i.done), total: num(i.total), step: str(i.step), why: str(i.why), parent: str(i.parent), slug: str(i.slug), reads: str(i.reads), writes: str(i.writes), impact: str(i.impact), finished: i.finished === true })
     await poll($).catch(() => undefined)
     return { result: text }
   })
