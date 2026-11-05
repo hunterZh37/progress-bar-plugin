@@ -20,7 +20,7 @@ const LINES_REL = '.claude-progress/.lines'
 export const HEARTBEAT_MS = 2 * 60_000
 
 /** A running or waiting row as the tab needs it. `pct` null draws no percent. */
-export type TopoJob = { name: string; title: string; pct: number | null; mark: string; step: string; reads?: string; writes?: string; proc?: boolean; waitOn?: string; why?: string }
+export type TopoJob = { name: string; title: string; pct: number | null; mark: string; step: string; reads?: string; writes?: string; proc?: boolean; waitOn?: string; why?: string; area?: string }
 export type TopoQueue = { count: number; top: string }
 export type Flow = { from: string; to: string; label: string; jobs: string[]; service?: boolean }
 /** A run of text. `press`: the open-card key a press on it flips (a machine's name in the tree). */
@@ -355,7 +355,7 @@ export function renderTopology(inp: TopoInput, width: number, open: ReadonlySet<
       ], k))
       if (!jOpen) continue
       const reads = j.reads ?? (id !== data && active(j) ? `${data} database as ${cfg.dbRole ?? 'helper'}` : '')
-      for (const [label, v] of [['reads', reads], ['writes', j.writes ?? ''], ['waits on', j.mark === '⏸' ? j.waitOn ?? '' : ''], ['step', j.step], ['why', j.why ?? '']] as const) {
+      for (const [label, v] of [['reads', reads], ['writes', j.writes ?? ''], ['waits on', j.mark === '⏸' ? j.waitOn ?? '' : ''], ['step', j.step], ['why', j.why ?? ''], ['area', j.area ?? '']] as const) {
         if (v) out.push(row([{ text: `        ${label}: `, dim: true }, { text: v }]))
       }
     }

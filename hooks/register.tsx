@@ -19,12 +19,13 @@ import { PROJECT_LINE, pickOwner, routeOf, sessionKeyOf as keyOf } from './route
 import type { Progress, Row, Track } from './render'
 import { isDarwin } from './mac'
 import { impactLines, parseDone, reportOf, saveDone, summarize, DONE_REL } from './done'
+import { pickGains } from './goal'
 import { aliveTasks, bgLaunch, scanTranscript, snapOf, toolWhat, waitSegs } from './waiting'
 import type { BgSnap, BgTask, Job, TxScan } from './waiting'
 
 const WATCH = '.watch.json'
 // Data files in ~/.claude-progress that are never jobs.
-const DATA_FILES = new Set(['inbox', 'actions', 'max-usage', 'channels', 'topology'])
+const DATA_FILES = new Set(['inbox', 'actions', 'max-usage', 'channels', 'topology', 'goal'])
 const MAX_LOG = 4 * 1024 * 1024 // bigger logs are read from their last 4 MB
 
 /** A row for one watch file, or null when its log is missing or the job is long over. */
@@ -341,6 +342,7 @@ async function recordJob($: EngineInterface, h: string, name: string, j: FileJob
   if (!session) { try { session = await $.session.id() } catch { session = undefined } }
   await saveDone($, h, {
     slug: name, title: strOf(j.raw.title) ?? '', why: strOf(j.raw.why), impact: impactLines(j.raw.impact), step: j.row.step || undefined,
+    area: strOf(j.raw.area), gains: pickGains(j.raw.gains),
     started: j.row.startedAt || undefined, finished: now, session, kind: 'job',
   }).catch(() => undefined)
 }
@@ -399,7 +401,7 @@ async function recordAgent($: EngineInterface, agentId: string, report: string, 
   let session = ''
   try { session = await $.session.id() } catch { session = '' }
   await saveDone($, h, {
-    slug: key, title: strOf(raw.title) ?? desc, why: strOf(raw.why), impact, step: strOf(raw.step),
+    slug: key, title: strOf(raw.title) ?? desc, why: strOf(raw.why), impact, step: strOf(raw.step), area: strOf(raw.area), gains: pickGains(raw.gains),
     started: seen.get(agentId)?.startedAt, finished: now, session: session || undefined, kind: 'agent',
   }).catch(() => undefined)
 }
@@ -676,7 +678,7 @@ export const register: Register = (on, options) => {
     const i = e as unknown as Record<string, unknown>
     const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
     const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
-    const text = await writeReport($, await resolveHome($), { title: str(i.title) ?? '', done: num(i.done), total: num(i.total), step: str(i.step), why: str(i.why), parent: str(i.parent), slug: str(i.slug), reads: str(i.reads), writes: str(i.writes), impact: str(i.impact), finished: i.finished === true })
+    const text = await writeReport($, await resolveHome($), { title: str(i.title) ?? '', done: num(i.done), total: num(i.total), step: str(i.step), why: str(i.why), parent: str(i.parent), slug: str(i.slug), reads: str(i.reads), writes: str(i.writes), impact: str(i.impact), area: str(i.area), gains: pickGains(typeof i.gains === 'string' ? (() => { try { return JSON.parse(i.gains as string) } catch { return undefined } })() : i.gains), finished: i.finished === true })
     await poll($).catch(() => undefined)
     return { result: text }
   })

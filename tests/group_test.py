@@ -123,6 +123,11 @@ class Group(unittest.TestCase):
         self.assertTrue(any('build' in l for l in out))
         self.assertTrue(any('inboxer' in l for l in out))
 
+    def test_goal_and_topology_data_rows_are_dropped(self):
+        out = self.run_('▶ goal working · 2m\n▶ topology working · 1m\n▶ goals-review ████░░░░ 40.0% · 2/5\n')
+        self.assertFalse(any(re.search(r'\b(goal|topology)\b', l) for l in out))
+        self.assertTrue(any('goals-review' in l for l in out))
+
     def test_helper_healthy_is_a_machine_line_not_a_done_row(self):
         t = 1_800_000_000
         out = self.run_('▶ hunty ✓ helper healthy · load 0.22 on 12 cores · idle\n▶ build ████░░░░ 40.0% · 2/5\n', now=t)

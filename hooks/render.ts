@@ -1,6 +1,6 @@
 // Pure helpers: no `$`, so tests import them directly.
 
-import type { Meta } from '../types'
+import type { Gains, Meta } from '../types'
 
 export type Progress = { done: number | null; total: number | null; step: string; startedAt?: number }
 
@@ -198,24 +198,33 @@ export function parseProgress(text: string): Progress | null {
   }
 }
 
-/** The `title`, `why` and `parent` strings of a parsed progress file, the ones present and not empty. */
+/** The `title`, `why`, `parent`, `reads`, `writes`, `area` and `impact` strings and the `gains` of a parsed progress file, the ones present and not empty. */
 export function pickMeta(p: unknown): Meta {
   const m: Meta = {}
   if (!p || typeof p !== 'object') return m
-  for (const k of ['title', 'why', 'parent', 'reads', 'writes'] as const) {
+  for (const k of ['title', 'why', 'parent', 'reads', 'writes', 'area', 'impact'] as const) {
     const v = (p as Record<string, unknown>)[k]
     if (typeof v === 'string' && v.trim()) m[k] = v.trim()
+  }
+  const g = (p as Record<string, unknown>).gains
+  if (g && typeof g === 'object' && !Array.isArray(g)) {
+    const gains: Gains = {}
+    for (const k of ['cost', 'quality', 'speed'] as const) {
+      const v = (g as Record<string, unknown>)[k]
+      if (typeof v === 'string' && v.trim()) gains[k] = v.trim()
+    }
+    if (Object.keys(gains).length) m.gains = gains
   }
   return m
 }
 
-/** ~/.claude-progress/titles.txt: `<job id><TAB><title><TAB><why><TAB><parent>` per line, keyed by the job id's slug. */
+/** ~/.claude-progress/titles.txt: `<job id><TAB><title><TAB><why><TAB><parent><TAB><area>` per line (area optional), keyed by the job id's slug. */
 export function parseTitles(text: string): Record<string, Meta> {
   const out: Record<string, Meta> = {}
   for (const l of text.split('\n')) {
     if (!l.trim() || l.startsWith('#')) continue
-    const [id = '', title = '', why = '', parent = ''] = l.split('\t').map(x => x.trim())
-    const m = pickMeta({ title, why, parent })
+    const [id = '', title = '', why = '', parent = '', area = ''] = l.split('\t').map(x => x.trim())
+    const m = pickMeta({ title, why, parent, area })
     if (slug(id) && Object.keys(m).length) out[slug(id)] = m
   }
   return out

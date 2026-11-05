@@ -1,6 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import { isDarwin } from './mac'
+import { pickGains } from './goal'
 import { slug } from './render'
 import type { DoneRec } from '../types'
 
@@ -132,7 +133,7 @@ export function parseDone(text: string): DoneRec | null {
     if (!r || typeof r !== 'object' || typeof r.slug !== 'string' || typeof r.finished !== 'number') return null
     return {
       slug: r.slug, title: typeof r.title === 'string' ? r.title : '', why: typeof r.why === 'string' ? r.why : undefined,
-      impact: impactLines(r.impact), step: typeof r.step === 'string' ? r.step : undefined,
+      impact: impactLines(r.impact), area: typeof r.area === 'string' && r.area.trim() ? r.area.trim() : undefined, gains: pickGains(r.gains), step: typeof r.step === 'string' ? r.step : undefined,
       started: typeof r.started === 'number' ? r.started : undefined, finished: r.finished,
       machine: typeof r.machine === 'string' ? r.machine : '', session: typeof r.session === 'string' ? r.session : undefined,
       kind: r.kind === 'agent' ? 'agent' : 'job',

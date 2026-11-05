@@ -11,12 +11,21 @@ The progress-bar plugin draws a bar for every progress file in `~/.claude-progre
 
 **Already automatic:** your own task list (TodoWrite, TaskCreate, TaskUpdate) shows as one bar, a Bash command over a minute or in the background shows as a working row, and every subagent gets a line. Report on top of that for named jobs with steps.
 
+## Always say which part of the goal gets better, and how
+
+The Status panel groups every job under an area of the person's goal (`~/.claude-progress/goal.json`, for example "Making the generosity database better" with areas Organizations, Finances, Boards & people, Grants, Places, Causes, Answer quality, Tools). Anyone should be able to read it at a glance. On every job, set:
+
+- **area**: the goal area it improves, by name (`Boards & people`). Pick from goal.json's areas. Never leave it out: a guess from keywords can land a job in the wrong place.
+- **title**: the improvement itself, in plain words, not the machine or the mechanism (`Every board member counted, not just 25`).
+- **gains**: which of cost, quality, speed the job makes better, each a short plain line with a number when possible: `{"quality": "1.65M more board seats counted", "speed": "labels in 7h instead of 12h", "cost": "$14 of Jev instead of 34h of Claude"}`. Name only the ones that apply.
+- **impact** (before it ends): how the database, or whatever the goal names, is better now, with the key number.
+
 ## Easiest: the progress_report tool
 
 Call `progress_report` (from the progress-bar plugin) when the job starts and after each step:
 
 ```
-progress_report(title: "Login fix, tests and deploy", why: "people can sign in again", done: 2, total: 5, step: "run tests")
+progress_report(title: "Every board member counted, not just 25", why: "board links and people search see whole boards", area: "Boards & people", gains: {"quality": "1.65M more board seats counted"}, done: 2, total: 5, step: "run tests")
 ```
 
 - It writes `~/.claude-progress/<slug of title>.json` with this session's id, folder and `startedAt` filled in, so the bar shows in this session's Status panel on any machine.
@@ -33,6 +42,7 @@ Path: `~/.claude-progress/<slug>.json`
 {"done": 2, "total": 5, "step": "run tests", "startedAt": 1767225600000,
  "title": "Login fix · tests and deploy", "why": "people can sign in again", "parent": "release-prep",
  "session": "<session id>", "cwd": "/absolute/working/dir",
+ "area": "Tools", "gains": {"quality": "login works for all 3 providers"},
  "impact": "Login works again for all 3 providers\n41 tests added"}
 ```
 
@@ -40,21 +50,23 @@ Path: `~/.claude-progress/<slug>.json`
 - **step**: a few words on the current step.
 - **startedAt**: optional, milliseconds since the epoch. Without it the file's time is used.
 - **title**: plain words for the improvement the job makes, so a person knows at a glance why it runs. Name the outcome, not the mechanism: `Every board member counted, not just 25` rather than `Board lists past 25 seats`, `Know where more orgs serve` rather than `Service places round 3`. The Status panel shows it in bold above the slug.
-- **why**: what the job unlocks for the person (`the weekly report`). Shown as `unlocks: …`.
+- **area**: the goal area the job improves, by name from `~/.claude-progress/goal.json` (`Grants`, `Boards & people`). Always set it.
+- **gains**: an object with any of `cost`, `quality`, `speed`, each a short plain line with a number when possible. State which of the three your job improves. They show as 💲 💎 🚀 tags on its row.
+- **why**: what the job unlocks for the person (`the weekly report`). Shown dim under its row.
 - **parent**: the slug of the bigger job this is part of. Set it when a subagent or script works for another job that has a progress file. While both run, the child draws inside the parent's card, and the parent reads `waiting on: <child>` instead of stuck.
 - **session**: the Claude Code session id, so the bar shows only in this session. In Bash it is `$CLAUDE_CODE_SESSION_ID`. Add it whenever you can.
 - **impact**: set it just before the job ends. Answer one question: how is the thing this job works on better now? Say what it now has or gets right, with the key number, and who or what benefits, one to three short lines (newlines split them). Example: `1.65M more board seats, so board links and people search see whole boards`. Skip mechanics like commit ids, accounts or file names. The Status panel shows it when the job's DONE row is opened. Without it the row says `no impact reported`.
 - **reads**, **writes**: optional short strings, what the job reads and writes (`nombot.board_members_history`, `Postgres via work-mac`). The Topology tab shows them on the branch between machines and in the job's details. Without `reads` a job on a helper machine is drawn reading from the data host's database. Set `writes` only when the job writes back.
 - **cwd**: always add it, the absolute folder you work in. The bar then shows in the sessions of that project, even when the session id is missing or that session has closed.
 - Without `session` and `cwd`, the bar goes to the shared list, which may show in no session on a machine that routes it elsewhere.
-- A job that can't write these (a log-only job) can get a line in `~/.claude-progress/titles.txt`: `<job id><TAB><title><TAB><why><TAB><parent>`.
+- A job that can't write these (a log-only job) can get a line in `~/.claude-progress/titles.txt`: `<job id><TAB><title><TAB><why><TAB><parent><TAB><area>`.
 
 **Slug rule:** lowercase the job's name and turn every run of characters other than `a-z` and `0-9` into `-`, trimming `-` at both ends. `Fix the Login bug!` becomes `fix-the-login-bug`.
 
 ## When to write it
 
 - **Your own multi-step job:** write the file after each step, overwriting it. Count the steps up front.
-- **Briefing a subagent:** name the slug from the subagent's `description` and add to its prompt: "After each step call `progress_report` with slug `<slug>`, done N, total T and a short step, and `finished: true` at the end. Without that tool, overwrite `~/.claude-progress/<slug>.json` with `{"done": N, "total": T, "step": "<short>", "session": "<$CLAUDE_CODE_SESSION_ID>", "cwd": "<absolute working dir>"}` and delete it when finished. Steps: ...". The plugin then puts the bar on that subagent's line.
+- **Briefing a subagent:** name the slug from the subagent's `description` and add to its prompt: "After each step call `progress_report` with slug `<slug>`, area `<area>`, done N, total T and a short step, and `finished: true` at the end with impact and gains (which of cost, quality, speed got better, with a number). Without that tool, overwrite `~/.claude-progress/<slug>.json` with `{"done": N, "total": T, "step": "<short>", "area": "<area>", "session": "<$CLAUDE_CODE_SESSION_ID>", "cwd": "<absolute working dir>"}` and delete it when finished. Steps: ...". The plugin then puts the bar on that subagent's line.
 - **Background shell jobs:** have the script write the file itself (below).
 
 ## Jobs that only write a log: watch files
@@ -87,7 +99,7 @@ EOF
 
 ## When done
 
-Write `impact` into the file, wait 5 seconds (one poll, so the plugin saves it), then delete the file. Or call `progress_report` with `finished: true` and `impact`. A file untouched for 10 minutes stops showing anyway.
+Write `impact` and `gains` into the file, wait 5 seconds (one poll, so the plugin saves it), then delete the file. Or call `progress_report` with `finished: true`, `impact` and `gains`. A file untouched for 10 minutes stops showing anyway.
 
 **Subagents:** your final report is your impact. Start it with one bold sentence on how the work made things better, with numbers (`**One person is one person now: 109K split board members merged, so board links stop double counting.**`). The plugin keeps that sentence, or your first 2 to 3 lines.
 

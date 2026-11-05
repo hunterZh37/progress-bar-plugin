@@ -1,6 +1,8 @@
 import type { EngineInterface } from 'claude-code'
+import type { Gains } from '../types'
 
 import { impactLines, saveDone } from './done'
+import { pickGains } from './goal'
 import { slug } from './render'
 import { sessionKeyOf } from './route'
 
@@ -10,7 +12,7 @@ import { sessionKeyOf } from './route'
 
 const DIR_REL = '.claude-progress'
 // Data files in ~/.claude-progress that are never jobs, so no report may take their names.
-const RESERVED = new Set(['inbox', 'actions', 'max-usage', 'channels', 'topology'])
+const RESERVED = new Set(['inbox', 'actions', 'max-usage', 'channels', 'topology', 'goal'])
 
 export const PROGRESS_TOOL = {
   name: 'progress_report',
@@ -22,19 +24,21 @@ export const PROGRESS_TOOL = {
       done: { type: 'number', description: 'Steps finished so far.' },
       total: { type: 'number', description: 'Steps in all, above 0.' },
       step: { type: 'string', description: 'A few words on the current step.' },
-      why: { type: 'string', description: 'What the job unlocks for the person. Shown as "unlocks: ...".' },
+      why: { type: 'string', description: 'What the job unlocks for the person, in plain words. Shown dim under its row.' },
       parent: { type: 'string', description: 'Optional slug of the bigger job this is part of.' },
       slug: { type: 'string', description: 'Optional file name. Default: the slug of the title.' },
       reads: { type: 'string', description: 'Optional. What the job reads, a few words. Example: nombot.board_members_history. Shown on the Topology tab.' },
       writes: { type: 'string', description: 'Optional. What the job writes, a few words. Example: Postgres via work-mac. Shown on the Topology tab.' },
       impact: { type: 'string', description: 'How the finished job made things better: what the data or product now has or gets right, with the key number, one to three short lines (newlines split them). No commit ids or file names. Example: 1.65M more board seats, so board links and people search see whole boards. Shown when its DONE row is opened.' },
+      area: { type: 'string', description: 'Which part of the goal (~/.claude-progress/goal.json areas) the job improves, by name. Example: Boards & people. Always set it, so the Status panel groups the job under that area.' },
+      gains: { type: 'object', description: 'What the job makes better, by lens: any of cost, quality, speed, each a short plain line with a number when possible. Example: {"quality": "1.65M more board seats counted", "speed": "labels in 7h instead of 12h"}. State the ones that apply.', properties: { cost: { type: 'string' }, quality: { type: 'string' }, speed: { type: 'string' } } },
       finished: { type: 'boolean', description: 'true removes the bar once the job is over. Pass impact with it.' },
     },
     required: ['title'],
   },
 }
 
-export type ReportInput = { title: string; done?: number; total?: number; step?: string; why?: string; parent?: string; slug?: string; reads?: string; writes?: string; impact?: string; finished?: boolean }
+export type ReportInput = { title: string; done?: number; total?: number; step?: string; why?: string; parent?: string; slug?: string; reads?: string; writes?: string; impact?: string; area?: string; gains?: Gains; finished?: boolean }
 export type Owner = { session: string; cwd: string }
 
 /** The progress file's JSON for a report. `startedAt` comes from the file it replaces, else now. */
@@ -53,6 +57,9 @@ export function reportBody(i: ReportInput, owner: Owner, startedAt: number): Rec
   if (i.writes?.trim()) out.writes = i.writes.trim()
   const impact = impactLines(i.impact)
   if (impact.length) out.impact = impact.join('\n')
+  if (i.area?.trim()) out.area = i.area.trim()
+  const gains = pickGains(i.gains)
+  if (gains) out.gains = gains
   if (owner.session) out.session = owner.session
   if (owner.cwd) out.cwd = owner.cwd
   return out
@@ -91,6 +98,7 @@ export async function writeReport($: EngineInterface, h: string, i: ReportInput,
     const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
     await saveDone($, h, {
       slug: name, title: i.title?.trim() || str(prev.title) || '', why: i.why?.trim() || str(prev.why), impact, step: str(prev.step),
+      area: i.area?.trim() || str(prev.area), gains: pickGains(i.gains) ?? pickGains(prev.gains),
       started: typeof prev.startedAt === 'number' ? prev.startedAt : undefined, finished: await $.clock.now(), session: o.session || undefined, kind: 'job',
     }).catch(() => undefined)
     await $.process.run(['rm', '-f', path]).catch(() => undefined)
