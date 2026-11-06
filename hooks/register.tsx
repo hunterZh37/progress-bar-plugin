@@ -13,7 +13,7 @@ import { macClicks, parseMacClicks } from './mac'
 import { checkpointCommand, noteStatusLine, panelCommand, registerPanel, startPanel } from './panel'
 import { FILE_FRESH_MS, FRESH_MS, closestFile, eta, pickMeta, expandHome, rateLeft, trackJob, lines, parseProgress, parseWatch, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
 import { PROJECTS_REL, gitRootOf, resolveProject, sessionProject } from './project'
-import { LONG_BASH_MS, PROGRESS_TOOL, endBackground, endShell, mirrorTasks, startShell, taskCreated, taskList, taskUpdated, touchShells, writeReport } from './report'
+import { LONG_BASH_MS, PROGRESS_TOOL, backgroundShellIds, endBackground, endShell, endShellsFor, finishedTaskIds, mirrorTasks, startShell, taskCreated, taskList, taskUpdated, touchShells, writeReport } from './report'
 import type { Task } from './report'
 import { PROJECT_LINE, pickOwner, routeOf, sessionKeyOf as keyOf } from './route'
 import type { Progress, Row, Track } from './render'
@@ -450,7 +450,22 @@ async function sessionKeyOf($: EngineInterface): Promise<string> {
 // Each session writes its own subagents to agents-<session>.txt, so two open sessions never overwrite each other.
 // Job files that name this session (or its project) go to jobs-<session>.txt. Job files that name no owner are the
 // same for every session, so they go to one shared jobs.txt.
+// Background shells end when the transcript shows their finished notice. Stop hooks don't always list background
+// tasks, so a row could otherwise stay "running in the background" long after the command ended. Checked every 30 s.
+let shellCheckAt = 0
+async function endFinishedShells($: EngineInterface) {
+  const ids = backgroundShellIds()
+  const now = await $.clock.now()
+  if (!ids.length || !txBase || now - shellCheckAt < 30_000) return
+  shellCheckAt = now
+  let text = ''
+  try { text = (await $.process.run(['tail', '-c', '4000000', `${txBase}.jsonl`])).stdout } catch { return }
+  const done = finishedTaskIds(text.replace(/\\n/g, '\n'), ids)
+  if (done.size) await endShellsFor($, done)
+}
+
 async function poll($: EngineInterface) {
+  await endFinishedShells($).catch(() => undefined)
   await touchShells($)
   const { rows, now, shared } = await collect($)
   const home = await resolveHome($)

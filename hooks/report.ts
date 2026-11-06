@@ -199,6 +199,24 @@ export async function touchShells($: EngineInterface) {
   for (const [path, s] of liveShells) await $.fs.write(path, s.body).catch(() => undefined)
 }
 
+/** The task ids of background shells still shown as working rows. */
+export const backgroundShellIds = () => [...liveShells.values()].map(s => s.taskId).filter((t): t is string => !!t)
+
+/** Ends the rows of background shells whose task ids are in `done` (finished, failed or stopped). */
+export async function endShellsFor($: EngineInterface, done: ReadonlySet<string>) {
+  for (const [path, s] of [...liveShells]) if (s.taskId && done.has(s.taskId)) await endShell($, path)
+}
+
+/** Task ids the session transcript reports as over: `<task-id>X</task-id> ... <status>completed|failed|killed|stopped`. */
+export function finishedTaskIds(text: string, ids: readonly string[]): Set<string> {
+  const out = new Set<string>()
+  for (const id of ids) {
+    const re = new RegExp(`<task-id>${id.replace(/[^A-Za-z0-9_-]/g, '')}</task-id>[\\s\\S]{0,600}?<status>(completed|failed|killed|stopped|error)`, 'i')
+    if (re.test(text)) out.add(id)
+  }
+  return out
+}
+
 /** At a Stop: background shells no longer listed as running are over. */
 export async function endBackground($: EngineInterface, running: readonly { id: string; status?: string }[]) {
   const ids = new Set(running.filter(t => !t.status || /running|pending/.test(t.status)).map(t => t.id))

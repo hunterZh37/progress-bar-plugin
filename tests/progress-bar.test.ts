@@ -5,6 +5,7 @@ import type { On } from 'claude-code'
 import { CONN_CACHE_REL, connUrl, connName, connSummary, formatCache, parseAccounts, parseCache, parseLogin, parseMcpList } from '../hooks/connectors'
 import { CHECKPOINT_PY } from '../hooks/checkpoint'
 import { closestFile } from '../hooks/render'
+import { finishedTaskIds } from '../hooks/report'
 import { clock } from '../hooks/done'
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
@@ -1444,4 +1445,10 @@ test('closestFile pairs an agent with a slightly different progress file name', 
   expect(closestFile('Hunty links held $0.36B grants', files)).toBe('hunty-link-held-036b-grants')
   expect(closestFile('Hunty board links for busy members', files)).toBe('hunty-board-links-busy-members')
   expect(closestFile('Mac Jev labeling pilot', files)).toBe(null)
+})
+
+test('finishedTaskIds finds background shells the transcript reports as finished', () => {
+  const t = '<task-notification>\n<task-id>bl0thqofw</task-id>\n<tool-use-id>x</tool-use-id>\n<output-file>/tmp/a</output-file>\n<status>completed</status>' +
+    '<task-notification><task-id>abc123</task-id><status>running</status>'
+  expect([...finishedTaskIds(t, ['bl0thqofw', 'abc123', 'zzz'])]).toEqual(['bl0thqofw'])
 })
