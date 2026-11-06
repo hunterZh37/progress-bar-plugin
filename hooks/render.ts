@@ -174,6 +174,28 @@ export const FILE_FRESH_MS = 30 * 60_000
 /** "Fix the Login bug!" -> "fix-the-login-bug" */
 export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 
+/** Words of a slug for loose matching: digits joined ("0-36b" and "036b" agree), a plural or verb "s" dropped. */
+const words = (s: string) => new Set(slug(s).replace(/(\d)-(?=\d)/g, '$1').split('-').filter(Boolean).map(w => (w.length > 3 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w)))
+
+/**
+ * The progress file an agent most likely writes when none is named exactly after its description: the agent may
+ * pick a slightly different name ("hunty-link-held-036b-grants" for "Hunty links held $0.36B grants"). Picks the name
+ * sharing the most words (at least 60% of the words in either, and at least 2), else null.
+ */
+export function closestFile(desc: string, names: string[]): string | null {
+  const a = words(desc)
+  let best: string | null = null
+  let top = 0
+  for (const n of names) {
+    const b = words(n)
+    let both = 0
+    for (const w of a) if (b.has(w)) both++
+    const score = both / (a.size + b.size - both || 1)
+    if (both >= 2 && score >= 0.6 && score > top) { best = n; top = score }
+  }
+  return best
+}
+
 export const ago = (ms: number) => {
   const m = Math.max(0, Math.round(ms / 60_000))
   return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m`

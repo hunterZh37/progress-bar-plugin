@@ -17,7 +17,7 @@ Live progress bars and a to-do list in the Claude Code status line. One line per
 - **Subagents:** every running subagent gets a line with its age, tool calls and last tool.
 - **Your own tasks:** when Claude keeps a task list (TodoWrite, TaskCreate, TaskUpdate) in the main session, the list shows as one bar: done of total, with the item in progress as its title. No skill or instructions needed.
 - **Long commands:** a Bash command that runs over a minute, or in the background, shows as a working row with its description until it ends.
-- **Real bars:** a subagent or shell job that writes `~/.claude-progress/<slug>.json` gets a bar with percent, count and step.
+- **Real bars:** a subagent or shell job that writes `~/.claude-progress/<slug>.json` gets a bar with percent, count and step. A subagent's slug is its description in lower case with dashes. A file named a little differently (link for links, 036b for 0.36B) still joins that agent's row, so a job never shows twice.
 - **Bars from logs:** a job that only writes a log (psql, a vendor tool, a remote job) gets a bar from a watch file: done/total read from the log by regex, an ETA, and `■ stopped` or `✖ error` when it dies or fails.
 - **Skill:** `progress-reporting` tells Claude to write those files for multi-step work and to ask subagents to do the same.
 - **Groups:** lines sort into **TO-DO**, **PROBLEMS**, **RUNNING**, **WAITING** and **DONE**. A job that ends shows as `finished 14:05` for 30 minutes, unless its progress file still exists. Duplicate rows of one job merge. A row is **DONE** only on `✔`, `100%`, or `· done` at the end (or `· done:`), so `done in 1h` stays RUNNING. `waiting`, `pending` and `waits for` go to **WAITING**.

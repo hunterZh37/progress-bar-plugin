@@ -4,6 +4,7 @@ import type { On } from 'claude-code'
 
 import { CONN_CACHE_REL, connUrl, connName, connSummary, formatCache, parseAccounts, parseCache, parseLogin, parseMcpList } from '../hooks/connectors'
 import { CHECKPOINT_PY } from '../hooks/checkpoint'
+import { closestFile } from '../hooks/render'
 import { clock } from '../hooks/done'
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
@@ -1435,4 +1436,12 @@ test('a transcript tells a waiting agent: background tasks still running, its la
   const w = { desc: 'Mac Jev first pass for labels', status: 'waiting', tasks: [], kids: [], jobs, step: '', lastTool: 'Bash', lastWhat: '', lastAt: 0, waitSince: NOW - 25 * 60_000, files: sc.files }
   expect(waitSegs(w, NOW)).toEqual(['waiting on: Mac label top-ups 2021-23 (90%)', 'waiting 25m'])
   expect(waitSegs({ ...w, tasks: sc.running.map(x => ({ ...x, kind: 'shell' as const, at: 0 })) }, NOW)[0]).toBe('waiting on: One long wait with tighter error pattern, 10 min checks (Mac label top-ups 2021-23 90%)')
+})
+
+test('closestFile pairs an agent with a slightly different progress file name', () => {
+  const files = ['hunty-link-ein-reported-grants', 'hunty-link-held-036b-grants', 'hunty-board-links-busy-members']
+  expect(closestFile('Hunty links EIN-reported grants', files)).toBe('hunty-link-ein-reported-grants')
+  expect(closestFile('Hunty links held $0.36B grants', files)).toBe('hunty-link-held-036b-grants')
+  expect(closestFile('Hunty board links for busy members', files)).toBe('hunty-board-links-busy-members')
+  expect(closestFile('Mac Jev labeling pilot', files)).toBe(null)
 })

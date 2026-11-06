@@ -11,7 +11,7 @@ import { resolveHome } from './home'
 import { USAGE_CHECK, probeUsage } from './usage'
 import { macClicks, parseMacClicks } from './mac'
 import { checkpointCommand, noteStatusLine, panelCommand, registerPanel, startPanel } from './panel'
-import { FILE_FRESH_MS, FRESH_MS, eta, pickMeta, expandHome, rateLeft, trackJob, lines, parseProgress, parseWatch, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
+import { FILE_FRESH_MS, FRESH_MS, closestFile, eta, pickMeta, expandHome, rateLeft, trackJob, lines, parseProgress, parseWatch, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
 import { PROJECTS_REL, gitRootOf, resolveProject, sessionProject } from './project'
 import { LONG_BASH_MS, PROGRESS_TOOL, endBackground, endShell, mirrorTasks, startShell, taskCreated, taskList, taskUpdated, touchShells, writeReport } from './report'
 import type { Task } from './report'
@@ -205,6 +205,19 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
   try { agents = await $.agent.list() } catch { agents = [] }
   const rows: Row[] = []
   const liveIds: string[] = []
+  // Fresh progress files, so an agent whose file name differs a little from its description still finds its own.
+  const loose: string[] = []
+  if (h) {
+    try {
+      for (const f of await $.fs.list(dir)) {
+        if (f.kind !== 'file' || !f.name.endsWith('.json') || f.name.endsWith(WATCH) || now - f.mtimeMs > FILE_FRESH_MS) continue
+        const n = f.name.slice(0, -5)
+        if (!DATA_FILES.has(n)) loose.push(n)
+      }
+    } catch { /* none */ }
+  }
+  const exact = new Set(agents.filter(a => LIVE.has(a.status)).map(a => slug(a.description)))
+  const claimed = new Set<string>()
   for (const a of agents) {
     if (!LIVE.has(a.status)) continue
     const s = seen.get(a.id) ?? { startedAt: now, tools: 0, lastTool: '' }
@@ -217,7 +230,10 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
     let p: Progress | null = null
     if (h) {
       try {
-        const text = String(await $.fs.read(`${dir}/${slug(a.description)}.json`))
+        const own = slug(a.description)
+        const name = loose.includes(own) ? own : closestFile(a.description, loose.filter(n => !exact.has(n) && !claimed.has(n))) ?? own
+        claimed.add(name)
+        const text = String(await $.fs.read(`${dir}/${name}.json`))
         p = parseProgress(text)
         const raw = JSON.parse(text) as Record<string, unknown>
         if (raw && typeof raw === 'object') agentFiles.set(a.id, raw)
@@ -227,7 +243,7 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
   }
   const shared = new Set<string>()
   if (!h) { await explainWaits($, agents, rows, [], now); return { rows, now, shared } }
-  const used = new Set(rows.map(r => slug(r.description)))
+  const used = new Set([...rows.map(r => slug(r.description)), ...claimed])
   let projectsText = ''
   try { projectsText = String(await $.fs.read(`${h}/${PROJECTS_REL}`)) } catch { projectsText = '' }
   let project = ''
