@@ -198,6 +198,7 @@ When a RUNNING job finishes (a `<job> done` event in `events.jsonl`, logged once
 Next up from the to-do list: <item>. Start it with a progress bar, and mark it done on the to-do list (/progress-bar todo done) once it runs.
 ```
 
+- **Still running:** a blocker counts as running while its progress file is fresh and has not reached `done` equal to `total`, even when its row says starting or its bar rounds to 100% during a last step. So an `(after X)` item never starts early.
 - **Machine:** a `<host>: name` job, or a title that starts with a heading name (`Hunty CPU batch`), belongs to that heading. Any other job belongs to `[mac]` or `[local]`. `[you]` items never start on their own.
 - **Mode:** `/progress-bar autonext on|off|ask`, saved in `~/.claude-progress/.state/autonext`. `on` sends the prompt. `ask` (the default) shows a toast and puts the prompt in the prompt box as a suggestion, so Tab starts it. `off` does nothing. The panel menu's `▶ Start` sends the same prompt for any ready item.
 - **Caps:** `~/.claude-progress/.state/caps` holds one `machine=N` per line (default `mac=3`, `hunty=2`). A machine with N or more RUNNING rows waits, and the next one starts once a row finishes.

@@ -93,8 +93,28 @@ async function runningRows($: EngineInterface, dir: string, now: number): Promis
       out.push({ name, title: titles[slug(name)]?.title ?? '' })
     }
   }
+  // Any fresh progress file that has not reached done == total is still running, whatever row the grouper drew for it
+  // (a "starting" row with no progress yet, or a bar that rounds to 100% while the job finishes its last step).
+  let jsons: Awaited<ReturnType<typeof $.fs.list>> = []
+  try { jsons = await $.fs.list(dir) } catch { jsons = [] }
+  for (const f of jsons) {
+    if (f.kind !== 'file' || !f.name.endsWith('.json') || f.name.endsWith('.watch.json') || now - f.mtimeMs > FRESH_MS) continue
+    const key = f.name.slice(0, -5)
+    if (PROGRESS_DATA.has(key) || seen.has(slug(key))) continue
+    let j: { done?: unknown; total?: unknown; step?: unknown } = {}
+    try { j = JSON.parse(String(await $.fs.read(`${dir}/${f.name}`))) } catch { continue }
+    const done = Number(j.done), total = Number(j.total)
+    const hasCounts = Number.isFinite(done) && Number.isFinite(total) && total > 0
+    if (!hasCounts && typeof j.step !== 'string') continue
+    if (hasCounts && done >= total) continue
+    seen.add(slug(key))
+    out.push({ name: key, title: pickMeta(j as Record<string, unknown>).title ?? titles[slug(key)]?.title ?? '' })
+  }
   return out
 }
+
+/** Data files in the progress folder, never jobs. */
+const PROGRESS_DATA = new Set(['inbox', 'actions', 'max-usage', 'channels', 'topology', 'goal'])
 
 /** mkdir as a lock: true when this call made the folder. */
 async function claim($: EngineInterface, path: string): Promise<boolean> {
