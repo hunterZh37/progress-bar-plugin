@@ -16,7 +16,7 @@ import { resolveHome } from './home'
 import { sessionProject } from './project'
 import { blocker, doneEvents, isRunningRow, jobMachine, nextPrompt, openItems, parseCaps, parseMode, ranked, rowName } from './priority'
 import type { Mode } from './priority'
-import { FRESH_MS, parseTitles, pickMeta, slug } from './render'
+import { FILE_FRESH_MS, parseTitles, pickMeta, slug } from './render'
 
 const DIR_REL = '.claude-progress'
 const OWN_DELAY_S = 20
@@ -73,7 +73,7 @@ async function runningRows($: EngineInterface, dir: string, now: number): Promis
       let title = titles[slug(name)]?.title ?? ''
       try {
         const st = await $.fs.stat(`${dir}/${slug(name)}.json`)
-        if (now - st.mtimeMs < FRESH_MS) title = pickMeta(JSON.parse(String(await $.fs.read(`${dir}/${slug(name)}.json`)))).title ?? title
+        if (now - st.mtimeMs < FILE_FRESH_MS) title = pickMeta(JSON.parse(String(await $.fs.read(`${dir}/${slug(name)}.json`)))).title ?? title
       } catch { /* no progress file */ }
       out.push({ name, title })
     }
@@ -98,7 +98,7 @@ async function runningRows($: EngineInterface, dir: string, now: number): Promis
   let jsons: Awaited<ReturnType<typeof $.fs.list>> = []
   try { jsons = await $.fs.list(dir) } catch { jsons = [] }
   for (const f of jsons) {
-    if (f.kind !== 'file' || !f.name.endsWith('.json') || f.name.endsWith('.watch.json') || now - f.mtimeMs > FRESH_MS) continue
+    if (f.kind !== 'file' || !f.name.endsWith('.json') || f.name.endsWith('.watch.json') || now - f.mtimeMs > FILE_FRESH_MS) continue
     const key = f.name.slice(0, -5)
     if (PROGRESS_DATA.has(key) || seen.has(slug(key))) continue
     let j: { done?: unknown; total?: unknown; step?: unknown } = {}

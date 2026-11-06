@@ -11,7 +11,7 @@ import { resolveHome } from './home'
 import { USAGE_CHECK, probeUsage } from './usage'
 import { macClicks, parseMacClicks } from './mac'
 import { checkpointCommand, noteStatusLine, panelCommand, registerPanel, startPanel } from './panel'
-import { FRESH_MS, eta, pickMeta, expandHome, rateLeft, trackJob, lines, parseProgress, parseWatch, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
+import { FILE_FRESH_MS, FRESH_MS, eta, pickMeta, expandHome, rateLeft, trackJob, lines, parseProgress, parseWatch, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
 import { PROJECTS_REL, gitRootOf, resolveProject, sessionProject } from './project'
 import { LONG_BASH_MS, PROGRESS_TOOL, endBackground, endShell, mirrorTasks, startShell, taskCreated, taskList, taskUpdated, touchShells, writeReport } from './report'
 import type { Task } from './report'
@@ -270,7 +270,7 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
     }
     if (f.kind !== 'file' || !f.name.endsWith('.json')) continue
     const name = f.name.slice(0, -5)
-    if (used.has(name) || now - f.mtimeMs > FRESH_MS) continue
+    if (used.has(name) || now - f.mtimeMs > FILE_FRESH_MS) continue
     let text = ''
     try { text = String(await $.fs.read(`${dir}/${f.name}`)) } catch { continue }
     const p = parseProgress(text)
@@ -639,7 +639,7 @@ async function clear($: EngineInterface) {
   const now = await $.clock.now()
   const dir = dirOf(h)
   const stale: string[] = []
-  for (const [sub, maxAge] of [['', FRESH_MS], ['/.lines', 2 * 60_000]] as const) {
+  for (const [sub, maxAge] of [['', FILE_FRESH_MS], ['/.lines', 2 * 60_000]] as const) {
     let files: Awaited<ReturnType<typeof $.fs.list>> = []
     try { files = await $.fs.list(dir + sub) } catch { files = [] }
     for (const f of files) {

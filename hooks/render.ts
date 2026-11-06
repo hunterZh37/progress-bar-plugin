@@ -167,6 +167,9 @@ export const expandHome = (p: string, home: string) => (p === '~' ? home : p.sta
 
 export const MAX_LINES = 6
 export const FRESH_MS = 10 * 60_000
+/** A progress file stays shown this long after its last write. Agents write every 10 minutes and one long step
+ * (a database refresh) can run past that, so a 10-minute limit dropped the bar and impact line of live jobs. */
+export const FILE_FRESH_MS = 30 * 60_000
 
 /** "Fix the Login bug!" -> "fix-the-login-bug" */
 export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')

@@ -21,7 +21,7 @@ import type { TopoJob } from './topology'
 import { turnOnStatusLine } from './setup'
 import { parseSaved } from './usage'
 import type { UsageReading } from './usage'
-import { FEW_STEPS, FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, slug } from './render'
+import { FEW_STEPS, FILE_FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, slug } from './render'
 import type { Action, ActionUi, Channel, ChatMsg, ChatState, Checkpoint, Conn, DoneRec, Ev, GoalArea, Health, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
 
 // The Status panel: the grouped status line, drawn in a docked pane beside the chat.
@@ -548,7 +548,7 @@ async function readMeta($: EngineInterface, h: string) {
   try {
     const now = await $.clock.now()
     for (const f of await $.fs.list(dir)) {
-      if (f.kind !== 'file' || !f.name.endsWith('.json') || f.name.endsWith('.watch.json') || now - f.mtimeMs > Math.max(META_MS, FRESH_MS)) continue
+      if (f.kind !== 'file' || !f.name.endsWith('.json') || f.name.endsWith('.watch.json') || now - f.mtimeMs > Math.max(META_MS, FILE_FRESH_MS)) continue
       try {
         const m = pickMeta(JSON.parse(String(await $.fs.read(`${dir}/${f.name}`))))
         const k = f.name.slice(0, -5)
