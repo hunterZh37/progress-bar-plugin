@@ -87,6 +87,9 @@ const dirOf = (h: string) => `${h}/.claude-progress`
 // A background agent that sits waiting with no tool call seen for this long is over: its report went back before a
 // plugin reload, so the reload never saw its SubagentHandback.
 const STALE_WAIT_MS = 30 * 60_000
+// A waiting agent whose transcript has not changed for this long is abandoned: the background work it waits on ended
+// long ago (or was stopped), and its finished notices never reached it, so it would sit in WAITING forever.
+export const ABANDONED_WAIT_MS = 6 * 3_600_000
 const TRACK_REL = '.state/job-track.json'
 const TRACK_KEEP_MS = 2 * 86_400_000
 
@@ -227,6 +230,12 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
     ownJobs.add(slug(a.description))
     if (s.lastTool === 'SubagentHandback') continue
     if (a.status === 'waiting' && s.tools === 0 && now - s.startedAt > STALE_WAIT_MS) continue
+    if (a.status === 'waiting') {
+      const tp = txPath(a.id)
+      let last = 0
+      try { if (tp) last = (await $.fs.stat(tp)).mtimeMs } catch { last = 0 }
+      if (last && now - last > ABANDONED_WAIT_MS) continue
+    }
     let p: Progress | null = null
     if (h) {
       try {
