@@ -68,12 +68,12 @@ export async function gitRootOf($: EngineInterface, dir: string): Promise<string
 let cache: { cwd: string; root: string } | null = null
 
 /** This session's project and its absolute list file. `h` is the home folder. */
-export async function sessionProject($: EngineInterface, h: string): Promise<Project & { path: string; cwd: string }> {
+export async function sessionProject($: EngineInterface, h: string): Promise<Project & { path: string; cwd: string; root: string }> {
   let cwd = ''
   try { cwd = await $.session.cwd() } catch { cwd = '' }
   if (cwd && cache?.cwd !== cwd) cache = { cwd, root: await gitRootOf($, cwd) }
   let map = ''
   try { map = String(await $.fs.read(`${h}/${PROJECTS_REL}`)) } catch { map = '' }
   const p = resolveProject(cwd, cwd ? cache!.root : '', map, h)
-  return { ...p, path: `${h}/.claude-progress/${p.file}`, cwd }
+  return { ...p, path: `${h}/.claude-progress/${p.file}`, cwd, root: cwd ? cache!.root || cwd : '' }
 }

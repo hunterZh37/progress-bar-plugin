@@ -111,7 +111,7 @@ Easiest: Claude calls the plugin's `progress_report` tool (title, why, done, tot
 | `session` | Optional. The Claude Code session id (`$CLAUDE_CODE_SESSION_ID` in Bash). The job shows only in that session while it is open |
 | `cwd` | Optional. The absolute folder the job works for. The job shows in every session of that folder's project (same project as Per-project to-dos) |
 | `reads`, `writes` | Optional short strings for the Topology tab: what the job reads and writes, like `nombot.board_members_history` or `Postgres via work-mac`. Without `reads` a job on a helper machine reads from the data host's database. Without `writes` it is not drawn writing anything |
-| `area` | Which part of the goal the job improves, by name, from `~/.claude-progress/goal.json` (see **Goal view**). Example: `Boards & people`. Set it on every job. Without it the panel guesses from keywords in the title, why and impact, else `Other` |
+| `area` | Which part of the goal the job improves, by name, from the project's `~/.claude-progress/goals/<project>.json` (see **Goal view**). Example: `Boards & people`. Set it on every job when the project's goal has areas. Without it the panel guesses from keywords in the title, why and impact, else `Other` |
 | `gains` | Optional. What the job makes better, by lens: any of `cost`, `quality`, `speed`, each a short plain line with a number when possible. Example: `{"quality": "1.65M more board seats counted", "speed": "labels in 7h instead of 12h", "cost": "$14 of Jev instead of 34h of Claude"}`. Name only the ones that apply |
 | `impact` | Optional, set it before the job ends. How the job made things better: what the data or product now has or gets right, with the key number, one to three short lines (a string with newlines, or a list). Skip commit ids and file names. Example: `1.65M more board seats, so board links and people search see whole boards`. Shown when its DONE row is opened |
 
@@ -285,9 +285,9 @@ Making the generosity database better · 6 done today · 4 running
 - **Machines:** the helper machine lines live on the Topology tab, not the List tab.
 - **No emoji:** the panel and status line use words and single-width symbols only (`✓ ▸ ▾ ◐ ━ ┄ ⏸ ▶ ○ ·`), so every terminal draws them the same.
 
-### goal.json
+### Per-project goals
 
-`~/.claude-progress/goal.json` sets the anchor, the areas and the lenses for you. The panel writes the defaults the first time and never overwrites the file, so edit it freely:
+Each project has its own goal: `~/.claude-progress/goals/<project>.json`, where `<project>` is the same slug as its to-do list (`~/Desktop/NomBot` is `desktop-nombot`). It sets the anchor, the areas and the lenses. A project with no file shows its folder name as the anchor and puts every job under `Other`. The panel never writes or overwrites these files, so create and edit them freely. The old `~/.claude-progress/goal.json` is read only by a session with no folder:
 
 ```json
 {

@@ -13,9 +13,9 @@ The progress-bar plugin draws a bar for every progress file in `~/.claude-progre
 
 ## Always say which part of the goal gets better, and how
 
-The Status panel marks every job with an area of the person's goal (`~/.claude-progress/goal.json`, for example "Making the generosity database better" with areas Organizations, Finances, Boards & people, Grants, Places, Causes, Answer quality, Tools). Anyone should be able to read it at a glance. On every job, set:
+The Status panel marks every job with an area of the project's goal (`~/.claude-progress/goals/<project>.json`, the project slug as for its to-do list; for example "Making the generosity database better" with areas Organizations, Finances, Boards & people, Grants, Places, Causes, Answer quality, Tools). Anyone should be able to read it at a glance. On every job, set:
 
-- **area**: the goal area it improves, by name (`Boards & people`). Pick from goal.json's areas. Never leave it out: a guess from keywords can mark a job with the wrong area.
+- **area**: the goal area it improves, by name (`Boards & people`). Pick from that file's areas; a project with no file has none, so leave it out there. When there are areas, never leave it out: a guess from keywords can mark a job with the wrong area.
 - **title**: the improvement itself, in plain words, not the machine or the mechanism (`Every board member counted, not just 25`).
 - **gains**: which of cost, quality, speed the job makes better, each a short plain line with a number when possible: `{"quality": "1.65M more board seats counted", "speed": "labels in 7h instead of 12h", "cost": "$14 of Jev instead of 34h of Claude"}`. Name only the ones that apply.
 - **impact** (before it ends): how the database, or whatever the goal names, is better now, with the key number.
@@ -50,7 +50,7 @@ Path: `~/.claude-progress/<slug>.json`
 - **step**: a few words on the current step.
 - **startedAt**: optional, milliseconds since the epoch. Without it the file's time is used.
 - **title**: plain words for the improvement the job makes, so a person knows at a glance why it runs. Name the outcome, not the mechanism: `Every board member counted, not just 25` rather than `Board lists past 25 seats`, `Know where more orgs serve` rather than `Service places round 3`. The Status panel shows it in bold above the slug.
-- **area**: the goal area the job improves, by name from `~/.claude-progress/goal.json` (`Grants`, `Boards & people`). Always set it.
+- **area**: the goal area the job improves, by name from `~/.claude-progress/goals/<project>.json` (`Grants`, `Boards & people`). Set it whenever the project's goal has areas.
 - **gains**: an object with any of `cost`, `quality`, `speed`, each a short plain line with a number when possible. State which of the three your job improves. They show in the job's opened card, `quality: <line>`.
 - **why**: what the job unlocks for the person (`the weekly report`). Shown dim under its row.
 - **parent**: the slug of the bigger job this is part of. Set it when a subagent or script works for another job that has a progress file. While both run, the child draws inside the parent's card, and the parent reads `waiting on: <child>` instead of stuck.

@@ -5,15 +5,18 @@ import type { Gains, Goal, GoalArea, GoalLens } from '../types'
 
 // The goal view of the List tab: one anchor goal ("Making the generosity database better"), the areas of it a job
 // improves (Organizations, Finances, ...) and the lenses of "better" (lower cost, better quality, faster speed).
-// ~/.claude-progress/goal.json holds them per person: {anchor, areas:[{id,name,tag,keywords}], lenses:[{id,name,keywords}]}. An `icon` from older files is read and ignored:
-// the panel shows words, never emoji.
-// The panel writes the defaults once when the file is missing, and never overwrites it.
+// Each project has its own: ~/.claude-progress/goals/<slug>.json, the slug as for its to-do list (desktop-nombot):
+// {anchor, areas:[{id,name,tag,keywords}], lenses:[{id,name,keywords}]}. An `icon` from older files is read and ignored:
+// the panel shows words, never emoji. A project with no file shows its folder name and no areas; nothing is written.
+// ~/.claude-progress/goal.json is the old one-goal-for-everything file: only a session with no folder still reads it
+// (and writes the defaults there once when it is missing), so one project's goal no longer heads every project.
 // A job names its area with `area` and what it made better with `gains` ({cost, quality, speed}) in its progress file
 // or progress_report. With no `area`, the area comes from keywords in its title, why and impact, else Other.
 // With no `gains`, a finished job's lens comes from its impact wording (cost words, then speed words, else quality),
 // marked as inferred.
 
 export const GOAL_REL = '.claude-progress/goal.json'
+export const GOALS_DIR_REL = '.claude-progress/goals'
 
 export const DEFAULT_GOAL: Goal = {
   anchor: 'Making the generosity database better',
@@ -44,11 +47,14 @@ const words = (x: unknown) => (Array.isArray(x) ? x.map(str).filter(Boolean).map
 /** An area's short tag when goal.json names none: the first word of its name, at most 8 letters ("Boards & people" -> "Boards"). */
 export const tagOf = (name: string) => (name.split(/[^A-Za-z0-9]+/).find(Boolean) ?? name).slice(0, 8)
 
-/** goal.json as a goal. A missing or bad part falls back to the default's. */
-export function parseGoal(text: string): Goal {
+/** A project with no goal file: its folder name as the anchor, no areas (every job is Other), the usual lenses. */
+export const projectGoal = (name: string): Goal => ({ anchor: name || 'This project', areas: [], lenses: DEFAULT_GOAL.lenses })
+
+/** A goal file as a goal. A missing or bad part falls back to `fallback`'s (the defaults unless given). */
+export function parseGoal(text: string, fallback: Goal = DEFAULT_GOAL): Goal {
   let raw: Record<string, unknown>
-  try { raw = JSON.parse(text) as Record<string, unknown> } catch { return DEFAULT_GOAL }
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return DEFAULT_GOAL
+  try { raw = JSON.parse(text) as Record<string, unknown> } catch { return fallback }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fallback
   const areas = (Array.isArray(raw.areas) ? raw.areas : []).flatMap((a): GoalArea[] => {
     const r = (a ?? {}) as Record<string, unknown>
     const name = str(r.name)
@@ -59,11 +65,23 @@ export function parseGoal(text: string): Goal {
     const r = ((Array.isArray(raw.lenses) ? raw.lenses : []) as Record<string, unknown>[]).find(x => x && str(x.id).toLowerCase() === d.id)
     return r ? { id: d.id, name: str(r.name) || d.name, keywords: Array.isArray(r.keywords) ? words(r.keywords) : d.keywords } : d
   })
-  return { anchor: str(raw.anchor) || DEFAULT_GOAL.anchor, areas: areas.length ? areas : DEFAULT_GOAL.areas, lenses }
+  return { anchor: str(raw.anchor) || fallback.anchor, areas: areas.length ? areas : fallback.areas, lenses }
 }
 
-/** Reads goal.json, writing the defaults first when it is missing. Never overwrites a file that is there. */
-export async function readGoal($: EngineInterface, h: string): Promise<Goal> {
+/** A folder's last part, for the anchor of a project with no goal file: /Users/a/Desktop/agentic-scheduling -> agentic-scheduling. */
+export const folderName = (root: string) => root.replace(/\/+$/, '').split('/').pop() ?? ''
+
+/**
+ * The session's goal. In a project (`slug`), goals/<slug>.json, else the folder name and no areas; never written.
+ * With no project (a script run without a session), the old goal.json, writing the defaults first when it is missing.
+ */
+export async function readGoal($: EngineInterface, h: string, project?: { slug: string; root: string }): Promise<Goal> {
+  if (project?.slug && project.slug !== 'todo.txt') {
+    const fallback = projectGoal(folderName(project.root))
+    // A projects.txt value can be any path ("../x.txt"); only a plain slug names a goal file.
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(project.slug)) return fallback
+    try { return parseGoal(String(await $.fs.read(`${h}/${GOALS_DIR_REL}/${project.slug}.json`)), fallback) } catch { return fallback }
+  }
   const path = `${h}/${GOAL_REL}`
   try { return parseGoal(String(await $.fs.read(path))) } catch { /* missing */ }
   if (!(await $.fs.exists(path).catch(() => true))) await $.fs.write(path, `${JSON.stringify(DEFAULT_GOAL, null, 2)}\n`).catch(() => undefined)

@@ -28,7 +28,7 @@ export type Tab = 'list' | 'connectors' | 'github' | 'log' | 'chat' | 'topology'
 export type Meta = { title?: string; why?: string; parent?: string; reads?: string; writes?: string; area?: string; impact?: string; gains?: Gains }
 /** What a job made better, by lens: lower cost, better quality, faster speed. Each a short plain line, a number when possible. */
 export type Gains = { cost?: string; quality?: string; speed?: string }
-/** ~/.claude-progress/goal.json: the anchor goal, the areas of it a job can improve and the lenses of "better". */
+/** ~/.claude-progress/goals/<project>.json: a project's anchor goal, the areas of it a job can improve and the lenses of "better". */
 /** `tag`: the short word shown on rows and chips. `icon` is read from old files but no longer shown. */
 export type GoalArea = { id: string; name: string; tag: string; icon?: string; keywords: string[] }
 export type GoalLens = { id: 'cost' | 'quality' | 'speed'; name: string; icon?: string; keywords: string[] }

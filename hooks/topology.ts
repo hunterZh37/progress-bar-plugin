@@ -313,7 +313,7 @@ export function renderTopology(inp: TopoInput, width: number, open: ReadonlySet<
     // The trunk under the root, then one bar across to every leaf.
     if (n === 1) out.push(row(place([{ col: mid, text: '│', ...tone(branches[0]!) }], W)))
     else {
-      const bar = [...' '.repeat(centers[n - 1]! + 1)].map((_, x) => (x < centers[0]! ? ' ' : '─'))
+      const bar = [...' '.repeat(centers[n - 1]! + 1)].map((_, x): string => (x < centers[0]! ? ' ' : '─'))
       centers.forEach((c, i) => { bar[c] = i === 0 ? '┌' : i === n - 1 ? '┐' : '┬' })
       bar[mid] = bar[mid] === '┬' ? '┼' : '┴'
       out.push(row(place([{ col: mid, text: '│', dim: true }], W)))

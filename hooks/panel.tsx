@@ -13,7 +13,7 @@ import { markHandled, readInbox } from './inbox'
 import { isDarwin } from './mac'
 import { backfillAgent, clock, doneDetails, machineName, prettyName, readDone } from './done'
 import { clip, moveItem, nextPrompt, parseItem, rankTodos, shownTitle, todoRows as layoutTodos } from './priority'
-import { DEFAULT_GOAL, OTHER, anchorLine, areaOf, lensTags, plainTitle, readGoal } from './goal'
+import { DEFAULT_GOAL, OTHER, anchorLine, areaOf, lensTags, plainTitle, projectGoal, readGoal } from './goal'
 import type { LensTag } from './goal'
 import { sessionProject } from './project'
 import { DEFAULT_TOPOLOGY, queuesOf, readTopology, renderTopology, resolveMachine } from './topology'
@@ -88,7 +88,8 @@ const actionUiAtom = atom({ plugin: 'progress-bar', key: 'actionUi' } as const, 
 const healthAtom = atom({ plugin: 'progress-bar', key: 'health' } as const, { script: '', statusOff: '', note: '' } as Health)
 // Done records by slug (done.ts): what each finished job or agent changed.
 const doneAtom = atom({ plugin: 'progress-bar', key: 'done' } as const, {} as Record<string, DoneRec>)
-const goalAtom = atom({ plugin: 'progress-bar', key: 'goal' } as const, DEFAULT_GOAL)
+// Neutral until the first poll reads the session's own goal, so no project flashes another project's anchor.
+const goalAtom = atom({ plugin: 'progress-bar', key: 'goal' } as const, projectGoal(''))
 const DIR_REL = '.claude-progress'
 // Holds why the status line was not switched over, once that was logged, so the Log tab says it once, not every
 // session. The panel reads it for its "Turn on status line" line.
@@ -689,7 +690,7 @@ export async function pollPanel($: EngineInterface, h: string) {
   await readFolded($, h)
   await readTodos($, h)
   await readMeta($, h)
-  const goal = await readGoal($, h)
+  const goal = await readGoal($, h, await sessionProject($, h))
   if (JSON.stringify(await read($, goalAtom)) !== JSON.stringify(goal)) await update($, goalAtom, () => goal)
   const done = await readDone($, h)
   if (JSON.stringify(await read($, doneAtom)) !== JSON.stringify(done)) await update($, doneAtom, () => done)

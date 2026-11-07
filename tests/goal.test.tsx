@@ -1,8 +1,9 @@
 import { expect, mock, test } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { PANE, cells, fitLabel, rowCol } from '../hooks/panel'
-import { DEFAULT_GOAL, GOAL_REL, OTHER, anchorSummary, areaOf, areaSummary, groupByArea, inferLens, lensSummary, lensTags, parseGoal, pickGains, plainTitle } from '../hooks/goal'
+import { DEFAULT_GOAL, GOALS_DIR_REL, GOAL_REL, OTHER, folderName, projectGoal, readGoal, anchorSummary, areaOf, areaSummary, groupByArea, inferLens, lensSummary, lensTags, parseGoal, pickGains, plainTitle } from '../hooks/goal'
 import { parseDone } from '../hooks/done'
 import { reportBody } from '../hooks/report'
 import { draw } from './render'
@@ -190,6 +191,57 @@ test('goal.json: a custom file is read and never overwritten', async ($, on) => 
   expect(lines[lines.findIndex(l => /^  ◐ Tidy up/.test(l)) + 1]).toBe('    Login')
   expect(files[`${HOME}/${GOAL_REL}`]).toBe(mine)
   await ui.unmount()
+})
+
+const PROJECTS = (): Record<string, string> => ({
+  [SCRIPT]: statusScript(), [FLAG]: 'on\n',
+  [`${HOME}/${GOAL_REL}`]: JSON.stringify(DEFAULT_GOAL),
+  [`${HOME}/${GOALS_DIR_REL}/desktop-nombot.json`]: JSON.stringify({ anchor: 'Making the generosity database better', areas: [{ id: 'login', name: 'Login', tag: 'Login', keywords: ['tidy'] }] }),
+  [`${HOME}/Desktop/NomBot/.git`]: '', [`${HOME}/Desktop/agentic-scheduling/.git`]: '',
+  [`${DIR}/tidy-up.json`]: JSON.stringify({ done: 1, total: 2, title: 'Tidy up' }),
+})
+
+async function paneIn($: Engine, on: On, files: Record<string, string>, cwd: string) {
+  world(on, files, FULL)
+  on('session.cwd', () => ({ value: cwd }))
+  await $.session.start({ cwd, surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: props(60) })
+  const lines = draw((await ui.find({ type: 'Box' })) as never)
+  await ui.unmount()
+  return lines
+}
+
+test('goals are per project: a project with no goals/<slug>.json shows its folder name, never another project goal', async ($, on) => {
+  const files = PROJECTS()
+  const lines = await paneIn($, on, files, `${HOME}/Desktop/agentic-scheduling/src`)
+  expect(lines).toContain('agentic-scheduling · 1 done today · 2 running')
+  expect(lines.join('\n')).not.toMatch(/generosity/)
+  expect(lines[lines.findIndex(l => /^  ◐ Tidy up/.test(l)) + 1]).toBe('    Other')
+  expect(Object.keys(files).filter(f => /goals?[/.]/.test(f)).sort()).toEqual([`${HOME}/${GOAL_REL}`, `${HOME}/${GOALS_DIR_REL}/desktop-nombot.json`])
+})
+
+test('goals are per project: goals/<slug>.json heads its own project, with its areas, and is never overwritten', async ($, on) => {
+  const files = PROJECTS()
+  const mine = files[`${HOME}/${GOALS_DIR_REL}/desktop-nombot.json`]
+  const lines = await paneIn($, on, files, `${HOME}/Desktop/NomBot`)
+  expect(lines[2]).toMatch(/^Making the generosity database better · 1 done today/)
+  expect(lines[lines.findIndex(l => /^  ◐ Tidy up/.test(l)) + 1]).toBe('    Login')
+  expect(files[`${HOME}/${GOALS_DIR_REL}/desktop-nombot.json`]).toBe(mine)
+})
+
+test('projectGoal and folderName: a project with no file is its folder, no areas', () => {
+  expect(folderName('/Users/a/Desktop/agentic-scheduling/')).toBe('agentic-scheduling')
+  expect(projectGoal('x')).toEqual({ anchor: 'x', areas: [], lenses: DEFAULT_GOAL.lenses })
+  expect(projectGoal('').anchor).toBe('This project')
+  expect(areaOf(projectGoal('x'), { title: 'Fix the board seats' })).toBe(OTHER)
+  expect(parseGoal('{"anchor":"A"}', projectGoal('x')).areas).toEqual([])
+})
+
+test('readGoal: a slug that is not plain (a projects.txt path) reads no file outside goals/', async ($, on) => {
+  const files: Record<string, string> = { [`${HOME}/x.json`]: JSON.stringify({ anchor: 'Outside' }) }
+  world(on, files, FULL)
+  expect((await readGoal($ as never, HOME, { slug: '../../x', root: '/w/proj' })).anchor).toBe('proj')
+  expect((await readGoal($ as never, HOME, { slug: 'sub/x', root: '/w/proj' })).anchor).toBe('proj')
 })
 
 // Seven finished jobs with long impacts and a long title, for the width and DONE checks.
