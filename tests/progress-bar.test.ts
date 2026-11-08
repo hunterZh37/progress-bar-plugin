@@ -1461,3 +1461,35 @@ test('loginKey gives each Claude login its own usage reading', () => {
   expect(usageFileRel('')).toBe('.claude-progress/.state/max-usage.json')
   expect(usageFileRel('claude-personal')).toBe('.claude-progress/.state/max-usage-claude-personal.json')
 })
+
+test('Claude in Chrome: the browser in use and its account show in Connectors, a warning on List when not on this Mac', async ($, on) => {
+  const B2 = '951dff16-ed25-45bc-87af-8710e52e685f'
+  const files: Record<string, string> = {
+    [SCRIPT]: statusScript(), [FLAG]: 'on\n', [`${HOME}/${CONN_CACHE_REL}`]: `Gmail\tok\n#checked\t${Math.floor(NOW / 1000)}\n`,
+    [`${HOME}/Library/Application Support/Google/Chrome/Local State`]: JSON.stringify({ os_crypt: { encrypted_key: 'SECRET' }, profile: { info_cache: { Default: { name: 'Hunter', user_name: 'hunter@iog.org' } } } }),
+  }
+  panelWorld(on, files, DONE_FULL)
+  const results: Record<string, string> = {
+    list_connected_browsers: `[{"deviceId":"${B2}","name":"Browser 2","osPlatform":"macOS","connectedAt":1,"isLocal":true,"inUse":true}]`,
+    get_page_text: 'Google Account\nHunter Zhang\nhunter@protocolvr.com',
+  }
+  on('tool.call', (_, e) => ({ result: [{ type: 'text', text: results[String(e.tool).split('__').pop()!] ?? 'Navigated.' }] }) as never)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  // Never used: dim "not connected", nothing on List.
+  await ui.press({ key: 'tab-connectors' })
+  expect(await allText(ui)).toContain('Chrome: not connected')
+  await $.tool.call({ tool: 'mcp__claude-in-chrome__list_connected_browsers' } as never)
+  await $.tool.call({ tool: 'mcp__claude-in-chrome__navigate', tabId: 5, url: 'https://myaccount.google.com/' } as never)
+  await $.tool.call({ tool: 'mcp__claude-in-chrome__get_page_text', tabId: 5 } as never)
+  expect(JSON.parse(files[`${HOME}/.claude-progress/.state/chrome-accounts.json`]!)[B2].email).toBe('hunter@protocolvr.com')
+  await ui.press({ key: 'tab-list' })
+  await ui.press({ key: 'tab-connectors' })
+  const text = await allText(ui)
+  expect(text).toContain('Chrome: Browser 2 · hunter@protocolvr.com · other computer')
+  expect(text).toContain("Chrome is controlling hunter@protocolvr.com, which isn't signed in on this Mac. Run /chrome to switch.")
+  expect(text).not.toContain('SECRET')
+  await ui.press({ key: 'tab-list' })
+  expect(await allText(ui)).toContain("Chrome is controlling hunter@protocolvr.com, which isn't signed in on this Mac.")
+  await ui.unmount()
+})

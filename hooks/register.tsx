@@ -6,6 +6,7 @@ import { backfillChat, sayCommand } from './chat'
 import { CHANNEL_EVERY, SEND_TOOL, channelCommand, pollChannel, sendCommand, sendFile } from './channel'
 import { inboxCommand } from './inbox'
 import { chainable } from './chain'
+import { CHROME_PREFIX, readChrome, recordChromeCall } from './chrome'
 import { SNIPPET, installedPrev, writeLib } from './setup'
 import { resolveHome } from './home'
 import { USAGE_CHECK, probeUsage } from './usage'
@@ -797,38 +798,48 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // The channel's private keys never reach the model: a Read, Grep or Bash call naming that folder is refused.
+  // Every call: the key guard and subagent tracking below, then Claude in Chrome's browser and Google account from
+  // the call's own result (chrome.ts). One unmatched tool.call hook only.
   on('tool.call', async ($, e, next) => {
-    const i = e as unknown as { file_path?: unknown; path?: unknown; command?: unknown }
-    const text = [i.file_path, i.path, i.command].filter(x => typeof x === 'string').join(' ')
-    if (/(^|[\s/"'])\.claude-progress\/channel\/keys(\/|\b)|channel\/keys\/(enc|sign)\.pem/.test(text)) return { deny: 'progress-bar: the secure channel private keys stay private. Nothing may read them.' }
-    const input = e as unknown as Record<string, unknown>
-    const stopped = e.tool === 'TaskStop' ? String(input.task_id ?? input.shell_id ?? '') : ''
-    if (!e.agentId) {
-      const r = await next(e)
-      if (stopped && !('deny' in r && r.deny)) dropTask(stopped)
-      return r
-    }
-    const s = seen.get(e.agentId) ?? { startedAt: await $.clock.now(), tools: 0, lastTool: '' }
-    s.tools += 1
-    s.lastTool = String(e.tool)
-    s.lastWhat = toolWhat(input)
-    seen.set(e.agentId, s)
-    const r = await next(e)
-    // When its last call ended, and a background task it started (a background Bash, a Monitor).
-    s.lastAt = await $.clock.now()
-    if (!('deny' in r && r.deny)) {
-      const t = bgLaunch(String(e.tool), input, r.result, s.lastAt)
-      if (t) s.bg = [...(s.bg ?? []).filter(x => x.id !== t.id), t]
-      if (stopped) dropTask(stopped)
-      // The agent's final report: what it changed, kept in its done record.
-      // SubagentHandback is not in this build's typed tool list, so compare it as a plain string: a typed `===`
-      // narrows `e` to never and hides agentId.
-      const agentId = e.agentId
-      if (String(e.tool) === 'SubagentHandback' && typeof input.message === 'string' && input.message.trim()) {
-        handedBack.add(agentId)
-        await recordAgent($, agentId, input.message).catch(() => undefined)
+    const r = await (async () => {
+      // The channel's private keys never reach the model: a Read, Grep or Bash call naming that folder is refused.
+      const i = e as unknown as { file_path?: unknown; path?: unknown; command?: unknown }
+      const text = [i.file_path, i.path, i.command].filter(x => typeof x === 'string').join(' ')
+      if (/(^|[\s/"'])\.claude-progress\/channel\/keys(\/|\b)|channel\/keys\/(enc|sign)\.pem/.test(text)) return { deny: 'progress-bar: the secure channel private keys stay private. Nothing may read them.' }
+      const input = e as unknown as Record<string, unknown>
+      const stopped = e.tool === 'TaskStop' ? String(input.task_id ?? input.shell_id ?? '') : ''
+      if (!e.agentId) {
+        const r = await next(e)
+        if (stopped && !('deny' in r && r.deny)) dropTask(stopped)
+        return r
       }
+      const s = seen.get(e.agentId) ?? { startedAt: await $.clock.now(), tools: 0, lastTool: '' }
+      s.tools += 1
+      s.lastTool = String(e.tool)
+      s.lastWhat = toolWhat(input)
+      seen.set(e.agentId, s)
+      const r = await next(e)
+      // When its last call ended, and a background task it started (a background Bash, a Monitor).
+      s.lastAt = await $.clock.now()
+      if (!('deny' in r && r.deny)) {
+        const t = bgLaunch(String(e.tool), input, r.result, s.lastAt)
+        if (t) s.bg = [...(s.bg ?? []).filter(x => x.id !== t.id), t]
+        if (stopped) dropTask(stopped)
+        // The agent's final report: what it changed, kept in its done record.
+        // SubagentHandback is not in this build's typed tool list, so compare it as a plain string: a typed `===`
+        // narrows `e` to never and hides agentId.
+        const agentId = e.agentId
+        if (String(e.tool) === 'SubagentHandback' && typeof input.message === 'string' && input.message.trim()) {
+          handedBack.add(agentId)
+          await recordAgent($, agentId, input.message).catch(() => undefined)
+        }
+      }
+      return r
+    })()
+    if (String(e.tool).startsWith(CHROME_PREFIX) && !('deny' in r && r.deny)) {
+      const h = await resolveHome($)
+      await recordChromeCall($, h, await sessionKeyOf($), String(e.tool), e as unknown as Record<string, unknown>, r.result).catch(() => undefined)
+      await readChrome($, h, await sessionKeyOf($), (await sessionProject($, h)).slug).catch(() => undefined)
     }
     return r
   })

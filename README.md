@@ -733,6 +733,9 @@ The **Connectors** tab of the Status panel lists each MCP connector with its sta
 
 CONNECTORS  7 ok · 2 need sign-in
   Claude: you@example.com · Your Org
+  Chrome: Browser 2 · you@work.example · other computer  used 14:02
+    Chrome is controlling you@work.example, which isn't signed in on this Mac. Run /chrome to switch.
+    Also connected: Browser 1 · you@gmail.com
   ✔ Gmail
     you@gmail.com
   ✔ nombot-db
@@ -752,6 +755,18 @@ CONNECTORS  7 ok · 2 need sign-in
 Gmail	you@gmail.com
 Google Drive	work@example.com
 ```
+
+### Chrome line
+
+The `Chrome:` line says which browser Claude in Chrome drives for this session, under which Google account, and whether it is on this Mac.
+
+- **Shows:** `Chrome: Browser 2 · you@gmail.com · this Mac`, `… · other computer` or `Chrome: Browser 1 · account unknown`. `Chrome: not connected` (dim) before the first Chrome call or while the extension is not connected. `used 14:02` is the last Chrome call. Other connected browsers follow, dim.
+- **Warning (yellow):** when the in-use browser's account is not signed in to any Chrome profile on this Mac, or the browser reports `onThisComputer: false`. The List tab shows the same warning on one line, only then. `isLocal` is not trusted: it said true for a browser on another computer.
+- **Browser in use:** read from the session's own `mcp__claude-in-chrome__*` results: `list_connected_browsers` (deviceId, name, isLocal, inUse, connectedAt), `select_browser` and `switch_browser`. A switch made with `/chrome` shows after the next `list_connected_browsers`.
+- **Account:** the first email on a page read on `accounts.google.com` or `myaccount.google.com`, else a Gmail tab title (`Inbox - you@gmail.com - Gmail`). An account page wins over a Gmail title for a day. Saved per browser in `~/.claude-progress/.state/chrome-accounts.json`, shared by all sessions. Until Claude opens one of those pages in that browser, the account is unknown.
+- **This Mac's accounts:** the `user_name` of each profile in Chrome's `Local State` file, read every 5 minutes, read only, names and emails only. Missing (Linux) or unreadable: no account check.
+- **Expected account (optional):** add `"chromeAccount": "you@work.example"` to the project's `~/.claude-progress/goals/<slug>.json`. A different account then warns too.
+- **Limits:** a Chrome profile signed in to Google on the web but not to Chrome itself looks like another computer. A page listing several accounts (the account chooser) gives the first one.
 
 ## GitHub tab
 
@@ -812,7 +827,7 @@ Optional. Makes each section header a link that folds or unfolds that section.
 
 ## Privacy
 
-Everything stays on your machine. The plugin reads and writes only files under `~/.claude-progress/`, `~/.claude/progress-bar/` and `~/.cache/progress-bar/`, and reads the `*.log` files in folders you list in `log-dirs.txt`, plus `~/Applications/ProgressBarToggle.app` if you run `setup mac-clicks`. It runs an action's command only when you press **▶ Run** and confirm, in a new terminal window you can see. The plugin makes no network calls itself, except the secure channel once you open one: it then talks to GitHub through your own `gh` and `git`, and stores only ciphertext there. The optional inbox checker (`inbox setup`) runs only when you schedule it, and reads your mail through your own Gmail connector. While the Status panel is open, the Connectors tab runs `claude mcp list`, which contacts your configured connectors to check them. The GitHub tab runs local `git` only, and opens a page in your browser when you click. Every 30 minutes one session on the machine runs a tiny `claude -p` Haiku call on your default login to refresh the usage meter (see Running cards).
+Everything stays on your machine. The plugin reads and writes only files under `~/.claude-progress/`, `~/.claude/progress-bar/` and `~/.cache/progress-bar/`, and reads the `*.log` files in folders you list in `log-dirs.txt`, plus `~/Applications/ProgressBarToggle.app` if you run `setup mac-clicks`, and reads (never writes) Chrome's `Local State` file for the emails of this Mac's Chrome profiles (see Chrome line). It runs an action's command only when you press **▶ Run** and confirm, in a new terminal window you can see. The plugin makes no network calls itself, except the secure channel once you open one: it then talks to GitHub through your own `gh` and `git`, and stores only ciphertext there. The optional inbox checker (`inbox setup`) runs only when you schedule it, and reads your mail through your own Gmail connector. While the Status panel is open, the Connectors tab runs `claude mcp list`, which contacts your configured connectors to check them. The GitHub tab runs local `git` only, and opens a page in your browser when you click. Every 30 minutes one session on the machine runs a tiny `claude -p` Haiku call on your default login to refresh the usage meter (see Running cards).
 
 ## License
 

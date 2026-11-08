@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { ElementConstructor, EngineInterface, InputProps, On, RenderChildren, RenderInput } from 'claude-code'
 
 import { AWAY_S, GAP_MS, OVERNIGHT_REL, dayOf, snapOf } from './checkpoint'
+import { readChrome } from './chrome'
 import { connSummary, readConns, refreshConns, resetConns } from './connectors'
 import { EVENTS_REL, LOG_DIRS_REL, SEEN_REL, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from './events'
 import { GH_EVERY, openUrl, openWeb, readGh } from './github'
@@ -16,6 +17,7 @@ import { clip, moveItem, nextPrompt, parseItem, rankTodos, shownTitle, todoRows 
 import { DEFAULT_GOAL, OTHER, anchorLine, areaOf, lensTags, plainTitle, projectGoal, readGoal } from './goal'
 import type { LensTag } from './goal'
 import { sessionProject } from './project'
+import { sessionKeyOf } from './route'
 import { DEFAULT_TOPOLOGY, queuesOf, readTopology, renderTopology, resolveMachine } from './topology'
 import type { TopoJob } from './topology'
 import { turnOnStatusLine } from './setup'
@@ -70,6 +72,8 @@ const projectAtom = atom({ plugin: 'progress-bar', key: 'project' } as const, ''
 const menuAtom = atom({ plugin: 'progress-bar', key: 'menuFor' } as const, -1)
 // The same state connectors.ts writes; the scan wants each atom declared in the file that reads it.
 const connsAtom = atom({ plugin: 'progress-bar', key: 'conns' } as const, { at: 0, checking: false, login: '', list: [] })
+// The same state chrome.ts writes: which Chrome browser and Google account Claude in Chrome drives.
+const chromeAtom = atom({ plugin: 'progress-bar', key: 'chrome' } as const, { line: 'Chrome: not connected', tone: 'dim', warn: '', usedAt: 0, others: [] })
 const tabAtom = atom({ plugin: 'progress-bar', key: 'tab' } as const, 'list')
 // Topology tab: topology.json and heartbeat health, read each tick while the tab shows.
 const topoAtom = atom({ plugin: 'progress-bar', key: 'topo' } as const, { cfg: DEFAULT_TOPOLOGY, health: {} })
@@ -704,6 +708,9 @@ export async function pollPanel($: EngineInterface, h: string) {
     if (unseenErrors(l.events, l.seenAt, Math.floor((await $.clock.now()) / 1000))) await markSeen($, h)
   }
   if ((await read($, tabAtom)) === 'topology') await readTopo($, h)
+  let sid = ''
+  try { sid = await $.session.id() } catch { sid = '' }
+  await readChrome($, h, sessionKeyOf(sid) || 'main', (await sessionProject($, h)).slug).catch(() => undefined)
   await readConns($, h)
   // Runs on past this poll (claude mcp list can take a minute), so a reload or session end can cut it off: never an unhandled rejection.
   void refreshConns($, h).catch(() => undefined)
@@ -979,6 +986,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const todos = await read($, todosAtom)
     const menuFor = await read($, menuAtom)
     const conns = await read($, connsAtom)
+    const chrome = await read($, chromeAtom)
     const tab = await read($, tabAtom)
     const openTodos = todos.filter(t => !t.done).length
     const width = Math.max(30, e.props.bodyColumns ?? 60)
@@ -1574,6 +1582,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           {tabBar}
           <Text bold color="cyan">{`CONNECTORS  ${connSummary(conns.list)}`}</Text>
           {conns.login ? <Text dimColor>{`  Claude: ${conns.login}`}</Text> : null}
+          <Box key="c-chrome">
+            <Text color={chrome.tone === 'warn' ? 'yellow' : undefined} dimColor={chrome.tone !== 'warn'} wrap="truncate-end">{`  ${chrome.line}`}</Text>
+            {chrome.usedAt && chrome.tone !== 'dim' ? <Text dimColor>{`  used ${hhmm(chrome.usedAt)}`}</Text> : null}
+          </Box>
+          {chrome.warn ? <Text key="c-chrome-w" color="yellow" wrap="truncate-end">{`    ${chrome.warn}`}</Text> : null}
+          {chrome.tone !== 'dim' ? chrome.others.map((o, i) => <Text key={`c-chrome-o${i}`} dimColor wrap="truncate-end">{`    Also connected: ${o}`}</Text>) : null}
           {conns.list.length === 0 && <Text dimColor>{conns.checking ? '  checking…' : '  No check yet.'}</Text>}
           {ordered.flatMap(connRow)}
           <Box key="c-foot">
@@ -1714,6 +1728,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         {actBlock}
         {inboxBlock}
         {chanBlock}
+        {chrome.warn ? <Text key="chrome-w" color="yellow" wrap="truncate-end">{chrome.warn}</Text> : null}
         {banner}
         {healthBlock}
         {anchor}
