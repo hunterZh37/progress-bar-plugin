@@ -9,14 +9,40 @@ export const USAGE_CHECK = 5 * 60_000 // how often a session looks at the readin
 export const USAGE_FILE_REL = '.claude-progress/.state/max-usage.json'
 export const USAGE_LOCK_REL = '.claude-progress/.state/max-usage.probe'
 
+/**
+ * Which login this session uses: '' for the default ~/.claude, else a short key from CLAUDE_CONFIG_DIR
+ * (~/.claude-personal -> "claude-personal"). Each login gets its own reading, so a session on a second
+ * subscription shows that subscription's use, not the default login's.
+ */
+export function loginKey(configDir: string, home: string): string {
+  const d = configDir.trim().replace(/\/+$/, '')
+  if (!d || d === `${home}/.claude` || d === '~/.claude') return ''
+  const base = d.split('/').pop() ?? ''
+  return base.replace(/^\./, '').replace(/[^A-Za-z0-9_-]+/g, '-').slice(0, 40)
+}
+export const usageFileRel = (key: string) => (key ? `.claude-progress/.state/max-usage-${key}.json` : USAGE_FILE_REL)
+export const usageLockRel = (key: string) => (key ? `.claude-progress/.state/max-usage-${key}.probe` : USAGE_LOCK_REL)
+
+let loginCache: { key: string; dir: string } | null = null
+/** This session's CLAUDE_CONFIG_DIR (from the process environment), cached. */
+export async function sessionLogin($: EngineInterface, home: string): Promise<{ key: string; dir: string }> {
+  if (loginCache) return loginCache
+  let dir = ''
+  try { dir = String((await $.process.run(['/bin/sh', '-c', 'printf %s "$CLAUDE_CONFIG_DIR"'], { timeoutMs: 5000 })).stdout ?? '').trim() } catch { dir = '' }
+  loginCache = { key: loginKey(dir, home), dir: loginKey(dir, home) ? dir : '' }
+  return loginCache
+}
+
 export type UsageReading = { pct: number; at: number; five?: number; plan?: string }
 
-// One shell: a fresh empty folder, the default login (no CLAUDE_CONFIG_DIR, no API key), and a guard so a probe never
-// starts another probe. "auth" prints the plan (claude auth status has no secrets), "probe" prints the stream.
+// One shell: a fresh empty folder, the session's login ($2 = its CLAUDE_CONFIG_DIR, empty for the default ~/.claude),
+// no API key, and a guard so a probe never starts another probe. "auth" prints the plan (claude auth status has no
+// secrets), "probe" prints the stream.
 export const PROBE_SCRIPT = [
   '[ -n "$PB_USAGE_PROBE" ] && exit 0',
   'PB_USAGE_PROBE=1; export PB_USAGE_PROBE',
   'unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CONFIG_DIR',
+  'if [ -n "$2" ]; then CLAUDE_CONFIG_DIR="$2"; export CLAUDE_CONFIG_DIR; fi',
   'PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"; export PATH',
   'd=$(mktemp -d) || exit 1',
   'cd "$d" || exit 1',
@@ -91,16 +117,17 @@ let probing = false
 
 /** Takes a fresh reading when it is due. One session machine-wide: the lock folder's time is the last start. */
 export async function probeUsage($: EngineInterface, h: string): Promise<boolean> {
-  return probeWith(engineIo($), h)
+  const login = h ? await sessionLogin($, h) : { key: '', dir: '' }
+  return probeWith(engineIo($), h, login)
 }
 
-export async function probeWith(io: ProbeIo, h: string): Promise<boolean> {
+export async function probeWith(io: ProbeIo, h: string, login: { key: string; dir: string } = { key: '', dir: '' }): Promise<boolean> {
   if (!h || probing) return false
   probing = true
   try {
     const t = await io.now()
-    const file = `${h}/${USAGE_FILE_REL}`
-    const lock = `${h}/${USAGE_LOCK_REL}`
+    const file = `${h}/${usageFileRel(login.key)}`
+    const lock = `${h}/${usageLockRel(login.key)}`
     let saved: UsageReading | null = null
     try { saved = parseSaved(await io.read(file)) } catch { saved = null }
     let lockAt: number | null = null
@@ -111,7 +138,7 @@ export async function probeWith(io: ProbeIo, h: string): Promise<boolean> {
     await io.run(['mkdir', '-p', `${h}/.claude-progress/.state`], 5000).catch(() => undefined)
     const claim = await io.run(['mkdir', lock], 5000).catch(() => ({ exitCode: 1 }))
     if (claim.exitCode !== 0) return false
-    const run = (what: string) => io.run(['/bin/sh', '-c', PROBE_SCRIPT, 'sh', what], 90_000).catch(() => ({ stdout: '' }))
+    const run = (what: string) => io.run(['/bin/sh', '-c', PROBE_SCRIPT, 'sh', what, login.dir], 90_000).catch(() => ({ stdout: '' }))
     const auth = parsePlan((await run('auth')).stdout)
     if (!auth.loggedIn) return false
     const r = parseProbe((await run('probe')).stdout)

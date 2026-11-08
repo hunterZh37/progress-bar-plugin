@@ -19,7 +19,7 @@ import { sessionProject } from './project'
 import { DEFAULT_TOPOLOGY, queuesOf, readTopology, renderTopology, resolveMachine } from './topology'
 import type { TopoJob } from './topology'
 import { turnOnStatusLine } from './setup'
-import { parseSaved } from './usage'
+import { parseSaved, sessionLogin, usageFileRel } from './usage'
 import type { UsageReading } from './usage'
 import { FEW_STEPS, FILE_FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, slug } from './render'
 import type { Action, ActionUi, Channel, ChatMsg, ChatState, Checkpoint, Conn, DoneRec, Ev, GoalArea, Health, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
@@ -970,7 +970,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
   {
     const { Box, Button, Text } = $.ui.resolve(e)
     const homeDir = await resolveHome($)
-    const maxFile = `${homeDir}/${DIR_REL}/.state/max-usage.json`
+    const login = await sessionLogin($, homeDir)
+    const maxFile = `${homeDir}/${usageFileRel(login.key)}`
     let maxSaved: UsageReading | null = null
     try { maxSaved = parseSaved(String(await $.fs.read(maxFile))) } catch { maxSaved = null }
     const lines = await read($, linesAtom)

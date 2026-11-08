@@ -6,6 +6,7 @@ import { CONN_CACHE_REL, connUrl, connName, connSummary, formatCache, parseAccou
 import { CHECKPOINT_PY } from '../hooks/checkpoint'
 import { closestFile } from '../hooks/render'
 import { finishedTaskIds } from '../hooks/report'
+import { loginKey, usageFileRel } from '../hooks/usage'
 import { clock } from '../hooks/done'
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
@@ -1451,4 +1452,12 @@ test('finishedTaskIds finds background shells the transcript reports as finished
   const t = '<task-notification>\n<task-id>bl0thqofw</task-id>\n<tool-use-id>x</tool-use-id>\n<output-file>/tmp/a</output-file>\n<status>completed</status>' +
     '<task-notification><task-id>abc123</task-id><status>running</status>'
   expect([...finishedTaskIds(t, ['bl0thqofw', 'abc123', 'zzz'])]).toEqual(['bl0thqofw'])
+})
+
+test('loginKey gives each Claude login its own usage reading', () => {
+  expect(loginKey('', '/Users/h')).toBe('')
+  expect(loginKey('/Users/h/.claude', '/Users/h')).toBe('')
+  expect(loginKey('/Users/h/.claude-personal/', '/Users/h')).toBe('claude-personal')
+  expect(usageFileRel('')).toBe('.claude-progress/.state/max-usage.json')
+  expect(usageFileRel('claude-personal')).toBe('.claude-progress/.state/max-usage-claude-personal.json')
 })
