@@ -113,7 +113,8 @@ test('recap after 4 h: header, counts, errors first, progress moved, expand', as
   expect(t).toContain('▶ 2 still running')
   expect(t).toContain('  ⏸ 1 waiting')
   // Compact: top 3 lines, errors first, then warnings newest first.
-  const items = t.filter(x => /^(Service|Arts|Train|Health|ntee|new-job)/.test(x))
+  // The recap box only: the sections below it have bold titles of their own.
+  const items = t.slice(0, t.findIndex(x => /^[▾▸] /.test(x))).filter(x => /^(Service|Arts|Train|Health|ntee|new-job)/.test(x))
   expect(items).toEqual(['Service areas pilot crashed', 'Train batch stuck', 'Arts labels hit the usage limit'])
   expect(t).toContain('  Traceback')
   expect(t).toContain('  resumed in 2h10m')

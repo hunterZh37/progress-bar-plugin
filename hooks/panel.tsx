@@ -14,7 +14,7 @@ import { markHandled, readInbox } from './inbox'
 import { isDarwin } from './mac'
 import { backfillAgent, clock, doneDetails, machineName, prettyName, readDone } from './done'
 import { clip, moveItem, nextPrompt, parseItem, rankTodos, shownTitle, todoRows as layoutTodos } from './priority'
-import { DEFAULT_GOAL, OTHER, anchorLine, areaOf, lensTags, plainTitle, projectGoal, readGoal } from './goal'
+import { DEFAULT_GOAL, OTHER, areaOf, lensTags, plainTitle, projectGoal, readGoal } from './goal'
 import type { LensTag } from './goal'
 import { sessionProject } from './project'
 import { controlKind, controlOptions, readPaused, runControl } from './control'
@@ -460,6 +460,32 @@ export const fitLabel = (s: string, col: number) => (s.length > col ? `${s.slice
 
 /** The badge after a card's name or id: its kind in words. */
 export const badge = (k: RunCard['kind']) => k.text
+
+/** The List tab's first line, status at a glance: "2 running · 1 needs you · 15 done today", the counts that are not
+ * zero. The "needs you" part is the strong one (bold yellow). Nothing at all reads "Nothing running". */
+export function glanceParts(n: { running: number; waiting: number; needs: number; done: number }): { text: string; strong: boolean }[] {
+  const parts = [
+    n.running ? { text: `${n.running} running`, strong: false } : null,
+    n.waiting ? { text: `${n.waiting} waiting`, strong: false } : null,
+    n.needs ? { text: `${n.needs} needs you`, strong: true } : null,
+    n.done ? { text: `${n.done} done today`, strong: false } : null,
+  ].filter((x): x is { text: string; strong: boolean } => !!x)
+  return parts.length ? parts : [{ text: 'Nothing running', strong: false }]
+}
+
+/** A NEEDS YOU line starts with its verb, bold: "review the PR" splits to ["Review", " the PR"]. */
+export function verbSplit(text: string): [string, string] {
+  const m = /^(\S+)([\s\S]*)$/.exec(text.trim())
+  return m ? [m[1]!.charAt(0).toUpperCase() + m[1]!.slice(1), m[2]!] : ['', '']
+}
+
+/** A running row's dim second line: the current step (or the count), then the time it has run, when line one does
+ * not already say it. "scoring · 42m". */
+export function nowLine(r: Pick<RunCard, 'step' | 'count' | 'elapsed' | 'ran' | 'pct'>, waitOn = ''): string {
+  const what = r.step || r.count || (waitOn ? `waiting on ${waitOn}` : '')
+  const time = r.pct === null && r.ran ? '' : r.elapsed || r.ran
+  return [what, time].filter(Boolean).join(' · ')
+}
 
 /**
  * Which rows nest: a row whose job names a running parent draws inside that parent's card, one level deep.
@@ -950,40 +976,56 @@ async function actionBox($: EngineInterface, e: RenderEv, homeDir: string, width
   const ui = await read($, actionUiAtom)
   const w = Math.max(16, width - 6)
   const gap = (k: string) => <Text key={k} dimColor>{'   '}</Text>
+  // The popup: a red box with its header. The Status panel: bare rows inside its NEEDS YOU block, each starting with
+  // its verb in bold ("Swap in the build" reads **Swap** in the build), the command and buttons indented under it.
+  const one = (a: Action) => {
+    // The panel never cuts an action: the whole title and command, wrapped.
+    const [verb, rest] = verbSplit(a.title)
+    const cmd = (n: number) => (popup ? cutA(`$ ${a.command ?? ''}`, n) : `$ ${a.command ?? ''}`)
+    return [
+      popup
+        ? <Text key={`act-t-${a.id}`} bold>{cutA(a.title, w)}</Text>
+        : <Box key={`act-t-${a.id}`}><Box flexShrink={0}><Text bold color="red">{verb}</Text></Box><Text wrap="wrap">{rest}</Text></Box>,
+      <Box key={`act-body-${a.id}`} flexDirection="column" paddingLeft={popup ? 0 : 2}>
+        {[
+          popup && a.why ? <Text key={`act-w-${a.id}`} dimColor>{cutA(`Why: ${a.why}`, w * 2)}</Text> : null,
+          a.command ? <Text key={`act-c-${a.id}`} color="red" wrap="wrap">{cmd(w * 4)}</Text> : null,
+          ui.confirm === a.id
+            ? <Box key={`act-q-${a.id}`} flexDirection="column">
+                <Text key="q" bold>{`Run this in ${ui.term || 'Terminal'}?`}</Text>
+                {/* The full command again only when the line above was cut short. */}
+                {cmd(w * 4) !== `$ ${a.command ?? ''}` ? <Text key="qc" color="red">{`$ ${a.command ?? ''}`}</Text> : null}
+                <Box key="qb">
+                  <Button key={`act-yes-${a.id}`} plain onPress={() => confirmRun($, homeDir, a)}>{'▶ Run'}</Button>
+                  {gap('g0')}
+                  <Button key={`act-no-${a.id}`} plain onPress={() => cancelRun($)}>{'Cancel'}</Button>
+                </Box>
+              </Box>
+            : null,
+          ui.failId === a.id && ui.fail ? <Text key={`act-f-${a.id}`} color="red">{ui.fail}</Text> : null,
+          // While Run waits for its confirm, only the confirm's Run and Cancel show.
+          ui.confirm === a.id ? null : <Box key={`act-b-${a.id}`}>
+            {canRun(a) ? <Button key={`act-run-${a.id}`} plain onPress={() => runAction($, homeDir, a)}>{'▶ Run'}</Button> : null}
+            {canRun(a) ? gap('g1') : null}
+            {a.command ? <Button key={`act-copy-${a.id}`} plain onPress={() => copyCommand($, a)}>{'Copy'}</Button> : null}
+            {a.command ? gap('g2') : null}
+            <Button key={`act-ran-${a.id}`} plain onPress={() => ranIt($, homeDir, a)}>{'✓ I ran it'}</Button>
+            {popup ? gap('g3') : null}
+            {popup ? <Button key={`act-later-${a.id}`} plain onPress={() => $.ui.close({ id: ACTION_PANE })}>{'Later'}</Button> : null}
+            {gap('g4')}
+            <Button key={`act-skip-${a.id}`} plain onPress={() => closeAction($, homeDir, a.id, 'skipped', popup ? 'skipped in the Action needed pane' : 'skipped in the Status panel')}>{'Skip'}</Button>
+          </Box>,
+        ].filter(Boolean)}
+      </Box>,
+    ]
+  }
+  const more = acts.length > (popup ? 1 : 3) ? <Text key="act-more" dimColor>{`+${acts.length - (popup ? 1 : 3)} more. /progress-bar action list`}</Text> : null
+  if (!popup) return [...acts.slice(0, 3).flatMap(one), more].filter(Boolean) as RenderChildren[]
   return [
     <Box key="act" flexDirection="column" borderStyle="bold" borderColor="red" paddingX={1} marginBottom={1}>
       <Text key="act-h" bold color="red">{`Action needed${acts.length > 1 ? `  ${acts.length}` : ''}`}</Text>
-      {acts.slice(0, popup ? 1 : 3).flatMap(a => [
-        <Text key={`act-t-${a.id}`} bold>{cutA(a.title, w)}</Text>,
-        popup && a.why ? <Text key={`act-w-${a.id}`} dimColor>{cutA(`Why: ${a.why}`, w * 2)}</Text> : null,
-        a.command ? <Text key={`act-c-${a.id}`} color="red">{cutA(`$ ${a.command}`, popup ? w * 4 : w)}</Text> : null,
-        ui.confirm === a.id
-          ? <Box key={`act-q-${a.id}`} flexDirection="column">
-              <Text key="q" bold>{`Run this in ${ui.term || 'Terminal'}?`}</Text>
-              {/* The full command again only when the line above was cut short. */}
-              {cutA(`$ ${a.command ?? ''}`, popup ? w * 4 : w) !== `$ ${a.command ?? ''}` ? <Text key="qc" color="red">{`$ ${a.command ?? ''}`}</Text> : null}
-              <Box key="qb">
-                <Button key={`act-yes-${a.id}`} plain onPress={() => confirmRun($, homeDir, a)}>{'▶ Run'}</Button>
-                {gap('g0')}
-                <Button key={`act-no-${a.id}`} plain onPress={() => cancelRun($)}>{'Cancel'}</Button>
-              </Box>
-            </Box>
-          : null,
-        ui.failId === a.id && ui.fail ? <Text key={`act-f-${a.id}`} color="red">{cutA(ui.fail, w * 2)}</Text> : null,
-        // While Run waits for its confirm, only the confirm's Run and Cancel show.
-        ui.confirm === a.id ? null : <Box key={`act-b-${a.id}`}>
-          {canRun(a) ? <Button key={`act-run-${a.id}`} plain onPress={() => runAction($, homeDir, a)}>{'▶ Run'}</Button> : null}
-          {canRun(a) ? gap('g1') : null}
-          {a.command ? <Button key={`act-copy-${a.id}`} plain onPress={() => copyCommand($, a)}>{'Copy'}</Button> : null}
-          {a.command ? gap('g2') : null}
-          <Button key={`act-ran-${a.id}`} plain onPress={() => ranIt($, homeDir, a)}>{'✓ I ran it'}</Button>
-          {popup ? gap('g3') : null}
-          {popup ? <Button key={`act-later-${a.id}`} plain onPress={() => $.ui.close({ id: ACTION_PANE })}>{'Later'}</Button> : null}
-          {gap('g4')}
-          <Button key={`act-skip-${a.id}`} plain onPress={() => closeAction($, homeDir, a.id, 'skipped', popup ? 'skipped in the Action needed pane' : 'skipped in the Status panel')}>{'Skip'}</Button>
-        </Box>,
-      ].filter(Boolean) as RenderChildren[])}
-      {acts.length > (popup ? 1 : 3) ? <Text key="act-more" dimColor>{`+${acts.length - (popup ? 1 : 3)} more. /progress-bar action list`}</Text> : null}
+      {acts.slice(0, 1).flatMap(one)}
+      {more}
     </Box>,
   ]
 }
@@ -1025,7 +1067,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       ? <Box key={`${key}-b`}><Text>{'  '}</Text><Button key={key} plain onPress={() => startAccountCheck($, homeDir, c)}>{'[Check account]'}</Button></Box>
       : null
     const tab = await read($, tabAtom)
-    const openTodos = todos.filter(t => !t.done).length
+    // [you] to-dos go to NEEDS YOU on the List tab, the machines' ones stay under TO-DO.
+    const isYou = (t: Todo) => t.owner.toLowerCase() === 'you'
+    const openTodos = todos.filter(t => !t.done && !isYou(t)).length
     const width = Math.max(30, e.props.bodyColumns ?? 60)
     const barW = Math.min(20, Math.max(10, width - 30))
     const { sections: parsed, other, machines: machineLines } = parseSections(lines)
@@ -1066,7 +1110,34 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // blocked), its place as "1." in a 3-wide column (bold cyan) and the title without its "(after X)". Blocked items that wait on the same
     // job get one dim "waits for <job>" line under the last of them. Pressing an item opens its menu below it.
     const jobLabel = (b: string) => (runNames.includes(b) ? metaNow[slug(b)]?.title ?? b : b)
-    const todoRows = () => layoutTodos(rankTodos(todos.filter(t => !t.done), running), width + 3, jobLabel).flatMap(row => {
+    const todoMenu = (t: Todo & { blockedBy?: string; body: string }, pad: string) => menuFor === t.line
+      ? <Box key={`m-${t.line}`}>
+          <Text dimColor>{pad}</Text>
+          <Button key={`a-done-${t.line}`} plain onPress={() => todoAction($, homeDir, t.line, 'done', t.text)}>{'✓ Done  '}</Button>
+          <Button key={`a-up-${t.line}`} plain onPress={() => todoMove($, homeDir, t.text, 'up')}>{'↑ Up  '}</Button>
+          <Button key={`a-dn-${t.line}`} plain onPress={() => todoMove($, homeDir, t.text, 'down')}>{'↓ Down  '}</Button>
+          {!t.blockedBy && !isYou(t)
+            ? <Button key={`a-go-${t.line}`} plain onPress={async () => { await update($, menuAtom, () => -1); void $.prompt.submit({ text: nextPrompt(t.body) }) }}>{'▶ Start  '}</Button>
+            : null}
+          <Button key={`a-del-${t.line}`} plain onPress={() => todoAction($, homeDir, t.line, 'delete', t.text)}>{'✕ Delete  '}</Button>
+          <Button key={`a-x-${t.line}`} plain onPress={() => update($, menuAtom, () => -1)}>{'Cancel'}</Button>
+        </Box>
+      : null
+    // Your own to-dos as NEEDS YOU lines: the first word bold ("Review the deploy PR"), a press opens the same menu.
+    const youTodos = rankTodos(todos.filter(t => !t.done && isYou(t)), running)
+    const youRows = () => youTodos.flatMap(t => {
+      const [verb, rest] = verbSplit(shownTitle(t.body))
+      return [
+        <Box key={`tr-${t.line}`}>
+          <Text color="yellow">{'  ○ '}</Text>
+          <Button key={`t-${t.line}`} plain onPress={() => update($, menuAtom, v => (v === t.line ? -1 : t.line))}>
+            {[<Text key="v" bold>{verb}</Text>, <Text key="r">{clip(rest, Math.max(4, width - 5 - verb.length))}</Text>]}
+          </Button>
+        </Box>,
+        todoMenu(t, '    '),
+      ].filter(Boolean)
+    })
+    const todoRows = () => layoutTodos(rankTodos(todos.filter(t => !t.done && !isYou(t)), running), width + 3, jobLabel).flatMap(row => {
       if (row.kind === 'gap') return [<Text key={`g-${row.owner}`}>{' '}</Text>]
       if (row.kind === 'head') {
         return [<Box key={`w-${row.owner}`}><Text color="magenta">{`    ${row.owner.charAt(0).toUpperCase()}${row.owner.slice(1).toLowerCase()}`}</Text><Text dimColor>{`  ${row.count}`}</Text></Box>]
@@ -1082,19 +1153,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
               : [<Text key="n" dimColor>{row.num}</Text>, ` ${row.title}`]}
           </Button>
         </Box>,
-        menuFor === t.line
-          ? <Box key={`m-${t.line}`}>
-              <Text dimColor>{'          '}</Text>
-              <Button key={`a-done-${t.line}`} plain onPress={() => todoAction($, homeDir, t.line, 'done', t.text)}>{'✓ Done  '}</Button>
-              <Button key={`a-up-${t.line}`} plain onPress={() => todoMove($, homeDir, t.text, 'up')}>{'↑ Up  '}</Button>
-              <Button key={`a-dn-${t.line}`} plain onPress={() => todoMove($, homeDir, t.text, 'down')}>{'↓ Down  '}</Button>
-              {!t.blockedBy && t.owner.toLowerCase() !== 'you'
-                ? <Button key={`a-go-${t.line}`} plain onPress={async () => { await update($, menuAtom, () => -1); void $.prompt.submit({ text: nextPrompt(t.body) }) }}>{'▶ Start  '}</Button>
-                : null}
-              <Button key={`a-del-${t.line}`} plain onPress={() => todoAction($, homeDir, t.line, 'delete', t.text)}>{'✕ Delete  '}</Button>
-              <Button key={`a-x-${t.line}`} plain onPress={() => update($, menuAtom, () => -1)}>{'Cancel'}</Button>
-            </Box>
-          : null,
+        todoMenu(t, '          '),
       ].filter(Boolean)
     })
 
@@ -1185,7 +1244,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const [before, after] = slide(nowMs, MINI)
       const mark = stuck ? '⚠' : child ? '↳' : r.mark === '⚠' ? '•' : r.mark
       const pad = `${ind}    `
-      const col = rowCol(width, ind.length)
+      // The title column fits the longest title shown (bars still line up), so the time left or stuck note keeps room.
+      const col = titleW ? Math.min(rowCol(width, ind.length), Math.max(3, titleW - ind.length)) : rowCol(width, ind.length)
       const full = machineTitle(r.name, m0.title || r.name, mach)
       const title = plain(m0.title || prettyName(r.name))
       const label = fitLabel(title, col)
@@ -1197,11 +1257,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const why = (m0.why ?? '').replace(/^unlocks:?\s*/i, '')
       const tags = lensTags(goal, m0.gains, `${m0.title ?? ''} ${m0.why ?? ''}`)
       const ar = runArea(r.name, r.step)
+      const step = nowLine(r, waitOn)
       return [
         <Box key={`r${k}`}>
           <Box flexShrink={0}>
           <Text color={stuck ? 'yellow' : finished ? 'green' : 'cyan'}>{`${ind}  ${mark} `}</Text>
-          <Button key={`open-${key}`} plain onPress={() => toggleCard(key)}>{label}</Button>
+          <Button key={`open-${key}`} plain onPress={() => toggleCard(key)}><Text bold>{label}</Text></Button>
           {frac === null
             ? [
                 // No % known: a still, dotted bar. A sliding piece redrew every second and read as flashing.
@@ -1218,8 +1279,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           {ctlBtn(r, key)}
         </Box>,
         ctlMenu(r, key, ind.length + 4, title),
-        second(`rw${k}`, ind.length + 4, ar, why, isOpen),
-        ...(isOpen ? details(r, k, pad, waitOn, tags, machineOf(full, title)) : []),
+        // Line two, dim: what it does now and for how long. Open, it wraps in full, then the why, area and gains.
+        step ? <Box key={`rs${k}`} paddingLeft={ind.length + 4}><Text dimColor wrap={isOpen ? 'wrap' : 'truncate-end'}>{isOpen ? step : clip(step, Math.max(4, width - ind.length - 4))}</Text></Box> : null,
+        ...(isOpen ? details(r, k, pad, step.includes(waitOn) ? '' : waitOn, tags, machineOf(full, title), ar, why) : []),
       ].filter(Boolean)
     }
     const toggleCard = (key: string) => update($, openAtom, l => (l.includes(key) ? l.filter(x => x !== key) : [...l, key]))
@@ -1238,22 +1300,28 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       )
     }
     // An open card: the step (or what it waits on, or the count), the machine, the time, and the gains it named.
-    const details = (r: RunCard, k: string, pad: string, waitOn: string, tags: LensTag[] = [], machine = '') => [
-      waitOn ? hang(`t${k}`, pad, `waiting on: ${waitOn}`, false) : r.step || r.count ? hang(`t${k}`, pad, r.step || r.count, false) : null,
+    // The step and time are on line two already, so the card adds only what line two leaves out: what it waits on,
+    // the area and why (no "Other" when the area is unknown), the machine, a watcher and the gains it named.
+    const details = (r: RunCard, k: string, pad: string, waitOn: string, tags: LensTag[] = [], machine = '', ar?: GoalArea, why = '') => [
+      waitOn ? hang(`t${k}`, pad, `waiting on: ${waitOn}`, false) : null,
+      ar && ar.id !== OTHER.id ? second(`ar${k}`, pad.length, ar, why, true) : why ? hang(`wy${k}`, pad, why) : null,
       machine ? hang(`mc${k}`, pad, `machine: ${machine}`) : null,
-      r.ran || r.elapsed ? hang(`f${k}`, pad, r.ran ? `${r.ran} running` : `${r.elapsed} so far`) : null,
       r.watchedBy ? hang(`wb${k}`, pad, `watched by ${r.watchedBy}`) : null,
       ...gainLines(tags).map((g, j) => hang(`gn${k}-${j}`, pad, g)),
     ].filter(Boolean)
     // The running rows as top jobs, each with its children (drawn under it while it is open).
+    let titleW = 0
     const runTops = (rows: string[]) => {
       const cards = rows.map(runCard)
-      return nestRows(cards.map(c => c.name), meta).map(({ i, kids }) => {
+      const nests = nestRows(cards.map(c => c.name), meta)
+      const kidSet = new Set(nests.flatMap(n => n.kids))
+      titleW = Math.max(0, ...cards.map((c, i) => plain(metaOf(c.name).title || prettyName(c.name)).length + (kidSet.has(i) ? 4 : 0)))
+      return nests.map(({ i, kids }) => {
         const c = cards[i]!
         const k0 = kids.length ? cards[kids[0]!]! : undefined
         const kid = k0 && c.stuck ? short(metaOf(k0.name).title || k0.name) : ''
         const open = openCards.has(slug(c.name))
-        return { c, draw: () => [...card(c, `${i}`, '', false, kid), ...(open ? kids.flatMap(j => card(cards[j]!, `${i}c${j}`, '    ', true, '')) : [])] }
+        return { c, kid, draw: () => [...card(c, `${i}`, '', false, kid), ...(open ? kids.flatMap(j => card(cards[j]!, `${i}c${j}`, '    ', true, '')) : [])] }
       })
     }
 
@@ -1273,13 +1341,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const said = phrase.replace(/^(waiting on |last step: |paused by a rate limit: )/, '')
       const inStep = !c.waited && !!said && c.step.includes(said)
       const ar = runArea(c.name, c.step)
+      const line2 = [phrase || 'waiting', c.waited ? `for ${c.waited}` : c.elapsed].filter(Boolean).join(' · ')
       return [
         <Box key={`rw${i}`}>
           <Text color="yellow" dimColor>{'  ⏸ '}</Text>
-          <Button key={`open-${key}`} plain onPress={() => toggleCard(key)}>{clip(title, Math.max(4, width - 4))}</Button>
+          <Button key={`open-${key}`} plain onPress={() => toggleCard(key)}><Text bold>{clip(title, Math.max(4, width - 4))}</Text></Button>
         </Box>,
-        second(`rwn${i}`, 4, ar, phrase || why || 'waiting'),
-        ...(isOpen ? [inStep ? null : hang(`wr${i}`, '    ', whole, false), ...details(c, `w${i}`, '    ', '', tags, machineOf(full, title))].filter(Boolean) : []),
+        <Box key={`rwn${i}`} paddingLeft={4}><Text dimColor wrap="truncate-end">{clip(line2, Math.max(4, width - 4))}</Text></Box>,
+        ...(isOpen ? [inStep ? null : hang(`wr${i}`, '    ', whole, false), c.step || c.count ? hang(`ws${i}`, '    ', c.step || c.count, false) : null, ...details(c, `w${i}`, '    ', '', tags, machineOf(full, title), ar, why)].filter(Boolean) : []),
       ]
     }
 
@@ -1313,21 +1382,24 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const tags = doneTags(d)
       const said = tags.find(t => !t.inferred)?.text ?? ''
       const impact = rec?.impact[0] || said
-      // The first impact line shows again in the open card only when line two had to cut it.
-      const cut = `${ar.tag} · ${impact}`.length > width - 4
+      // One line, outcome first: the impact in bold (the title when there is none), the time dim. The first impact
+      // line shows again in the open card only when the row had to cut it.
+      const head = impact || title
+      const room = Math.max(4, width - 4 - (d.at ? 7 : 0))
+      const cut = head.length > room
       const more = doneDetails(rec, d.at, mach).filter(t => cut || t !== impact)
       return [
         <Box key={`dn${i}`}>
           <Text color="green">{'  ✓ '}</Text>
-          <Button key={`dno-${d.key}`} plain onPress={press}>{clip(title, Math.max(4, width - 4 - (d.at ? 7 : 0)))}</Button>
+          <Button key={`dno-${d.key}`} plain onPress={press}><Text bold>{clip(head, room)}</Text></Button>
           <Text dimColor>{d.at ? `  ${d.at}` : ''}</Text>
         </Box>,
-        second(`dni${i}`, 4, ar, impact, isOpen),
         ...(isOpen
           ? [
+              impact ? (ar.id !== OTHER.id ? second(`dni${i}`, 4, ar, title, true) : hang(`dni${i}`, '    ', title)) : null,
               ...gainLines(tags).filter(g => !g.endsWith(`: ${impact}`)).map((g, j) => hang(`dg${i}-${j}`, '    ', g)),
               ...(impact && more[0] === 'no impact reported' ? more.slice(1) : more).map((t, j) => hang(`dd${i}-${j}`, '    ', t, !rec?.impact.length || !rec.impact.includes(t))),
-            ]
+            ].filter(Boolean)
           : []),
       ].filter(Boolean)
     }
@@ -1657,7 +1729,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
             {chrome.usedAt && chrome.tone !== 'dim' ? <Text dimColor>{`  used ${hhmm(chrome.usedAt)}`}</Text> : null}
             {checkBtn(chrome.check, 'c-chrome-chk')}
           </Box>
-          {chrome.warn ? <Text key="c-chrome-w" color="yellow" wrap="truncate-end">{`    ${chrome.warn}`}</Text> : null}
+          {/* A warning keeps its whole text: it says what to do. */}
+          {chrome.warn ? <Box key="c-chrome-w" paddingLeft={4}><Text color="yellow" wrap="wrap">{chrome.warn}</Text></Box> : null}
           {chrome.tone !== 'dim' ? chrome.others.map((o, i) => (
             <Box key={`c-chrome-o${i}`}>
               <Text dimColor wrap="truncate-end">{`    Also connected: ${o}`}</Text>
@@ -1778,9 +1851,40 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const waits = (sections.find(x => x.key === 'waiting')?.rows ?? []).map((row, i) => ({ row, i, ar: runArea(runCard(row).name, runCard(row).step) }))
     const dones = doneList.map((d, i) => ({ d, i, ar: doneArea(d) }))
     const doneN = doneList.filter(d => d.text === undefined).length
-    const anchor = (
-      <Box key="anchor" marginBottom={1}>
-        <Text bold color="cyan" wrap="truncate-end">{clip(anchorLine(goal.anchor, doneN, tops.length), width)}</Text>
+    // NEEDS YOU, first and only when something needs you: open actions, your to-dos, a Chrome account warning, stuck
+    // jobs and problems. Each line starts with its verb in bold. Warnings keep their whole text.
+    const verbRow = (key: string, mark: string, verb: string, text: string, color: string, onPress?: () => unknown, extra: RenderChildren = null) => (
+      <Box key={key}>
+        <Box flexShrink={0}><Text color={color}>{`  ${mark} `}</Text></Box>
+        {onPress
+          ? <Button key={`${key}-b`} plain onPress={onPress}>{[<Text key="v" bold color={color}>{verb}</Text>, <Text key="r" color={color}>{` ${text}`}</Text>]}</Button>
+          : [<Box key="v" flexShrink={0}><Text bold color={color}>{verb}</Text></Box>, <Text key="r" color={color} wrap="wrap">{` ${text}`}</Text>]}
+        {extra}
+      </Box>
+    )
+    const stuckJobs = tops.filter(t => t.c.stuck && !t.kid && !ctl.paused[t.c.name])
+    const problems = sections.find(x => x.key === 'problems')?.rows ?? []
+    const acts = await read($, actionsAtom)
+    const needsN = acts.length + youTodos.length + (chrome.warn ? 1 : 0) + stuckJobs.length + problems.length
+    const needs: RenderChildren[] = needsN === 0 ? [] : [
+      <Box key="needs" flexDirection="column" marginBottom={1}>
+        <Text key="needs-h" bold color="yellow">{`NEEDS YOU  ${needsN}`}</Text>
+        {actBlock.length ? <Box key="needs-act" flexDirection="column" paddingLeft={4}>{actBlock}</Box> : null}
+        {youRows()}
+        {chrome.warn ? verbRow('needs-chrome', '⚠', 'Switch', chrome.warn, 'yellow', undefined, checkBtn(chrome.check, 'chrome-chk')) : null}
+        {stuckJobs.map(t => {
+          const title = plain(metaOf(t.c.name).title || prettyName(t.c.name))
+          return verbRow(`needs-stuck-${slug(t.c.name)}`, '⚠', 'Check', `${title}, stuck ${t.c.stuck}`, 'yellow', () => toggleCard(slug(t.c.name)))
+        })}
+        {problems.map((row, i) => verbRow(`needs-prob-${i}`, '✖', 'Fix', row.replace(/^[✖!⚠■]\s*/, ''), 'red'))}
+      </Box>,
+    ]
+    const glance = (
+      <Box key="glance" marginBottom={1}>
+        {glanceParts({ running: tops.length, waiting: waits.length, needs: needsN, done: doneN }).flatMap((p, i) => [
+          i ? <Text key={`gl-s${i}`} dimColor>{' · '}</Text> : null,
+          <Text key={`gl-${i}`} bold={p.strong} color={p.strong ? 'yellow' : undefined}>{p.text}</Text>,
+        ]).filter(Boolean)}
       </Box>
     )
     const serverRow = (row: string, i: number) => {
@@ -1791,7 +1895,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       return [
         <Box key={`sv${i}`}>
           <Text color="cyan" dimColor>{'  ● '}</Text>
-          <Text wrap="truncate-end">{clip(title, col)}</Text>
+          <Text bold wrap="truncate-end">{clip(title, col)}</Text>
           <Text dimColor wrap="truncate-end">{`  ${ctl.paused[c.name] ? 'paused' : note}`}</Text>
           {ctlBtn(c, slug(c.name))}
         </Box>,
@@ -1811,12 +1915,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       extra ? <Button key="done-more" plain onPress={() => toggleCard('done:all')}><Text dimColor>{allDone ? '    show fewer' : `    +${extra} more`}</Text></Button> : null,
       ...(doneTodos.length ? [<Text key="w-checked" dimColor>{'    Checked-off to-dos'}</Text>, ...doneTodos.flatMap(todoItem)] : []),
     ].filter(Boolean)
-    // What matters now first: problems, to-do, running, waiting, done.
+    // What matters now first: to-do, running, waiting, done. Problems are NEEDS YOU lines, not a section.
     const ORDER: Key[] = ['problems', 'todo', 'running', 'waiting', 'done']
-    const shown = [...sections].sort((a, b) => ORDER.indexOf(a.key) - ORDER.indexOf(b.key))
-    const count = (sec: (typeof sections)[number], isFolded: boolean) => {
+    const shown = sections.filter(x => x.key !== 'problems').sort((a, b) => ORDER.indexOf(a.key) - ORDER.indexOf(b.key))
+    const count = (sec: (typeof sections)[number]) => {
       if (sec.key === 'todo') return String(openTodos)
-      if (sec.key === 'done') return String((isFolded ? sec.count : doneList.length) + doneTodos.length)
+      if (sec.key === 'done') return String((sec.folded ? sec.count : doneList.length) + doneTodos.length)
       if (sec.key === 'running' && sec.rows.length) return `${runCount(sec.rows.filter(r => !isServer(r)).map(r => runCard(r).name), meta)}${serverRows.length ? ` · ${serverRows.length} serving` : ''}`
       return String(sec.count)
     }
@@ -1824,33 +1928,34 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     return (
       <Box flexDirection="column">
         {tabBar}
-        {actBlock}
+        {glance}
+        {healthBlock}
+        {needs}
         {inboxBlock}
         {chanBlock}
-        {chrome.tone !== 'dim' ? (
-          <Box key="chrome-l">
-            <Text color={chrome.tone === 'warn' ? 'yellow' : undefined} dimColor={chrome.tone !== 'warn'} wrap="truncate-end">{chrome.line}</Text>
-            {checkBtn(chrome.check, 'chrome-chk')}
-          </Box>
-        ) : null}
-        {chrome.warn ? <Text key="chrome-w" color="yellow" wrap="truncate-end">{chrome.warn}</Text> : null}
         {banner}
-        {healthBlock}
-        {anchor}
-        {sections.length === 0 && <Text dimColor>Nothing running.</Text>}
         {shown.map((sec, n) => {
-          const isFolded = folded.has(sec.key) || sec.folded
+          // DONE starts folded to one line, "▸ DONE TODAY  15". A press opens it for this session.
+          const isDone = sec.key === 'done'
+          const isFolded = isDone ? sec.folded || !openCards.has('done:open') : folded.has(sec.key) || sec.folded
           return (
             <Box key={`s-${sec.key}`} flexDirection="column" marginBottom={n < shown.length - 1 || other.length ? 1 : 0}>
-              <Button key={`h-${sec.key}`} plain onPress={() => flip($, homeDir, sec.key)}>
-                <Text bold>{`${isFolded ? '▸' : '▾'} ${sec.title}`}</Text>
-                <Text dimColor>{`  ${count(sec, isFolded)}`}</Text>
+              <Button key={`h-${sec.key}`} plain onPress={() => (isDone ? toggleCard('done:open') : flip($, homeDir, sec.key))}>
+                <Text bold>{`${isFolded ? '▸' : '▾'} ${isDone ? 'DONE TODAY' : sec.title}`}</Text>
+                <Text dimColor>{`  ${count(sec)}`}</Text>
               </Button>
               {!isFolded && (sec.key === 'todo' ? todoRows() : sec.key === 'running' ? runRows() : sec.key === 'waiting' ? waitRows() : sec.key === 'done' ? doneRows() : plainRows(sec.rows, sec.key))}
             </Box>
           )
         })}
         {other.map((l, i) => <Text key={`o${i}`} dimColor>{l}</Text>)}
+        {/* The Chrome line only when its account is unknown, to check it. A wrong account is a NEEDS YOU line. */}
+        {!chrome.warn && chrome.tone !== 'dim' && chrome.check ? (
+          <Box key="chrome-l" marginTop={1}>
+            <Text dimColor wrap="truncate-end">{chrome.line}</Text>
+            {checkBtn(chrome.check, 'chrome-chk')}
+          </Box>
+        ) : null}
       </Box>
     )
   }

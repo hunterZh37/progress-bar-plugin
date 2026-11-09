@@ -129,7 +129,7 @@ const FULL = [
   '  grants-rematch · finished 10:12',
 ].join('\n')
 
-test('the List tab: a one-line anchor, then TO-DO, RUNNING, WAITING, DONE; plain two-line rows; no emoji; goal.json written once', async ($, on) => {
+test('the List tab: a status line, then TO-DO, RUNNING, WAITING, DONE; two-line rows; DONE folded; no emoji; goal.json written once', async ($, on) => {
   const files: Record<string, string> = {
     [SCRIPT]: statusScript(), [FLAG]: 'on\n',
     [`${DIR}/todo.txt`]: '[hunty]\n1. Know where more orgs serve (after hunty-board-seats)\n',
@@ -144,40 +144,53 @@ test('the List tab: a one-line anchor, then TO-DO, RUNNING, WAITING, DONE; plain
   expect(JSON.parse(files[`${HOME}/${GOAL_REL}`]!)).toEqual(DEFAULT_GOAL)
   const lines = draw((await ui.find({ type: 'Box' })) as never)
   const at = (re: RegExp) => lines.findIndex(l => re.test(l))
-  // Level 1: the anchor, one bold cyan line, one blank line after it.
-  const anchorAt = at(/generosity database/)
-  expect(lines[anchorAt]).toBe('Making the generosity database better · 1 done today · 2 running')
-  expect(lines[anchorAt + 1]).toBe('')
-  const anchor = (await ui.findAll({ type: 'Text' })).find(t => /generosity/.test(t.text ?? '')) as unknown as { props?: { bold?: boolean; color?: string } }
-  expect([anchor.props?.bold, anchor.props?.color]).toEqual([true, 'cyan'])
+  // Level 1: status at a glance, right under the tabs, one blank line after it. No goal name, nothing needs you.
+  expect(lines[2]).toBe('2 running · 1 done today')
+  expect(lines[3]).toBe('')
+  expect(lines.join('\n')).not.toMatch(/generosity|NEEDS YOU/)
   // No emoji anywhere: nothing from U+1F000 up, and none of the old badge glyphs. No lens line, no chips, no machines.
   const all = lines.join('\n')
   expect(all).not.toMatch(/[\u{1F000}-\u{1FFFF}⛔⚙⏱⚡☀✉]/u)
   expect(all).not.toMatch(/today: |quality|machines:|◒/)
   // Level 2: what matters now first. Never two blank lines in a row.
-  expect(lines.filter(l => /^[▾▸] /.test(l))).toEqual(['▾ TO-DO  1', '▾ RUNNING  2', '▾ DONE  1'])
+  expect(lines.filter(l => /^[▾▸] /.test(l))).toEqual(['▾ TO-DO  1', '▾ RUNNING  2', '▸ DONE TODAY  1'])
   expect(all).not.toMatch(/\n\s*\n\s*\n/)
-  // Level 3 and 4: the mark, the title, a thin bar and the percent, time left after it; then "<Area> · <why>" under
-  // the title text.
-  const col = rowCol(72)
+  // Level 3 and 4: the mark, the bold title, a thin bar and the percent, time left after it; then the step (or the
+  // count) dim under the title text. No area, no why until the row opens. The title column fits the longest title.
+  const col = 'Board lists past 25 seats'.length
   // A row that can be stopped ends with a dim [x].
   expect(lines[at(/Board lists/)]).toBe(`  ◐ ${fitLabel('Board lists past 25 seats', col)}  ━━━━━─────  50%  10m left [x]`)
-  expect(lines[at(/Board lists/) + 1]).toBe('    Boards · Whole boards, not just 25')
-  expect(lines[at(/Tidy up/) + 1]).toBe('    Tools')
-  // Done reads like a changelog: title and time, then "<Area> · <impact>".
-  expect(lines[at(/Grant rematch/)]).toBe('  ✓ Grant rematch  10:12')
-  expect(lines[at(/Grant rematch/) + 1]).toBe('    Grants · 42K more grants linked to the orgs that got them')
+  expect(lines[at(/Board lists/) + 1]).toBe('    1 of 2 steps')
+  expect(lines[at(/Tidy up/) + 1]).toBe('    1 of 2 steps')
+  expect(all).not.toMatch(/Boards ·|Whole boards|Tools/)
+  const title = (await ui.findAll({ type: 'Text' })).find(t => /^Board lists/.test(t.text ?? '')) as unknown as { props?: { bold?: boolean } }
+  expect(title.props?.bold).toBe(true)
+  // To-dos keep machines, priority and blockers.
+  expect(lines[at(/Know where/)]).toBe('  ⏸  1. Know where more orgs serve')
+  // DONE opens to one line per job, outcome first and bold, the time dim.
+  expect(all).not.toMatch(/Grant rematch|42K/)
+  await ui.press({ key: 'h-done' })
+  let open = draw((await ui.find({ type: 'Box' })) as never)
+  expect(open[open.findIndex(l => /42K/.test(l))]).toBe('  ✓ 42K more grants linked to the orgs that got them  10:12')
+  expect(open.join('\n')).not.toMatch(/Grant rematch/)
+  const impact = (await ui.findAll({ type: 'Text' })).find(t => /^42K/.test(t.text ?? '')) as unknown as { props?: { bold?: boolean } }
+  expect(impact.props?.bold).toBe(true)
+  // Opened, a done row adds its title under the area word.
+  await ui.press({ key: 'dno-grants-rematch' })
+  open = draw((await ui.find({ type: 'Box' })) as never)
+  expect(open).toContain('    Grants · Grant rematch')
   // The area word is a step brighter than the dim rest of the line.
   const word = (await ui.findAll({ type: 'Text' })).find(t => t.text === 'Grants') as unknown as { props?: { dimColor?: boolean } }
   expect(!!word.props?.dimColor).toBe(false)
-  // To-dos keep machines, priority and blockers.
-  expect(lines[at(/Know where/)]).toBe('  ⏸  1. Know where more orgs serve')
-  // Opened, the card shows the step or count, the time and the gains it named. No badge, no area line.
+  // An opened running row adds the area and why, and the gains it named. No badge.
   await ui.press({ key: 'open-hunty-board-seats' })
-  const open = draw((await ui.find({ type: 'Box' })) as never)
-  expect(open).toContain('    1 of 2 steps')
+  await ui.press({ key: 'open-tidy-up' })
+  open = draw((await ui.find({ type: 'Box' })) as never)
+  expect(open[open.findIndex(l => /Board lists/.test(l)) + 1]).toBe('    1 of 2 steps')
+  expect(open).toContain('    Boards · Whole boards, not just 25')
   expect(open).toContain('    quality: 1.65M more board seats counted')
-  expect(open.join('\n')).not.toMatch(/area: |job$|Claude agent/m)
+  expect(open[open.findIndex(l => /Tidy up/.test(l)) + 2]).toBe('    Tools')
+  expect(open.join('\n')).not.toMatch(/area: |job$|Claude agent|so far/m)
   await ui.unmount()
 })
 
@@ -187,9 +200,9 @@ test('goal.json: a custom file is read and never overwritten', async ($, on) => 
   world(on, files, FULL)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: props(60) })
+  await ui.press({ key: 'open-tidy-up' })
   const lines = draw((await ui.find({ type: 'Box' })) as never)
-  expect(lines).toContain('Ship the app · 1 done today · 2 running')
-  expect(lines[lines.findIndex(l => /^  ◐ Tidy up/.test(l)) + 1]).toBe('    Login')
+  expect(lines[lines.findIndex(l => /^  ◐ Tidy up/.test(l)) + 2]).toBe('    Login')
   expect(files[`${HOME}/${GOAL_REL}`]).toBe(mine)
   await ui.unmount()
 })
@@ -207,6 +220,7 @@ async function paneIn($: Engine, on: On, files: Record<string, string>, cwd: str
   on('session.cwd', () => ({ value: cwd }))
   await $.session.start({ cwd, surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: props(60) })
+  await ui.press({ key: 'open-tidy-up' })
   const lines = draw((await ui.find({ type: 'Box' })) as never)
   await ui.unmount()
   return lines
@@ -215,9 +229,10 @@ async function paneIn($: Engine, on: On, files: Record<string, string>, cwd: str
 test('goals are per project: a project with no goals/<slug>.json shows its folder name, never another project goal', async ($, on) => {
   const files = PROJECTS()
   const lines = await paneIn($, on, files, `${HOME}/Desktop/agentic-scheduling/src`)
-  expect(lines).toContain('agentic-scheduling · 1 done today · 2 running')
+  expect(lines[2]).toBe('2 running · 1 done today')
   expect(lines.join('\n')).not.toMatch(/generosity/)
-  expect(lines[lines.findIndex(l => /^  ◐ Tidy up/.test(l)) + 1]).toBe('    Other')
+  // No area known: the opened card names none (no "Other").
+  expect(lines.join('\n')).not.toMatch(/Other|Login/)
   expect(Object.keys(files).filter(f => /goals?[/.]/.test(f)).sort()).toEqual([`${HOME}/${GOAL_REL}`, `${HOME}/${GOALS_DIR_REL}/desktop-nombot.json`])
 })
 
@@ -225,8 +240,7 @@ test('goals are per project: goals/<slug>.json heads its own project, with its a
   const files = PROJECTS()
   const mine = files[`${HOME}/${GOALS_DIR_REL}/desktop-nombot.json`]
   const lines = await paneIn($, on, files, `${HOME}/Desktop/NomBot`)
-  expect(lines[2]).toMatch(/^Making the generosity database better · 1 done today/)
-  expect(lines[lines.findIndex(l => /^  ◐ Tidy up/.test(l)) + 1]).toBe('    Login')
+  expect(lines[lines.findIndex(l => /^  ◐ Tidy up/.test(l)) + 2]).toBe('    Login')
   expect(files[`${HOME}/${GOALS_DIR_REL}/desktop-nombot.json`]).toBe(mine)
 })
 
@@ -277,6 +291,9 @@ test('DONE shows the latest 5, then "+N more" opens the rest', async ($, on) => 
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: props(72) })
   const done = async () => (await ui.findAll({ type: 'Button' })).filter(b => /^dno-/.test(b.key ?? '')).length
+  expect(await done()).toBe(0)
+  expect((await ui.find({ type: 'Button', key: 'h-done' }))?.text).toBe('▸ DONE TODAY  8')
+  await ui.press({ key: 'h-done' })
   expect(await done()).toBe(5)
   expect((await ui.find({ type: 'Button', key: 'done-more' }))?.text).toBe('    +3 more')
   await ui.press({ key: 'done-more' })

@@ -243,14 +243,17 @@ test('no popup off macOS, the gate still holds', async ($, on) => {
   expect((await submit($, 'hello')).drop).toContain('Sign in to gh')
 })
 
-test('panel: red banner first on the List tab with Copy, I ran it and Skip', async ($, on) => {
+test('panel: a NEEDS YOU line first on the List tab with Copy, I ran it and Skip', async ($, on) => {
   const files: Record<string, string> = { [SCRIPT]: statusScript(), [`${P}/.state/panel-on`]: 'on\n', [AF]: JSON.stringify([A({ id: 'a1', title: 'Swap in the NomBot build', command: 'cd ~/x && mv .next-build .next && launchctl kickstart -k gui/501/org.iog.nombot', check: 'grep -qx B id' })]) }
   const ran = world(on, files, new Set())
   await start($)
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
   const t = (await ui.findAll({ type: 'Text' })).map(x => x.text ?? '')
-  expect(t).toContain('Action needed')
-  expect(t).toContain('Swap in the NomBot build')
+  // In the Status panel an action is a NEEDS YOU line, its verb bold, first of all.
+  expect(t).toContain('NEEDS YOU  1')
+  expect(t.indexOf('NEEDS YOU  1')).toBeLessThan(t.indexOf('$ cd ~/x && mv .next-build .next && launchctl kickstart -k gui/501/org.iog.nombot'))
+  expect(t).toContain('Swap')
+  expect(t).toContain(' in the NomBot build')
   expect(t.some(x => x.startsWith('$ cd ~/x'))).toBe(true)
   await ui.press({ key: 'act-ran-a1' })
   expect(parseActions(files[AF]!)[0]!.status).toBe('open')
@@ -259,7 +262,7 @@ test('panel: red banner first on the List tab with Copy, I ran it and Skip', asy
   await ui.press({ key: 'act-skip-a1' })
   expect(parseActions(files[AF]!)[0]!.status).toBe('skipped')
   const t2 = (await ui.findAll({ type: 'Text' })).map(x => x.text ?? '')
-  expect(t2).not.toContain('Action needed')
+  expect(t2).not.toContain('NEEDS YOU  1')
 })
 
 test('Run: slash commands and command-less actions have no Run, shell commands do', () => {
