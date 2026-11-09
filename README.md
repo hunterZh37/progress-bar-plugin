@@ -369,6 +369,26 @@ Each finished job under DONE is a button, `✓ <title>  11:27`, with `<Area> · 
 - **Older agents:** an agent that finished before the plugin kept records gets one from its transcript (this session's `subagents` folder) the first time its row is opened.
 - **Remote jobs:** a `<host>: name` row has a record only on the machine that ran it. Here it opens to `no impact reported` with its finish time.
 
+## Server rows
+
+A background Bash shell that runs a server (`npm run dev`, `pnpm start`, `next dev`, `vite`, `uvicorn`, `gunicorn`, `flask run`, `manage.py runserver`, `rails s`, `python -m http.server`, `node server.js`, `docker compose up` and the like, or one whose description reads "Start/Run ... server") stays up by design. It shows at the end of RUNNING under a small `SERVERS` label: no bar, never stuck, a dim `serving :3000 · up 28m` (the port when the command names one). It ends when the shell exits.
+
+## Stop or pause a job
+
+A RUNNING row with something to control ends with a dim `[x]`. Press it for `Stop · Pause · Cancel` under the row.
+
+- **Background shell** (dev servers too): Stop sends SIGTERM to the shell Claude started for that command and its child processes; Pause sends SIGSTOP and the row reads `paused`, then the menu offers `Resume · Stop`. If its process is not found, Stop asks Claude to TaskStop it.
+- **Subagent:** Stop asks Claude, as a prompt, to stop it with TaskStop and say what it had done. There is no pause.
+- **Progress-file job with a `pid`:** Stop (SIGTERM), Pause (SIGSTOP), Resume (SIGCONT), and Stop marks the file stopped.
+- **Progress-file job without a `pid`:** Stop writes `"stopped": true, "stoppedAt": <ms>` into its file. The row moves to DONE as `stopped by you`. Scripts should read their file before each write and quit when `stopped` is true.
+- Rows with nothing to control (another machine's jobs, rows with no file here) show no `[x]`.
+- **Safety:** only processes this plugin recorded: its own background shells (by their exact command, started by Claude, never a look-alike in your terminal) and `pid`s from progress files. Never pid 1, the panel's own process or Claude; never another user's process; a job's pid must still hold its `cmd` and must have started before the job (a reused pid did not).
+- Each stop, pause and resume is logged in the Log tab (`Stopped <title>`). Paused rows are kept in `~/.claude-progress/.state/paused.json`.
+
+## Agents and their progress files
+
+A subagent's bar sits on its line when its progress file is named after the slug of its Agent `description`, or close to it. When the name differs, the plugin pairs the agent with the one fresh file of its session created since the agent started whose name or title shares at least two of the description's words (with several, a clear leader by two words). Paired, the agent is one row with the file's title, area and progress. A file with no known birth (no `startedAt`, no file-system birth time) never pairs.
+
 ## Running cards
 
 Each running job in the Status panel is two lines: the title, bar, percent and time left, then `<Area> · <why>` dim. The bars line up at the right. Press a title to open its card with the details, press it again to close it.

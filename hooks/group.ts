@@ -160,6 +160,12 @@ def signature(l):
     return ' · '.join(p for p in l.split(' · ') if not ELAPSED.match(p.strip()))
 
 
+def is_server(l):
+    """A background server shell (step "serving", or an older "shell-start-...-server" row): up by design, never stuck."""
+    if re.search(r' · serving( :\d+)?( ·|\s*$)', l):
+        return True
+    return bool(re.match(r'^shell-(start|run|launch|serve|boot)-(.*-)?server(-|$)', slugify(name_of(l))))
+
 def has_step(l):
     for p in l.split(' · ')[1:]:
         p = p.strip()
@@ -464,6 +470,8 @@ def main(stdin, now, summary=False):
         return ''
 
     def stuck_for(l):
+        if is_server(l):
+            return None  # a server stays up by design
         v = seen.get(slugify(name_of(l))) or {}
         d = now - v.get('changed', now)
         return d if d >= stuck_after and not waiting_on(l) else None
@@ -474,7 +482,7 @@ def main(stdin, now, summary=False):
         d = stuck_for(i)
         w = watchers.get(slugify(name_of(i)))
         by = ' · watched by: ' + ', '.join(w) if w else ''
-        if d is None and now - (seen.get(slugify(name_of(i))) or {}).get('changed', now) >= stuck_after:
+        if d is None and not is_server(i) and now - (seen.get(slugify(name_of(i))) or {}).get('changed', now) >= stuck_after:
             return SPIN[int(now) % len(SPIN)] + ' ' + body + ' · waiting on: ' + waiting_on(i) + by
         mark = '\033[33m⚠ stuck ' + ago(d) + '\033[0m' if d is not None else SPIN[int(now) % len(SPIN)]
         return mark + ' ' + body + ('' if has_step(i) else ' · in progress') + by

@@ -424,3 +424,34 @@ test('done records: an agent keeps a short impact from its SubagentHandback repo
   await settle($ as never)
   expect(rec(files, 'grade-the-sample').impact).toEqual(['Graded 200 rows: 96% match the labels.'])
 })
+
+test('a background dev server writes a "serving :port" row with its command, so it shows as a server', { options: { openPanel: false } }, async ($, on) => {
+  const files: Record<string, string> = {}
+  world(on, files)
+  on('tool.call', () => ({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bg7' } as never }))
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'Bash', command: 'cd web && npm run dev -- -p 3000', description: 'Start WayToMatter dev server', run_in_background: true } as never)
+  expect(JSON.parse(files[`${P}/shell-start-waytomatter-dev-server.json`]!)).toMatchObject({ step: 'serving :3000', command: 'cd web && npm run dev -- -p 3000', taskId: 'bg7' })
+})
+
+test('an agent whose progress file is named unlike its description shows as one row with that file\'s progress', { options: { openPanel: false } }, async ($, on) => {
+  const agents = [{ id: 'ag5', description: 'Hold Hope until org list plays', status: 'running' }]
+  const files: Record<string, string> = {
+    [`${P}/waytomatter-hold-hope-until-list.json`]: JSON.stringify({ done: 2, total: 4, step: 'Reading code', title: 'Hope waits for the org list, then talks', startedAt: NOW, session: SID }),
+  }
+  world(on, files, { agents })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await settle($ as never)
+  const rows = (files[`${L}/agents-${KEY}.txt`] ?? '').split('\n').filter(Boolean)
+  expect(rows).toEqual([expect.stringMatching(/^▶ Hold Hope until org list plays .* 50\.0% · 2\/4 · Reading code/)])
+  expect(JSON.parse(files[`${P}/.state/pairs-${KEY}.json`]!)).toEqual({ 'hold-hope-until-org-list-plays': 'waytomatter-hold-hope-until-list' })
+})
+
+test('a progress file marked stopped leaves RUNNING and is recorded as stopped by you', { options: { openPanel: false } }, async ($, on) => {
+  const files: Record<string, string> = { [`${P}/crawl.json`]: job({ title: 'Crawl sites', session: SID, stopped: true, stoppedAt: NOW }) }
+  world(on, files)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await settle($ as never)
+  expect(files[`${L}/agents-${KEY}.txt`] ?? '').not.toMatch(/crawl/)
+  expect(JSON.parse(files[`${HOME}/${DONE_REL}/crawl.json`]!)).toMatchObject({ title: 'Crawl sites', impact: ['stopped by you'] })
+})

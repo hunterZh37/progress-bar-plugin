@@ -17,14 +17,16 @@ import { clip, moveItem, nextPrompt, parseItem, rankTodos, shownTitle, todoRows 
 import { DEFAULT_GOAL, OTHER, anchorLine, areaOf, lensTags, plainTitle, projectGoal, readGoal } from './goal'
 import type { LensTag } from './goal'
 import { sessionProject } from './project'
+import { controlKind, controlOptions, readPaused, runControl } from './control'
+import type { CtlKind } from './control'
 import { sessionKeyOf } from './route'
 import { DEFAULT_TOPOLOGY, queuesOf, readTopology, renderTopology, resolveMachine } from './topology'
 import type { TopoJob } from './topology'
 import { turnOnStatusLine } from './setup'
 import { parseSaved, sessionLogin, usageFileRel } from './usage'
 import type { UsageReading } from './usage'
-import { FEW_STEPS, FILE_FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, slug } from './render'
-import type { Action, ActionUi, Channel, ChatMsg, ChatState, Checkpoint, ChromeCheck, Conn, DoneRec, Ev, GoalArea, Health, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
+import { FEW_STEPS, FILE_FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, serverOf, slug } from './render'
+import type { Action, ActionUi, Channel, ChatMsg, ChatState, Checkpoint, ChromeCheck, Conn, Ctl, DoneRec, Ev, GoalArea, Health, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
 
 // The Status panel: the grouped status line, drawn in a docked pane beside the chat.
 // It runs the plugin's own status line script with PB_FULL=1 every second while the pane is open.
@@ -81,6 +83,9 @@ const ghAtom = atom({ plugin: 'progress-bar', key: 'gh' } as const, { repos: [],
 // Running jobs whose line is open to show its details, by slug.
 const openAtom = atom({ plugin: 'progress-bar', key: 'openCards' } as const, [] as string[])
 const metaAtom = atom({ plugin: 'progress-bar', key: 'meta' } as const, {} as Record<string, Meta>)
+// The [x] stop/pause menu (control.ts): the row whose menu is open, each fresh progress file's controllable bits
+// (a shell's recorded command, a job's pid; never the command itself) and the paused rows.
+const ctlAtom = atom({ plugin: 'progress-bar', key: 'ctl' } as const, { open: '', files: {}, paused: {} } as Ctl)
 const logAtom = atom({ plugin: 'progress-bar', key: 'log' } as const, { events: [], filter: 'all', open: '', seenAt: 0, dirs: [] } as { events: Ev[]; filter: LogFilter; open: string; seenAt: number; dirs: string[] })
 const recapAtom = atom({ plugin: 'progress-bar', key: 'recap' } as const, { cp: null, lastTick: 0, open: false } as Recap)
 const inboxAtom = atom({ plugin: 'progress-bar', key: 'inbox' } as const, { checked: 0, items: [] } as Inbox)
@@ -486,6 +491,17 @@ export function runCount(names: string[], meta: Record<string, Meta>): string {
   return `${top.length}${kids ? ` (+${kids} sub-job${kids === 1 ? '' : 's'})` : ''}`
 }
 
+/**
+ * A running row that is a background server (a dev server, an app server): its shell step says "serving[ :port]",
+ * or an older shell row is titled "Start/Run ... server". Returns its dim note ("serving :3000 · up 28m"), else null.
+ */
+export function serverNote(c: Pick<RunCard, 'name' | 'step' | 'elapsed' | 'ran'>, title = ''): string | null {
+  const m = /^serving(?:\s+(:\d+))?\b/.exec(c.step)
+  if (!m && !(c.name.startsWith('shell-') && serverOf('', title || c.name.replace(/^shell-/, '').replace(/-/g, ' ')) !== null)) return null
+  const up = c.elapsed || c.ran
+  return `serving${m?.[1] ? ` ${m[1]}` : ''}${up ? ` · up ${up}` : ''}`
+}
+
 /** The indeterminate bar for a job with no %: a 3-block piece that slides one cell a second. Returns [before, after] widths. */
 export function slide(nowMs: number, barW: number): [number, number] {
   const at = Math.floor(nowMs / 1000) % (barW - 3)
@@ -549,20 +565,37 @@ export const meterOnTabRow = (tabsW: number, meterW: number, width: number) => t
 async function readMeta($: EngineInterface, h: string) {
   const dir = `${h}/${DIR_REL}`
   let meta: Record<string, Meta> = {}
+  const files: Record<string, { command?: string; pid?: number }> = {}
   try { meta = parseTitles(String(await $.fs.read(`${dir}/titles.txt`))) } catch { meta = {} }
   try {
     const now = await $.clock.now()
     for (const f of await $.fs.list(dir)) {
       if (f.kind !== 'file' || !f.name.endsWith('.json') || f.name.endsWith('.watch.json') || now - f.mtimeMs > Math.max(META_MS, FILE_FRESH_MS)) continue
       try {
-        const m = pickMeta(JSON.parse(String(await $.fs.read(`${dir}/${f.name}`))))
+        const raw = JSON.parse(String(await $.fs.read(`${dir}/${f.name}`))) as Record<string, unknown>
+        const m = pickMeta(raw)
         const k = f.name.slice(0, -5)
         if (Object.keys(m).length) meta[k] = { ...meta[k], ...m }
+        if (raw && typeof raw === 'object' && now - f.mtimeMs <= FILE_FRESH_MS) files[k] = { ...(typeof raw.command === 'string' && raw.command.trim() ? { command: 'yes' } : {}), ...(typeof raw.pid === 'number' ? { pid: raw.pid } : {}) }
       } catch { /* half written */ }
     }
   } catch { /* no folder */ }
+  // An agent paired with a progress file named unlike its description (register.tsx pairFile) shows that file's title.
+  try {
+    const now = await $.clock.now()
+    for (const f of await $.fs.list(`${dir}/.state`)) {
+      if (f.kind !== 'file' || !f.name.startsWith('pairs-') || now - f.mtimeMs > 2 * 60_000) continue
+      try {
+        const pairs = JSON.parse(String(await $.fs.read(`${dir}/.state/${f.name}`))) as Record<string, unknown>
+        for (const [d, n] of Object.entries(pairs)) if (typeof n === 'string' && meta[n]) meta[d] = { ...meta[d], ...meta[n] }
+      } catch { /* half written */ }
+    }
+  } catch { /* none */ }
   const prev = await read($, metaAtom)
   if (JSON.stringify(prev) !== JSON.stringify(meta)) await update($, metaAtom, () => meta)
+  const paused = await readPaused($, h)
+  const c0 = await read($, ctlAtom)
+  if (JSON.stringify(c0.files) !== JSON.stringify(files) || JSON.stringify(c0.paused) !== JSON.stringify(paused)) await update($, ctlAtom, c => ({ ...c, files, paused }))
 }
 
 /** The events log, the time the Log tab was last opened and the log folders. */
@@ -1073,6 +1106,36 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const nowMs = await $.clock.now()
     const meta = await read($, metaAtom)
     const openCards = new Set(await read($, openAtom))
+    // Stop or pause from a row's [x] (control.ts): which kind of control a row has, and the open menu's choices.
+    const ctl = await read($, ctlAtom)
+    const ctlKindOf = (c: RunCard): CtlKind | null => controlKind(c.name, c.kind.text === 'Claude agent', ctl.files[c.name])
+    const ctlBtn = (c: RunCard, key: string) => (ctlKindOf(c)
+      ? <Box key={`x-${key}`} flexShrink={0}><Text>{' '}</Text><Button key={`xb-${key}`} plain onPress={() => update($, ctlAtom, x => ({ ...x, open: x.open === key ? '' : key }))}><Text dimColor>{'[x]'}</Text></Button></Box>
+      : null)
+    const choose = async (c: RunCard, kind: CtlKind, title: string, choice: string) => {
+      await update($, ctlAtom, x => ({ ...x, open: '' }))
+      if (choice === 'Cancel' || !homeDir) return
+      const path = `${homeDir}/${DIR_REL}/${c.name}.json`
+      let raw: Record<string, unknown> = {}
+      try { raw = JSON.parse(String(await $.fs.read(path))) as Record<string, unknown> } catch { raw = {} }
+      const said = await runControl($, homeDir, choice, kind, c.name, title, raw, path).catch(err => `Could not ${choice.toLowerCase()}: ${String(err).slice(0, 80)}`)
+      const paused = await readPaused($, homeDir)
+      await update($, ctlAtom, x => ({ ...x, paused }))
+      if (said) $.ui.toast(said, { timeoutMs: 6000 })
+    }
+    const ctlMenu = (c: RunCard, key: string, indent: number, title: string) => {
+      const kind = ctlKindOf(c)
+      if (!kind || ctl.open !== key) return null
+      const opts = controlOptions(kind, !!ctl.paused[c.name])
+      return (
+        <Box key={`xm-${key}`} paddingLeft={indent}>
+          {opts.flatMap((o, j) => [
+            j ? <Text key={`xs${j}`} dimColor>{' · '}</Text> : null,
+            <Button key={`xo${j}`} plain onPress={() => choose(c, kind, title, o)}>{o === 'Stop' ? <Text color="red">{o}</Text> : <Text>{o}</Text>}</Button>,
+          ]).filter(Boolean)}
+        </Box>
+      )
+    }
     const metaOf = (name: string): Meta => meta[slug(name)] ?? {}
     const short = (t: string) => t.split(' · ')[0]!
     const mach = machines(sections.filter(x => x.key === 'running' || x.key === 'waiting').flatMap(x => x.rows).map(x => runCard(x).name), todos.map(t => t.owner))
@@ -1114,7 +1177,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const m0 = metaOf(r.name)
       const key = slug(r.name)
       const isOpen = openCards.has(key)
-      const stuck = kid ? '' : r.stuck // a parent with a busy child is waiting, not stuck
+      const paused = !!ctl.paused[r.name]
+      const stuck = kid || paused ? '' : r.stuck // a parent with a busy child is waiting, not stuck; a paused job is paused
       const waitOn = kid || r.waitOn
       const frac = r.pct === null ? null : Math.min(1, r.pct / 100)
       const filled = frac === null ? 0 : Math.round(frac * MINI)
@@ -1127,9 +1191,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const label = fitLabel(title, col)
       const finished = r.mark === '✔'
       // Room after mark, label, bar and percent (4 + col + 17) and two spaces.
-      const room = width - ind.length - col - 23
+      const room = width - ind.length - col - 23 - (ctlKindOf(r) ? 4 : 0)
       const fit = (x: string) => (x.length > room ? (room > 1 ? `${x.slice(0, room - 1)}…` : '') : x)
-      const tail = fit(finished ? 'just finished' : stuck ? `⚠ stuck ${stuck}` : waitOn ? `waiting on ${short(waitOn)}` : r.left ? `${r.left} left` : r.pct === null && r.ran ? `${r.ran} running` : '')
+      const tail = fit(finished ? 'just finished' : paused ? 'paused' : stuck ? `⚠ stuck ${stuck}` : waitOn ? `waiting on ${short(waitOn)}` : r.left ? `${r.left} left` : r.pct === null && r.ran ? `${r.ran} running` : '')
       const why = (m0.why ?? '').replace(/^unlocks:?\s*/i, '')
       const tags = lensTags(goal, m0.gains, `${m0.title ?? ''} ${m0.why ?? ''}`)
       const ar = runArea(r.name, r.step)
@@ -1151,7 +1215,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
               ]}
           </Box>
           {tail ? <Text color={stuck ? 'yellow' : undefined} dimColor={!stuck} wrap="truncate-end">{`  ${tail}`}</Text> : null}
+          {ctlBtn(r, key)}
         </Box>,
+        ctlMenu(r, key, ind.length + 4, title),
         second(`rw${k}`, ind.length + 4, ar, why, isOpen),
         ...(isOpen ? details(r, k, pad, waitOn, tags, machineOf(full, title)) : []),
       ].filter(Boolean)
@@ -1704,7 +1770,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // The List tab: the anchor on one line (the goal, done today, running), then the sections as always: TO-DO,
     // PROBLEMS, RUNNING, WAITING, DONE, foldable, with hotkeys 1, 2, 3... Each job's area is the first word of its dim
     // second line, and rows cluster by area inside a section.
-    const tops = runTops(sections.find(x => x.key === 'running')?.rows ?? []).map(t => ({ ...t, ar: runArea(t.c.name, t.c.step) }))
+    // Background servers (a dev server) are up by design: no bar, never stuck, listed last under a small SERVERS label.
+    const runAll = sections.find(x => x.key === 'running')?.rows ?? []
+    const isServer = (row: string) => { const c = runCard(row); return serverNote(c, metaOf(c.name).title) !== null }
+    const serverRows = runAll.filter(isServer)
+    const tops = runTops(runAll.filter(r => !isServer(r))).map(t => ({ ...t, ar: runArea(t.c.name, t.c.step) }))
     const waits = (sections.find(x => x.key === 'waiting')?.rows ?? []).map((row, i) => ({ row, i, ar: runArea(runCard(row).name, runCard(row).step) }))
     const dones = doneList.map((d, i) => ({ d, i, ar: doneArea(d) }))
     const doneN = doneList.filter(d => d.text === undefined).length
@@ -1713,7 +1783,25 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         <Text bold color="cyan" wrap="truncate-end">{clip(anchorLine(goal.anchor, doneN, tops.length), width)}</Text>
       </Box>
     )
-    const runRows = () => byArea(tops, x => x.ar).flatMap(x => x.draw())
+    const serverRow = (row: string, i: number) => {
+      const c = runCard(row)
+      const title = plain(metaOf(c.name).title || prettyName(c.name))
+      const note = serverNote(c, metaOf(c.name).title) ?? 'serving'
+      const col = Math.max(4, width - 10 - note.length)
+      return [
+        <Box key={`sv${i}`}>
+          <Text color="cyan" dimColor>{'  ● '}</Text>
+          <Text wrap="truncate-end">{clip(title, col)}</Text>
+          <Text dimColor wrap="truncate-end">{`  ${ctl.paused[c.name] ? 'paused' : note}`}</Text>
+          {ctlBtn(c, slug(c.name))}
+        </Box>,
+        ctlMenu(c, slug(c.name), 4, title),
+      ].filter(Boolean)
+    }
+    const runRows = () => [
+      ...byArea(tops, x => x.ar).flatMap(x => x.draw()),
+      ...(serverRows.length ? [<Text key="sv-h" dimColor>{'  SERVERS'}</Text>, ...serverRows.flatMap(serverRow)] : []),
+    ]
     const waitRows = () => byArea(waits, x => x.ar).flatMap(x => waitRow(x.row, x.i))
     // DONE shows the latest DONE_FOLD in time order, then "+N more" to show the rest.
     const allDone = openCards.has('done:all')
@@ -1729,7 +1817,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const count = (sec: (typeof sections)[number], isFolded: boolean) => {
       if (sec.key === 'todo') return String(openTodos)
       if (sec.key === 'done') return String((isFolded ? sec.count : doneList.length) + doneTodos.length)
-      if (sec.key === 'running' && sec.rows.length) return runCount(sec.rows.map(r => runCard(r).name), meta)
+      if (sec.key === 'running' && sec.rows.length) return `${runCount(sec.rows.filter(r => !isServer(r)).map(r => runCard(r).name), meta)}${serverRows.length ? ` · ${serverRows.length} serving` : ''}`
       return String(sec.count)
     }
 

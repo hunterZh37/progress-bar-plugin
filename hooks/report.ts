@@ -3,7 +3,7 @@ import type { Gains } from '../types'
 
 import { impactLines, saveDone } from './done'
 import { pickGains } from './goal'
-import { slug } from './render'
+import { serverOf, slug } from './render'
 import { sessionKeyOf } from './route'
 
 // Progress files written for Claude: the progress_report tool, the session's own task list (TodoWrite, TaskCreate,
@@ -183,7 +183,11 @@ export async function startShell($: EngineInterface, h: string, description: str
   const owner = await ownerOf($)
   const name = shellSlug(description, command)
   const path = `${h}/${DIR_REL}/${name}.json`
-  const body = JSON.stringify(reportBody({ title: description || command.slice(0, 60), step: taskId ? 'running in the background' : 'running' }, owner, await $.clock.now()))
+  // A background server (npm run dev, uvicorn...) stays up by design: its step "serving[ :port]" makes it a server row, never stuck.
+  const server = taskId ? serverOf(command, description) : null
+  const step = server !== null ? `serving${server ? ` ${server}` : ''}` : taskId ? 'running in the background' : 'running'
+  // A background shell keeps its command and task id, so the panel's [x] can stop or pause exactly that shell.
+  const body = JSON.stringify({ ...reportBody({ title: description || command.slice(0, 60), step }, owner, await $.clock.now()), ...(taskId ? { command, taskId } : {}) })
   liveShells.set(path, { body, taskId })
   await $.fs.write(path, body).catch(() => undefined)
   return path

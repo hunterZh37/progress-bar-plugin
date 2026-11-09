@@ -160,7 +160,8 @@ test('the List tab: a one-line anchor, then TO-DO, RUNNING, WAITING, DONE; plain
   // Level 3 and 4: the mark, the title, a thin bar and the percent, time left after it; then "<Area> · <why>" under
   // the title text.
   const col = rowCol(72)
-  expect(lines[at(/Board lists/)]).toBe(`  ◐ ${fitLabel('Board lists past 25 seats', col)}  ━━━━━─────  50%  10m left`)
+  // A row that can be stopped ends with a dim [x].
+  expect(lines[at(/Board lists/)]).toBe(`  ◐ ${fitLabel('Board lists past 25 seats', col)}  ━━━━━─────  50%  10m left [x]`)
   expect(lines[at(/Board lists/) + 1]).toBe('    Boards · Whole boards, not just 25')
   expect(lines[at(/Tidy up/) + 1]).toBe('    Tools')
   // Done reads like a changelog: title and time, then "<Area> · <impact>".

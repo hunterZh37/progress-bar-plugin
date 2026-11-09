@@ -44,8 +44,8 @@ export const LENS_IDS = ['cost', 'quality', 'speed'] as const
 const str = (x: unknown) => (typeof x === 'string' && x.trim() ? x.trim() : '')
 const words = (x: unknown) => (Array.isArray(x) ? x.map(str).filter(Boolean).map(w => w.toLowerCase()) : [])
 
-/** An area's short tag when goal.json names none: the first word of its name, at most 8 letters ("Boards & people" -> "Boards"). */
-export const tagOf = (name: string) => (name.split(/[^A-Za-z0-9]+/).find(Boolean) ?? name).slice(0, 8)
+/** An area's short tag when goal.json names none: the first word of its name, at most 14 letters ("Boards & people" -> "Boards"). */
+export const tagOf = (name: string) => (name.split(/[^A-Za-z0-9]+/).find(Boolean) ?? name).slice(0, 14)
 
 /** A project with no goal file: its folder name as the anchor, no areas (every job is Other), the usual lenses. */
 export const projectGoal = (name: string): Goal => ({ anchor: name || 'This project', areas: [], lenses: DEFAULT_GOAL.lenses })

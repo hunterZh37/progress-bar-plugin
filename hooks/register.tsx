@@ -12,7 +12,7 @@ import { resolveHome } from './home'
 import { USAGE_CHECK, probeUsage, sessionLogin } from './usage'
 import { macClicks, parseMacClicks } from './mac'
 import { checkpointCommand, noteStatusLine, panelCommand, registerPanel, startPanel } from './panel'
-import { FILE_FRESH_MS, FRESH_MS, closestFile, eta, pickMeta, expandHome, rateLeft, trackJob, lines, parseProgress, parseWatch, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
+import { FILE_FRESH_MS, FRESH_MS, closestFile, pairFile, type PairCandidate, eta, pickMeta, expandHome, rateLeft, trackJob, lines, parseProgress, parseWatch, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
 import { PROJECTS_REL, gitRootOf, resolveProject, sessionProject } from './project'
 import { LONG_BASH_MS, PROGRESS_TOOL, backgroundShellIds, endBackground, endShell, endShellsFor, finishedTaskIds, mirrorTasks, startShell, taskCreated, taskList, taskUpdated, touchShells, writeReport } from './report'
 import type { Task } from './report'
@@ -222,6 +222,7 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
   }
   const exact = new Set(agents.filter(a => LIVE.has(a.status)).map(a => slug(a.description)))
   const claimed = new Set<string>()
+  const kept: { a: (typeof agents)[number]; s: { startedAt: number; tools: number; lastTool: string } }[] = []
   for (const a of agents) {
     if (!LIVE.has(a.status)) continue
     const s = seen.get(a.id) ?? { startedAt: now, tools: 0, lastTool: '' }
@@ -237,12 +238,41 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
       try { if (tp) last = (await $.fs.stat(tp)).mtimeMs } catch { last = 0 }
       if (last && now - last > ABANDONED_WAIT_MS) continue
     }
-    let p: Progress | null = null
-    if (h) {
+    kept.push({ a, s })
+  }
+  // Each agent's progress file: named after its description, else a close name (closestFile), else the one fresh
+  // file of this session created since it started whose name or title shares its words (pairFile).
+  const fileOf = new Map<string, string>()
+  for (const { a } of kept) {
+    const own = slug(a.description)
+    const name = loose.includes(own) ? own : closestFile(a.description, loose.filter(n => !exact.has(n) && !claimed.has(n)))
+    if (name) { fileOf.set(a.id, name); claimed.add(name) }
+  }
+  const pairs: Record<string, string> = {}
+  if (h && kept.some(k => !fileOf.has(k.a.id))) {
+    let sid = ''
+    try { sid = await $.session.id() } catch { sid = '' }
+    const cands: PairCandidate[] = []
+    for (const n of loose) {
+      if (exact.has(n) || claimed.has(n) || n.startsWith('shell-')) continue
       try {
-        const own = slug(a.description)
-        const name = loose.includes(own) ? own : closestFile(a.description, loose.filter(n => !exact.has(n) && !claimed.has(n))) ?? own
-        claimed.add(name)
+        const raw = JSON.parse(String(await $.fs.read(`${dir}/${n}.json`))) as Record<string, unknown>
+        const born = typeof raw.startedAt === 'number' ? raw.startedAt : await bornOf($, `${dir}/${n}.json`)
+        cands.push({ name: n, title: typeof raw.title === 'string' ? raw.title : '', session: typeof raw.session === 'string' ? raw.session : '', born })
+      } catch { /* half written */ }
+    }
+    for (const { a, s } of kept) {
+      if (fileOf.has(a.id)) continue
+      const name = pairFile({ description: a.description, startedAt: s.startedAt }, cands.filter(c => !claimed.has(c.name)), sid)
+      if (name) { fileOf.set(a.id, name); claimed.add(name); pairs[slug(a.description)] = name }
+    }
+  }
+  if (h) await $.fs.write(`${dir}/.state/pairs-${key}.json`, JSON.stringify(pairs)).catch(() => undefined)
+  for (const { a, s } of kept) {
+    let p: Progress | null = null
+    const name = fileOf.get(a.id)
+    if (h && name) {
+      try {
         const text = String(await $.fs.read(`${dir}/${name}.json`))
         p = parseProgress(text)
         const raw = JSON.parse(text) as Record<string, unknown>
@@ -304,6 +334,17 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
     if (!p || DATA_FILES.has(name) || (p.done === null && !p.step)) continue
     let raw: unknown = null
     try { raw = JSON.parse(text) } catch { raw = null }
+    // Stopped from the panel's [x]: it leaves RUNNING for DONE as "stopped by you", recorded once.
+    if (raw && typeof raw === 'object' && (raw as Record<string, unknown>).stopped === true) {
+      const r0 = raw as Record<string, unknown>
+      const k = `${name}@stopped@${String(r0.stoppedAt ?? '')}`
+      if (!recordedAt.has(k) && !name.startsWith('shell-')) {
+        recordedAt.add(k)
+        const row: Row = { id: `file:${name}`, description: name, status: 'running', startedAt: p.startedAt ?? 0, tools: 0, lastTool: '', done: p.done, total: p.total, step: p.step }
+        await recordJob($, h, name, { row, raw: { ...r0, impact: ['stopped by you', ...impactLines(r0.impact)].join('\n') } }, now)
+      }
+      continue
+    }
     const owner = pickOwner(raw)
     if (owner.cwd && !projects.has(owner.cwd)) projects.set(owner.cwd, await projectOfCwd($, h, owner.cwd, projectsText))
     const route = routeOf(owner, { key, project }, live, c => projects.get(c) ?? '')

@@ -5,7 +5,9 @@ import type { On } from 'claude-code'
 import { CONN_CACHE_REL, connUrl, connName, connSummary, formatCache, parseAccounts, parseCache, parseLogin, parseMcpList } from '../hooks/connectors'
 import { CHECKPOINT_PY } from '../hooks/checkpoint'
 import { forgetLocalState } from '../hooks/chrome'
-import { closestFile } from '../hooks/render'
+import { closestFile, pairFile, serverOf } from '../hooks/render'
+import type { PairCandidate } from '../hooks/render'
+import { controlKind, controlOptions, parsePs, pidCheck, shellTree } from '../hooks/control'
 import { finishedTaskIds } from '../hooks/report'
 import { loginKey, usageFileRel } from '../hooks/usage'
 import { clock } from '../hooks/done'
@@ -1017,8 +1019,11 @@ test('the panel: titles, ids with badges, unlocks, a nested child, waiting on an
   expect(await buttons()).toEqual(['Train the model'.padEnd(col), 'Big batch'.padEnd(col), 'Other'.padEnd(col)])
   let texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   expect(texts.some(t => /⚠ stuck/.test(t))).toBe(false)
-  // The note after the bar is cut to the 10 columns left.
-  expect(texts.filter(t => t === '  waiting on …').length).toBe(2)
+  // The note after the bar is cut to the 10 columns left, less 4 for the [x] on a row that can be stopped.
+  // Only the row with a progress file here gets one; a row with nothing to control has no [x].
+  expect(texts.filter(t => t === '  waiting…').length).toBe(1)
+  expect(texts.filter(t => t === '  waiting on …').length).toBe(1)
+  expect(texts.filter(t => t === '[x]').length).toBe(1)
   expect(texts).toContain('  12:50 runni…')
   // The area word, then the why: two parts of one line, cut together to fit.
   expect(texts).toContain('Answers')
@@ -1564,4 +1569,129 @@ test('Claude in Chrome: Check account submits a prompt to read the account page 
   await ui.press({ key: 'tab-list' })
   expect(await allText(ui)).not.toContain('[Check account]')
   await ui.unmount()
+})
+
+// ---- 0.28.6: server rows, agents paired with differently named files, stop/pause from the [x] ----
+
+test('serverOf: dev and app server commands are servers, with the port when the command names one', () => {
+  const servers: [string, string][] = [
+    ['npm run dev', ''], ['pnpm dev', ''], ['yarn start', ''], ['bun run serve', ''], ['npm run dev -- -p 3001', ':3001'],
+    ['cd web && PORT=4000 npm start', ':4000'], ['npx next dev', ''], ['next dev --port 3000', ':3000'], ['vite --port 5173', ':5173'],
+    ['uvicorn app:app --reload --port 8000', ':8000'], ['flask run', ''], ['rails s', ''], ['python3 -m http.server 8080', ':8080'],
+    ['node server.js', ''], ['docker compose up', ''], ['python manage.py runserver 0.0.0.0:9000', ':9000'], ['gunicorn -b 127.0.0.1:5000 app:app', ':5000'],
+  ]
+  for (const [cmd, port] of servers) expect([cmd, serverOf(cmd)]).toEqual([cmd, port])
+  for (const cmd of ['python load.py', 'npm test', 'npm run build', 'vite build', 'pytest -q', 'next build', 'node scripts/migrate.js', 'git log --oneline | head']) expect([cmd, serverOf(cmd)]).toEqual([cmd, null])
+  // A description that says it starts a server counts too.
+  expect(serverOf('./go.sh', 'Start WayToMatter dev server')).toBe('')
+  expect(serverOf('./go.sh', 'Run the API server')).toBe('')
+  expect(serverOf('./go.sh', 'Load the server logs')).toBe(null)
+})
+
+test('pairFile: an agent pairs with the one fresh file of its session created since it started that shares its words', () => {
+  const agent = { description: 'Hold Hope until org list plays', startedAt: NOW - 5 * 60_000 }
+  const hope: PairCandidate = { name: 'waytomatter-hold-hope-until-list', title: 'Hope waits for the org list, then talks', session: 'S1', born: NOW - 4 * 60_000 }
+  // The file name is not the slug of the description, and closestFile misses it.
+  expect(closestFile(agent.description, [hope.name])).toBe(null)
+  expect(pairFile(agent, [hope], 'S1')).toBe(hope.name)
+  // Not another session's file, not one born before the agent, not one with no known birth, not a shell row.
+  expect(pairFile(agent, [{ ...hope, session: 'S2' }], 'S1')).toBe(null)
+  expect(pairFile(agent, [{ ...hope, born: NOW - 20 * 60_000 }], 'S1')).toBe(null)
+  expect(pairFile(agent, [{ ...hope, born: 0 }], 'S1')).toBe(null)
+  expect(pairFile(agent, [{ ...hope, name: 'shell-hold-hope-until-list' }], 'S1')).toBe(null)
+  // One shared word is not enough; a file without a session counts as this session's.
+  expect(pairFile(agent, [{ name: 'org-chart-export', title: 'Export charts', session: '', born: NOW }], 'S1')).toBe(null)
+  expect(pairFile(agent, [{ ...hope, session: '' }], 'S1')).toBe(hope.name)
+  // Two close candidates: neither leads by two words, so none pairs; a clear leader does.
+  const other: PairCandidate = { name: 'hold-hope-org-list-copy', title: 'Hold Hope until the org list is copied', session: 'S1', born: NOW }
+  expect(pairFile(agent, [hope, other], 'S1')).toBe(null)
+  expect(pairFile(agent, [hope, { ...other, name: 'hope-banner', title: 'Hope banner' }], 'S1')).toBe(hope.name)
+})
+
+test('controls: which rows get an [x], and the choices each offers', () => {
+  expect(controlKind('Hold Hope until org list plays', true, undefined)).toBe('agent')
+  expect(controlKind('shell-start-dev-server', false, { command: 'npm run dev', taskId: 'b1' })).toBe('shell')
+  expect(controlKind('shell-old-row', false, { title: 'x' })).toBe(null)
+  expect(controlKind('crawl', false, { done: 1, total: 2, pid: 4242 })).toBe('job-pid')
+  expect(controlKind('crawl', false, { done: 1, total: 2 })).toBe('job-file')
+  expect(controlKind('crawl', false, { done: 1, total: 2, pid: 1 })).toBe('job-file')
+  expect(controlKind('box: train.py', false, { done: 1 })).toBe(null)
+  expect(controlKind('no-file-here', false, undefined)).toBe(null)
+  expect(controlOptions('shell', false)).toEqual(['Stop', 'Pause', 'Cancel'])
+  expect(controlOptions('job-pid', true)).toEqual(['Resume', 'Stop', 'Cancel'])
+  expect(controlOptions('agent', false)).toEqual(['Stop', 'Cancel'])
+  expect(controlOptions('job-file', false)).toEqual(['Stop', 'Cancel'])
+})
+
+test('pidCheck: only this user\'s live process that is still the job, never pid 1, this process or Claude', () => {
+  const t = (d: string) => Date.parse(d)
+  const ps = parsePs([
+    '    1     0     0 Sat Nov  7 08:00:00 2026     /sbin/launchd',
+    ' 4242  4000   502 Sun Nov  8 10:00:00 2026     python3 crawl.py --all',
+    ' 5000  4000   501 Sun Nov  8 10:00:00 2026     python3 crawl.py --all',
+    ' 6000  4000   502 Sun Nov  8 12:00:00 2026     python3 other.py',
+    '  777     1   502 Sun Nov  8 09:00:00 2026     claude --resume',
+  ].join('\n'))
+  expect(ps.map(p => p.pid)).toEqual([1, 4242, 5000, 6000, 777])
+  const ctx = { uid: 502, self: [777], cmd: 'crawl.py', startedAt: t('Sun Nov  8 10:00:30 2026') }
+  expect(pidCheck(4242, ps, ctx)).toBe('')
+  expect(pidCheck(1, ps, ctx)).toBe('not a valid pid')
+  expect(pidCheck(777, ps, ctx)).toBe('that is this process')
+  expect(pidCheck(777, ps, { ...ctx, self: [] })).toBe('that is Claude itself')
+  expect(pidCheck(5000, ps, ctx)).toBe('another user owns it')
+  expect(pidCheck(9999, ps, ctx)).toBe('no such process')
+  expect(pidCheck(6000, ps, { ...ctx, cmd: 'crawl.py' })).toBe('its command no longer matches')
+  expect(pidCheck(6000, ps, { ...ctx, cmd: undefined })).toBe('it started after the job (a reused pid)')
+})
+
+test('shellTree: the shell Claude started for the recorded command and its children, never a look-alike from a terminal', () => {
+  const ps = parsePs([
+    '  777     1   502 Sun Nov  8 09:00:00 2026     claude --resume',
+    '  800   777   502 Sun Nov  8 10:00:00 2026     /bin/zsh -c source snap.sh && eval \'npm run dev\' < /dev/null',
+    '  801   800   502 Sun Nov  8 10:00:00 2026     npm run dev',
+    '  802   801   502 Sun Nov  8 10:00:01 2026     node node_modules/.bin/next dev',
+    '  900   850   502 Sun Nov  8 10:00:00 2026     npm run dev',
+    '  850     1   502 Sun Nov  8 09:00:00 2026     -zsh',
+  ].join('\n'))
+  expect(shellTree('npm run dev', ps, 502, []).sort()).toEqual([800, 801, 802])
+  expect(shellTree('npm run dev', ps, 501, [])).toEqual([])
+  expect(shellTree('', ps, 502, [])).toEqual([])
+})
+
+test('the List tab: a server row has no bar and no stuck mark, a paired agent is one row, a paused job says paused', async ($, on) => {
+  const full = [
+    '▾ ▶ RUNNING',
+    '  ⚠ stuck 28m shell-start-waytomatter-dev-server working · serving :3000 · 28m',
+    '  ◐ Hold Hope until org list plays ██░░ 50.0% · 2/4 · Reading code · 5m · 12 tools',
+    '  ◐ crawl ██░░ 50.0% · 1/2 · fetching · 3m',
+  ].join('\n')
+  const files: Record<string, string> = {
+    [SCRIPT]: statusScript(), [FLAG]: 'on\n',
+    [`${DIR}/shell-start-waytomatter-dev-server.json`]: JSON.stringify({ step: 'serving :3000', title: 'Start WayToMatter dev server', command: 'npm run dev -- -p 3000', taskId: 'b1' }),
+    [`${DIR}/waytomatter-hold-hope-until-list.json`]: JSON.stringify({ done: 2, total: 4, title: 'Hope waits for the org list, then talks', area: 'WayToMatter' }),
+    [`${DIR}/.state/pairs-abc.json`]: JSON.stringify({ 'hold-hope-until-org-list-plays': 'waytomatter-hold-hope-until-list' }),
+    [`${DIR}/crawl.json`]: JSON.stringify({ done: 1, total: 2, title: 'Crawl sites', pid: 4242 }),
+    [`${DIR}/.state/paused.json`]: JSON.stringify({ crawl: NOW }),
+  }
+  panelWorld(on, files, full)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 80 } })
+  let texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  // The server: under SERVERS at the end, a dim "serving :3000 · up 28m", no bar, no stuck.
+  expect(texts).toContain('  SERVERS')
+  expect(texts).toContain('  serving :3000 · up 28m')
+  expect(texts.some(t => /stuck/.test(t))).toBe(false)
+  // The agent shows the paired file's title and area once; no bare "Other" row for it.
+  const titles = (await ui.findAll({ type: 'Button' })).filter(b => /^open-/.test(b.key ?? '')).map(b => (b.text ?? '').trim())
+  expect(titles.filter(t => /Hope/.test(t))).toEqual(['Hope waits for the org list, then talks'])
+  expect(texts).toContain('WayToMatter')
+  // The paused job says so; its [x] offers Resume, Stop, Cancel; the agent's only Stop, Cancel.
+  expect(texts).toContain('  paused')
+  await ui.press({ key: 'xb-crawl' })
+  texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(['Resume', 'Stop', 'Cancel'].every(o => texts.includes(o))).toBe(true)
+  expect(texts).not.toContain('Pause')
+  await ui.press({ key: 'xb-hold-hope-until-org-list-plays' })
+  texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(texts.includes('Stop') && texts.includes('Cancel') && !texts.includes('Resume') && !texts.includes('Pause')).toBe(true)
 })

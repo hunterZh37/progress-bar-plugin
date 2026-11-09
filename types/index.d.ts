@@ -25,6 +25,8 @@ export type Conns = { at: number; checking: boolean; login: string; list: Conn[]
 // `otherChecks`: one per `others` entry, the same.
 export type ChromeCheck = { key: string; prompt: string }
 export type ChromeView = { line: string; tone: 'ok' | 'warn' | 'dim'; warn: string; usedAt: number; others: string[]; hint?: string; check?: ChromeCheck | null; otherChecks?: (ChromeCheck | null)[] }
+/** Status panel: the open [x] stop/pause menu (a row key, '' for none), each fresh progress file's controllable bits and the paused rows (hooks/control.ts). */
+export type Ctl = { open: string; files: Record<string, { command?: string; pid?: number }>; paused: Record<string, number> }
 /** Status panel: the tab shown. */
 export type Tab = 'list' | 'connectors' | 'github' | 'log' | 'chat' | 'topology'
 
@@ -101,6 +103,6 @@ export type Topo = { cfg: TopoConfig; health: Record<string, TopoHealth> }
 
 declare module 'claude-code' {
   interface PluginState {
-    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; project: Project; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards; recap: Recap; inbox: Inbox; channel: Channel; chat: ChatState; actions: Action[]; actionUi: ActionUi; health: Health; done: Record<string, DoneRec>; topo: Topo; goal: Goal; chrome: ChromeView }
+    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; project: Project; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards; recap: Recap; inbox: Inbox; channel: Channel; chat: ChatState; actions: Action[]; actionUi: ActionUi; health: Health; done: Record<string, DoneRec>; topo: Topo; goal: Goal; chrome: ChromeView; ctl: Ctl }
   }
 }

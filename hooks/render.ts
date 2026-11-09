@@ -196,6 +196,56 @@ export function closestFile(desc: string, names: string[]): string | null {
   return best
 }
 
+// A long-lived server: dev servers and app servers stay up by design, so their row is never "stuck".
+const SERVER_CMD = [
+  /\b(npm|pnpm|yarn|bun)\s+(run\s+)?(dev|start|serve|preview)\b/,
+  /\b(next|nuxt|nuxi|astro|remix)\s+(dev|start|preview)\b|\bvite\b(?!\s+build)|\b(webpack-dev-server|live-server|http-server)\b|\bparcel\b(?!\s+build)/,
+  /\b(webpack|ng)\s+serve\b|\bgatsby\s+develop\b|\bexpo\s+start\b|\b(wrangler|vercel|netlify)\s+dev\b/,
+  /\b(uvicorn|gunicorn|hypercorn|daphne)\b|\bstreamlit\s+run\b|\bjupyter\s+(lab|notebook)\b|\b(mkdocs|jekyll)\s+serve\b|\bhugo\s+server\b/,
+  /\bflask\s+run\b|\bmanage\.py\s+runserver\b|\bfastapi\s+(dev|run)\b/,
+  /\brails\s+(s|server)\b|\bbin\/dev\b|\bphp\s+(-S|artisan\s+serve)\b/,
+  /\bpython3?\s+-m\s+(http\.server|SimpleHTTPServer)\b/,
+  /\b(node|nodemon|tsx|ts-node|bun|deno\s+run)\s+(\S*\/)?server\.(m?[jt]s|cjs)\b/,
+  /\bdocker[\s-]compose\s+up\b|\bcaddy\s+run\b|\bngrok\s+http\b/,
+]
+
+/**
+ * Whether a background shell is a long-lived server, by its command or a "Start/Run ... server" description:
+ * null when not, else the port read from the command (":3000"), or '' when none is given.
+ */
+export function serverOf(command: string, description = ''): string | null {
+  const c = command.replace(/\s+/g, ' ')
+  const byCmd = SERVER_CMD.some(re => re.test(c))
+  const byDesc = /^\s*(start|run|launch|serve|boot)\b.*\bserver\b/i.test(description)
+  if (!byCmd && !byDesc) return null
+  const m = /(?:^|\s)(?:-p|--port)[ =](\d{2,5})\b/.exec(c) ?? /\bPORT=(\d{2,5})\b/.exec(c) ?? /\bhttp\.server\s+(\d{2,5})\b/.exec(c) ?? /(?:localhost|0\.0\.0\.0|127\.0\.0\.1):(\d{2,5})\b/.exec(c)
+  return m ? `:${m[1]}` : ''
+}
+
+/** A progress file an agent may write under a name unlike its description (see pairFile). */
+export type PairCandidate = { name: string; title: string; session: string; born: number }
+
+const PAIR_STOP = new Set(['the', 'and', 'for', 'with', 'then', 'that', 'this', 'from', 'into', 'when', 'its', 'are', 'was', 'fix', 'add', 'run', 'make', 'check', 'update'])
+const pairWords = (s: string) => new Set([...words(s)].filter(w => w.length >= 3 && !PAIR_STOP.has(w)))
+
+/**
+ * The progress file a live agent writes when none is named after its description: among this session's fresh files
+ * no other agent claimed (not shell rows, not another session's), one created since the agent started (a minute of
+ * slack; a file with no known birth, its startedAt or the file system's, never pairs) that shares at least two words with the agent's description through its name or title. Exactly one such
+ * file pairs; with several, the one sharing the most pairs when it leads every other by two words. Else null.
+ */
+export function pairFile(agent: { description: string; startedAt: number }, cands: PairCandidate[], session: string): string | null {
+  const a = pairWords(agent.description)
+  const scored = cands
+    .filter(c => !c.name.startsWith('shell-') && (!c.session || !session || c.session === session) && c.born > 0 && c.born >= agent.startedAt - 60_000)
+    .map(c => { const b = new Set([...pairWords(c.name), ...pairWords(c.title)]); return { c, n: [...a].filter(w => b.has(w)).length } })
+    .filter(x => x.n >= 2)
+    .sort((x, y) => y.n - x.n)
+  if (scored.length === 1) return scored[0]!.c.name
+  if (scored.length > 1 && scored[0]!.n > scored[1]!.n + 1) return scored[0]!.c.name
+  return null
+}
+
 export const ago = (ms: number) => {
   const m = Math.max(0, Math.round(ms / 60_000))
   return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m`
