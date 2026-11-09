@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { ElementConstructor, EngineInterface, InputProps, On, RenderChildren, RenderInput } from 'claude-code'
 
 import { AWAY_S, GAP_MS, OVERNIGHT_REL, dayOf, snapOf } from './checkpoint'
-import { readChrome } from './chrome'
+import { readChrome, startAccountCheck } from './chrome'
 import { connSummary, readConns, refreshConns, resetConns } from './connectors'
 import { EVENTS_REL, LOG_DIRS_REL, SEEN_REL, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from './events'
 import { GH_EVERY, openUrl, openWeb, readGh } from './github'
@@ -24,7 +24,7 @@ import { turnOnStatusLine } from './setup'
 import { parseSaved, sessionLogin, usageFileRel } from './usage'
 import type { UsageReading } from './usage'
 import { FEW_STEPS, FILE_FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, slug } from './render'
-import type { Action, ActionUi, Channel, ChatMsg, ChatState, Checkpoint, Conn, DoneRec, Ev, GoalArea, Health, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
+import type { Action, ActionUi, Channel, ChatMsg, ChatState, Checkpoint, ChromeCheck, Conn, DoneRec, Ev, GoalArea, Health, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
 
 // The Status panel: the grouped status line, drawn in a docked pane beside the chat.
 // It runs the plugin's own status line script with PB_FULL=1 every second while the pane is open.
@@ -987,6 +987,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const menuFor = await read($, menuAtom)
     const conns = await read($, connsAtom)
     const chrome = await read($, chromeAtom)
+    // Check account: submits a prompt that has Claude read the browser's Google account page.
+    const checkBtn = (c: ChromeCheck | null | undefined, key: string) => c
+      ? <Box key={`${key}-b`}><Text>{'  '}</Text><Button key={key} plain onPress={() => startAccountCheck($, homeDir, c)}>{'[Check account]'}</Button></Box>
+      : null
     const tab = await read($, tabAtom)
     const openTodos = todos.filter(t => !t.done).length
     const width = Math.max(30, e.props.bodyColumns ?? 60)
@@ -1585,9 +1589,15 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           <Box key="c-chrome">
             <Text color={chrome.tone === 'warn' ? 'yellow' : undefined} dimColor={chrome.tone !== 'warn'} wrap="truncate-end">{`  ${chrome.line}`}</Text>
             {chrome.usedAt && chrome.tone !== 'dim' ? <Text dimColor>{`  used ${hhmm(chrome.usedAt)}`}</Text> : null}
+            {checkBtn(chrome.check, 'c-chrome-chk')}
           </Box>
           {chrome.warn ? <Text key="c-chrome-w" color="yellow" wrap="truncate-end">{`    ${chrome.warn}`}</Text> : null}
-          {chrome.tone !== 'dim' ? chrome.others.map((o, i) => <Text key={`c-chrome-o${i}`} dimColor wrap="truncate-end">{`    Also connected: ${o}`}</Text>) : null}
+          {chrome.tone !== 'dim' ? chrome.others.map((o, i) => (
+            <Box key={`c-chrome-o${i}`}>
+              <Text dimColor wrap="truncate-end">{`    Also connected: ${o}`}</Text>
+              {checkBtn(chrome.otherChecks?.[i], `c-chrome-ochk${i}`)}
+            </Box>
+          )) : null}
           {chrome.hint && chrome.tone !== 'dim' ? <Text key="c-chrome-h" dimColor wrap="truncate-end">{`    ${chrome.hint}`}</Text> : null}
           {conns.list.length === 0 && <Text dimColor>{conns.checking ? '  checking…' : '  No check yet.'}</Text>}
           {ordered.flatMap(connRow)}
@@ -1729,7 +1739,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         {actBlock}
         {inboxBlock}
         {chanBlock}
-        {chrome.tone !== 'dim' ? <Text key="chrome-l" color={chrome.tone === 'warn' ? 'yellow' : undefined} dimColor={chrome.tone !== 'warn'} wrap="truncate-end">{chrome.line}</Text> : null}
+        {chrome.tone !== 'dim' ? (
+          <Box key="chrome-l">
+            <Text color={chrome.tone === 'warn' ? 'yellow' : undefined} dimColor={chrome.tone !== 'warn'} wrap="truncate-end">{chrome.line}</Text>
+            {checkBtn(chrome.check, 'chrome-chk')}
+          </Box>
+        ) : null}
         {chrome.warn ? <Text key="chrome-w" color="yellow" wrap="truncate-end">{chrome.warn}</Text> : null}
         {banner}
         {healthBlock}

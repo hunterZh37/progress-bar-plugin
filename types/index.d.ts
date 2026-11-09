@@ -21,7 +21,10 @@ export type Conn = { name: string; kind: ConnKind; account?: string; url?: strin
 /** Status panel: the last connector check (epoch ms, 0 for none), whether one runs now, the Claude login (email · org) and the list. */
 export type Conns = { at: number; checking: boolean; login: string; list: Conn[] }
 /** Connectors tab: the Chrome browser Claude in Chrome drives (hooks/chrome.ts). `warn` is '' when all is well. */
-export type ChromeView = { line: string; tone: 'ok' | 'warn' | 'dim'; warn: string; usedAt: number; others: string[]; hint?: string }
+// `check`: the Check account button for the browser in use (null when its account is known or a check is pending).
+// `otherChecks`: one per `others` entry, the same.
+export type ChromeCheck = { key: string; prompt: string }
+export type ChromeView = { line: string; tone: 'ok' | 'warn' | 'dim'; warn: string; usedAt: number; others: string[]; hint?: string; check?: ChromeCheck | null; otherChecks?: (ChromeCheck | null)[] }
 /** Status panel: the tab shown. */
 export type Tab = 'list' | 'connectors' | 'github' | 'log' | 'chat' | 'topology'
 

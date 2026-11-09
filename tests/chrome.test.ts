@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { EMPTY_STATE, accountPageEmail, applyCall, applySwitch, chromeView, lastChromeCommand, mergeLocal, parseChromeCommand, parseLocalAccounts, gmailTitleEmail, mergeAccount, parseAccountsFile, parseBrowsers, parseLocalState, parseState, parseTabs, resultText } from '../hooks/chrome'
+import { CHECK_PENDING_MS, EMPTY_STATE, accountLabel, accountPageEmail, accountPageName, checkPrompt, parseChecks, applyCall, applySwitch, chromeView, lastChromeCommand, mergeLocal, parseChromeCommand, parseLocalAccounts, gmailTitleEmail, mergeAccount, parseAccountsFile, parseBrowsers, parseLocalState, parseState, parseTabs, resultText } from '../hooks/chrome'
 
 const NOW = 1_800_000_000_000
 const B1 = '9038508d-6835-4fe2-a0d2-abf34f5d61b1'
@@ -184,4 +184,59 @@ test('parseLocalAccounts and mergeLocal: this Mac\'s accounts from the file and 
   expect(v.tone).toBe('warn')
   expect(v.warn).toBe("Chrome is controlling hunter@protocolvr.com, which isn't signed in on this Mac. Run /chrome to switch.")
   expect(`${v.line}${v.warn}`.match(/[;—]/)).toBeNull()
+})
+
+test('accountPageName: the line above the email, nothing that is not a name', () => {
+  const page = 'Hunter Zhang\nhunter@instituteongenerosity.org'
+  expect(accountPageName(page, accountPageEmail(page))).toBe('Hunter Zhang')
+  expect(accountPageName('Google Account\nHunter Zhang\n\nhunter@protocolvr.com\nHome', 'hunter@protocolvr.com')).toBe('Hunter Zhang')
+  expect(accountPageName('Welcome, Hunter Zhang\nhunter@x.org', 'hunter@x.org')).toBe('Hunter Zhang')
+  expect(accountPageName('hunter@x.org', 'hunter@x.org')).toBe('')
+  expect(accountPageName('Google Account\nhunter@x.org', 'hunter@x.org')).toBe('')
+  expect(accountPageName('Signed in as 3 accounts: 12\nhunter@x.org', 'hunter@x.org')).toBe('')
+})
+
+test('the name is captured from the account page and shown with the email', () => {
+  const base = applyCall(EMPTY_STATE, `${P}list_connected_browsers`, {}, LIST, NOW).state
+  const nav = applyCall(base, `${P}navigate`, { tabId: 7, url: 'https://myaccount.google.com/' }, 'Navigated.', NOW)
+  const r = applyCall(nav.state, `${P}get_page_text`, { tabId: 7 }, 'Hunter Zhang\nhunter@instituteongenerosity.org', NOW)
+  expect(r.name).toBe('Hunter Zhang')
+  const acc = mergeAccount({}, B2, r.email, 'account', NOW, r.name)
+  expect(acc[B2]).toEqual({ email: 'hunter@instituteongenerosity.org', seenAt: NOW, from: 'account', name: 'Hunter Zhang' })
+  expect(parseAccountsFile(JSON.stringify(acc))).toEqual(acc)
+  // a later Gmail title for the same email keeps the name
+  expect(mergeAccount(acc, B2, 'hunter@instituteongenerosity.org', 'gmail', NOW + 1)[B2]!.name).toBe('Hunter Zhang')
+  expect(accountLabel(acc[B2])).toBe('Hunter Zhang (hunter@instituteongenerosity.org)')
+  expect(accountLabel(undefined, 'a@x.org')).toBe('a@x.org')
+  expect(chromeView(r.state, acc, null).line).toBe('Chrome: Browser 2 · Hunter Zhang (hunter@instituteongenerosity.org)')
+})
+
+test('select_browser to another browser drops the old email', () => {
+  const s = { ...applyCall(EMPTY_STATE, `${P}list_connected_browsers`, {}, LIST, NOW).state, email: 'a@x.org' }
+  expect(applyCall(s, `${P}select_browser`, { deviceId: B1 }, 'Connected to browser "Browser 1".', NOW).state.email).toBeUndefined()
+  expect(applyCall(s, `${P}select_browser`, { deviceId: B2 }, 'Connected to browser "Browser 2".', NOW).state.email).toBe('a@x.org')
+})
+
+test('checkPrompt: the in-use browser, and another browser by deviceId with a switch back', () => {
+  expect(checkPrompt('Browser 2', B2)).toBe(`Check which Google account Chrome browser "Browser 2" (${B2}) is signed in to: open https://myaccount.google.com/ in a new tab with Claude in Chrome, read the email and name, then close the tab.`)
+  expect(checkPrompt('Browser 1', B1, B2)).toBe(`Check which Google account Chrome browser "Browser 1" (${B1}) is signed in to: select_browser to deviceId ${B1}, open https://myaccount.google.com/ in a new tab with Claude in Chrome, read the email and name, close the tab, then select_browser back to deviceId ${B2}.`)
+  expect(checkPrompt('Browser 1', B1, '')).toContain('select_browser back to the browser that was in use.')
+  for (const t of [checkPrompt('B', B1), checkPrompt('B', B1, B2)]) expect(/[;\u2014]/.test(t)).toBe(false)
+})
+
+test('Check account buttons: only for unknown accounts, hidden while a check is pending', () => {
+  const s = applyCall(EMPTY_STATE, `${P}list_connected_browsers`, {}, LIST, NOW).state
+  const none = chromeView(s, {}, null)
+  expect(none.check).toEqual({ key: B2, prompt: checkPrompt('Browser 2', B2) })
+  expect(none.otherChecks).toEqual([{ key: B1, prompt: checkPrompt('Browser 1', B1, B2) }])
+  const known = { [B2]: { email: 'a@x.org', seenAt: NOW, from: 'account' as const }, [B1]: { email: 'b@x.org', seenAt: NOW, from: 'account' as const } }
+  expect(chromeView(s, known, null).check).toBeNull()
+  expect(chromeView(s, known, null).otherChecks).toEqual([null])
+  const pending = chromeView(s, {}, null, '', 'this Mac', { [B2]: NOW })
+  expect(pending.check).toBeNull()
+  expect(pending.otherChecks![0]!.key).toBe(B1)
+  expect(chromeView(EMPTY_STATE, {}, null).check).toBeUndefined()
+  // pending checks expire after 2 minutes
+  expect(parseChecks(JSON.stringify({ [B2]: NOW, [B1]: NOW - CHECK_PENDING_MS - 1 }), NOW + 1000)).toEqual({ [B2]: NOW })
+  expect(parseChecks('garbage', NOW)).toEqual({})
 })

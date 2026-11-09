@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { ChromeView } from '../types'
+import type { ChromeCheck, ChromeView } from '../types'
 import { isDarwin } from './mac'
 
 // Which Chrome browser Claude in Chrome drives, under which Google account, and whether it is on this Mac.
@@ -32,11 +32,15 @@ const LOCAL_EVERY = 5 * 60_000
 export type ChromeBrowser = { deviceId: string; name: string; osPlatform?: string; isLocal?: boolean; onThisComputer?: boolean; inUse?: boolean; connectedAt?: number }
 // inUseName: a browser /chrome picked that is not in the last list. switchAt: the last /chrome switch applied.
 export type ChromeState = { browsers: ChromeBrowser[]; inUse: string; connected: boolean | null; lastUseAt: number; email?: string; tabs: Record<string, string>; inUseName?: string; switchAt?: number }
-export type ChromeAccount = { email: string; seenAt: number; from: 'account' | 'gmail' }
+export type ChromeAccount = { email: string; seenAt: number; from: 'account' | 'gmail'; name?: string }
 export type ChromeAccounts = Record<string, ChromeAccount>
 
 export const EMPTY_STATE: ChromeState = { browsers: [], inUse: '', connected: null, lastUseAt: 0, tabs: {} }
 export const EMPTY_VIEW: ChromeView = { line: 'Chrome: not connected', tone: 'dim', warn: '', usedAt: 0, others: [] }
+// The Check account button: a pressed check hides its button this long (shared by all sessions).
+export const CHROME_CHECKS_REL = '.claude-progress/.state/chrome-checks.json'
+export const CHECK_PENDING_MS = 2 * 60_000
+export const ACCOUNT_URL = 'https://myaccount.google.com/'
 
 export const chromeAtom = atom({ plugin: 'progress-bar', key: 'chrome' } as const, EMPTY_VIEW)
 
@@ -104,6 +108,21 @@ export function accountPageEmail(text: string): string {
   return ''
 }
 
+const NAME_LINE = /^[\p{L}][\p{L}\p{M}' .-]{0,58}[\p{L}.]$/u
+const NOT_NAME = /^(?:google(?: account)?|home|account|personal info|welcome|hi|sign in|signed in|manage your google account)$/i
+
+/** The account's name on a Google account page: the line just above the email ("Hunter Zhang\nhunter@x.org"). */
+export function accountPageName(text: string, email: string): string {
+  if (!email) return ''
+  const lines = text.split('\n').map(l => l.trim())
+  const i = lines.findIndex(l => l.toLowerCase().includes(email.toLowerCase()))
+  if (i <= 0) return ''
+  let j = i - 1
+  while (j >= 0 && !lines[j]) j--
+  const n = j >= 0 ? lines[j]!.replace(/^Welcome,\s*/i, '') : ''
+  return NAME_LINE.test(n) && !NOT_NAME.test(n) && !EMAIL.test(n) ? n.slice(0, 60) : ''
+}
+
 /** A Gmail tab title's email: "Inbox (3) - a@b.c - Gmail", "Inbox - a@b.c - Protocol VR Mail". */
 export function gmailTitleEmail(title: string): string {
   const m = new RegExp(`(${EMAIL.source}) - [^"\\n]*?\\b(?:Gmail|Mail)\\b`).exec(title)
@@ -131,7 +150,7 @@ export function parseTabs(text: string): { tabs: Record<string, string>; gmail: 
 }
 
 /** One call's effect on the session's state, and an email seen for the browser in use. */
-export function applyCall(prev: ChromeState, tool: string, input: Record<string, unknown>, text: string, now: number): { state: ChromeState; email: string; from: ChromeAccount['from'] | '' } {
+export function applyCall(prev: ChromeState, tool: string, input: Record<string, unknown>, text: string, now: number): { state: ChromeState; email: string; from: ChromeAccount['from'] | ''; name?: string } {
   const s: ChromeState = { ...prev, browsers: [...prev.browsers], tabs: { ...prev.tabs }, lastUseAt: now }
   const name = tool.startsWith(CHROME_PREFIX) ? tool.slice(CHROME_PREFIX.length) : tool
   let email = ''
@@ -150,7 +169,11 @@ export function applyCall(prev: ChromeState, tool: string, input: Record<string,
       if (ACCOUNT_HOST.test(url)) onAccountPage = true
     }
     if (['get_page_text', 'read_page', 'find'].includes(st.name) && tabId && ACCOUNT_HOST.test(s.tabs[tabId] ?? '')) onAccountPage = true
-    if (st.name === 'select_browser' && str(st.input.deviceId)) s.inUse = clean(str(st.input.deviceId))
+    if (st.name === 'select_browser' && str(st.input.deviceId)) {
+      const id = clean(str(st.input.deviceId))
+      if (id !== s.inUse) delete s.email
+      s.inUse = id
+    }
   }
   if (name === 'list_connected_browsers') {
     const list = parseBrowsers(text)
@@ -167,6 +190,7 @@ export function applyCall(prev: ChromeState, tool: string, input: Record<string,
   if (name === 'switch_browser' || name === 'select_browser') {
     const picked = /Connected to browser "([^"]+)"/.exec(text)?.[1]
     const b = picked ? s.browsers.find(x => x.name === picked) : undefined
+    if (b && b.deviceId !== s.inUse) delete s.email
     if (b) s.inUse = b.deviceId
     s.browsers = s.browsers.map(x => ({ ...x, inUse: x.deviceId === s.inUse || undefined }))
   }
@@ -181,7 +205,8 @@ export function applyCall(prev: ChromeState, tool: string, input: Record<string,
   if (acct) { email = acct; from = 'account' } else if (gmail) { email = gmail; from = 'gmail' }
   if (email) s.email = email
   if (s.inUse) delete s.inUseName
-  return { state: s, email, from }
+  const who = acct ? accountPageName(text, acct) : ''
+  return who ? { state: s, email, from, name: who } : { state: s, email, from }
 }
 
 export type ChromeCommand = { name: string } | { connected: false }
@@ -248,11 +273,36 @@ export function mergeLocal(localState: string[] | null, file: string[] | null): 
 }
 
 /** Saves an email for a browser. A Gmail title never replaces an account page's email seen in the last day. */
-export function mergeAccount(acc: ChromeAccounts, deviceId: string, email: string, from: ChromeAccount['from'], now: number): ChromeAccounts {
+export function mergeAccount(acc: ChromeAccounts, deviceId: string, email: string, from: ChromeAccount['from'], now: number, name = ''): ChromeAccounts {
   if (!deviceId || !email) return acc
   const old = acc[deviceId]
   if (old && from === 'gmail' && old.from === 'account' && old.email !== email && now - old.seenAt < 86_400_000) return acc
-  return { ...acc, [deviceId]: { email, seenAt: now, from } }
+  // The name stays while the email is the same (a Gmail title has none).
+  const keep = name || (old?.email === email ? old.name : '')
+  return { ...acc, [deviceId]: keep ? { email, seenAt: now, from, name: keep } : { email, seenAt: now, from } }
+}
+
+/** "Hunter Zhang (hunter@x.org)" when the name is known, else the email. '' when neither. */
+export function accountLabel(a: ChromeAccount | undefined, email = ''): string {
+  const e = a?.email || email
+  if (!e) return ''
+  return a?.name && a.email === e ? `${a.name} (${e})` : e
+}
+
+/** The prompt the Check account button submits. `back` is the deviceId to return to when checking another browser. */
+export function checkPrompt(name: string, deviceId: string, back?: string): string {
+  const who = `Chrome browser "${name}"${deviceId ? ` (${deviceId})` : ''}`
+  if (back === undefined) return `Check which Google account ${who} is signed in to: open ${ACCOUNT_URL} in a new tab with Claude in Chrome, read the email and name, then close the tab.`
+  return `Check which Google account ${who} is signed in to: select_browser to deviceId ${deviceId}, open ${ACCOUNT_URL} in a new tab with Claude in Chrome, read the email and name, close the tab, then select_browser back to ${back ? `deviceId ${back}` : 'the browser that was in use'}.`
+}
+
+/** chrome-checks.json: check key -> pressedAt. Only checks pressed in the last CHECK_PENDING_MS are kept. */
+export function parseChecks(text: string, now: number): Record<string, number> {
+  try {
+    const out: Record<string, number> = {}
+    for (const [k, v] of Object.entries((JSON.parse(text) ?? {}) as Record<string, unknown>)) if (typeof v === 'number' && now - v < CHECK_PENDING_MS && v <= now + 60_000) out[k] = v
+    return out
+  } catch { return {} }
 }
 
 /** Chrome's Local State: the Google accounts signed in to Chrome profiles on this machine. Nothing else is kept. */
@@ -279,7 +329,9 @@ export function parseAccountsFile(text: string): ChromeAccounts {
     const out: ChromeAccounts = {}
     for (const [k, v] of Object.entries(j ?? {})) {
       const o = (v ?? {}) as Record<string, unknown>
-      if (EMAIL.test(str(o.email))) out[k] = { email: str(o.email), seenAt: Number(o.seenAt) || 0, from: o.from === 'gmail' ? 'gmail' : 'account' }
+      if (!EMAIL.test(str(o.email))) continue
+      out[k] = { email: str(o.email), seenAt: Number(o.seenAt) || 0, from: o.from === 'gmail' ? 'gmail' : 'account' }
+      if (str(o.name)) out[k]!.name = clean(str(o.name)).slice(0, 60)
     }
     return out
   } catch { return {} }
@@ -289,7 +341,7 @@ export function parseAccountsFile(text: string): ChromeAccounts {
  * What the panel shows. `local` is null when Chrome's Local State could not be read (no Chrome profile list, so no
  * email check). `expected` is the project's chromeAccount, '' when none is set.
  */
-export function chromeView(s: ChromeState, acc: ChromeAccounts, local: string[] | null, expected = '', here = 'this Mac'): ChromeView {
+export function chromeView(s: ChromeState, acc: ChromeAccounts, local: string[] | null, expected = '', here = 'this Mac', pending: Record<string, number> = {}): ChromeView {
   if (!s.lastUseAt || s.connected === false || (s.connected === null && !s.inUse)) return { ...EMPTY_VIEW, usedAt: s.lastUseAt }
   const b = s.browsers.find(x => x.deviceId === s.inUse)
   const name = b?.name || s.inUseName || (s.inUse ? 'Browser' : 'browser')
@@ -298,7 +350,7 @@ export function chromeView(s: ChromeState, acc: ChromeAccounts, local: string[] 
   const knownHere = !!email && !!local?.length && local.includes(lower)
   const away = b?.onThisComputer === false || (!!email && !!local?.length && !knownHere)
   const where = b?.onThisComputer === true || knownHere ? here : away ? 'other computer' : ''
-  const line = ['Chrome: ' + name, email || 'account unknown', where].filter(Boolean).join(' · ')
+  const line = ['Chrome: ' + name, accountLabel(s.inUse ? acc[s.inUse] : undefined, email) || 'account unknown', where].filter(Boolean).join(' · ')
   const exp = expected.trim().toLowerCase()
   const warn = b?.onThisComputer === false && !email
     ? `Chrome is controlling ${name}, which is on another computer. Run /chrome to switch.`
@@ -307,8 +359,13 @@ export function chromeView(s: ChromeState, acc: ChromeAccounts, local: string[] 
       : exp && email && lower !== exp
         ? `Chrome is using ${email}, not ${exp} for this project. Run /chrome to switch.`
         : ''
-  const others = s.browsers.filter(x => x.deviceId !== s.inUse).map(x => [x.name, acc[x.deviceId]?.email || 'account unknown'].join(' · '))
-  return { line, tone: warn ? 'warn' : 'ok', warn, usedAt: s.lastUseAt, others }
+  const rest = s.browsers.filter(x => x.deviceId !== s.inUse)
+  const others = rest.map(x => [x.name, accountLabel(acc[x.deviceId]) || 'account unknown'].join(' · '))
+  // Check account buttons: for the browser in use and each other browser with no account, unless pressed lately.
+  const key = s.inUse || 'in-use'
+  const check = !email && !pending[key] ? { key, prompt: checkPrompt(name, s.inUse) } : null
+  const otherChecks = rest.map(x => (acc[x.deviceId]?.email || pending[x.deviceId] ? null : { key: x.deviceId, prompt: checkPrompt(x.name, x.deviceId, s.inUse) }))
+  return { line, tone: warn ? 'warn' : 'ok', warn, usedAt: s.lastUseAt, others, check, otherChecks }
 }
 
 async function readText($: EngineInterface, path: string): Promise<string> {
@@ -321,13 +378,13 @@ export async function recordChromeCall($: EngineInterface, h: string, key: strin
   const now = await $.clock.now()
   const file = `${h}/${chromeStateRel(key)}`
   const prev = parseState(await readText($, file))
-  const { state, email, from } = applyCall(prev, tool, input, resultText(result), now)
+  const { state, email, from, name } = applyCall(prev, tool, input, resultText(result), now)
   await $.fs.write(file, JSON.stringify(state))
   const device = state.inUse || (state.browsers.length === 1 ? state.browsers[0]!.deviceId : '')
   if (email && from && device) {
     const af = `${h}/${CHROME_ACCOUNTS_REL}`
     const acc = parseAccountsFile(await readText($, af))
-    const next = mergeAccount(acc, device, email, from, now)
+    const next = mergeAccount(acc, device, email, from, now, name)
     if (next !== acc) await $.fs.write(af, JSON.stringify(next))
   }
 }
@@ -391,6 +448,22 @@ export async function readChrome($: EngineInterface, h: string, key: string, pro
   if (projectSlug) {
     try { expected = str((JSON.parse(await readText($, `${h}/.claude-progress/goals/${projectSlug}.json`)) as { chromeAccount?: unknown })?.chromeAccount) } catch { expected = '' }
   }
-  const view: ChromeView = { ...chromeView(state, acc, local, EMAIL.test(expected) ? expected : '', onMac ? 'this Mac' : 'this computer'), hint: local ? '' : LOCAL_ACCOUNTS_HINT }
+  const checks = parseChecks(await readText($, `${h}/${CHROME_CHECKS_REL}`), now)
+  const view: ChromeView = { ...chromeView(state, acc, local, EMAIL.test(expected) ? expected : '', onMac ? 'this Mac' : 'this computer', checks), hint: local ? '' : LOCAL_ACCOUNTS_HINT }
   if (JSON.stringify(await read($, chromeAtom)) !== JSON.stringify(view)) await update($, chromeAtom, () => view)
+}
+
+/**
+ * The Check account button: marks the check pending (its button hides for CHECK_PENDING_MS), hides it in the panel
+ * now, then submits the prompt to this session, as autonext does. Claude reads the account page with Claude in Chrome
+ * and the tool.call hook records the email and name.
+ */
+export async function startAccountCheck($: EngineInterface, h: string, check: ChromeCheck) {
+  if (!h || !check.prompt) return
+  const now = await $.clock.now()
+  const file = `${h}/${CHROME_CHECKS_REL}`
+  const checks = { ...parseChecks(await readText($, file), now), [check.key]: now }
+  await $.fs.write(file, JSON.stringify(checks))
+  await update($, chromeAtom, v => ({ ...v, check: v.check?.key === check.key ? null : v.check, otherChecks: (v.otherChecks ?? []).map(c => (c?.key === check.key ? null : c)) }))
+  void $.prompt.submit({ text: check.prompt })
 }

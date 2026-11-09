@@ -1527,10 +1527,41 @@ test('Claude in Chrome: the browser in use and its account show in Connectors, a
   await ui.press({ key: 'tab-list' })
   await ui.press({ key: 'tab-connectors' })
   const text = await allText(ui)
-  expect(text).toContain('Chrome: Browser 2 · hunter@protocolvr.com · other computer')
+  expect(text).toContain('Chrome: Browser 2 · Hunter Zhang (hunter@protocolvr.com) · other computer')
+  expect(text).not.toContain('[Check account]')
   expect(text).toContain("Chrome is controlling hunter@protocolvr.com, which isn't signed in on this Mac. Run /chrome to switch.")
   expect(text).not.toContain('SECRET')
   await ui.press({ key: 'tab-list' })
   expect(await allText(ui)).toContain("Chrome is controlling hunter@protocolvr.com, which isn't signed in on this Mac.")
+  await ui.unmount()
+})
+
+test('Claude in Chrome: Check account submits a prompt to read the account page and hides while pending', async ($, on) => {
+  const B1 = '9038508d-6835-4fe2-a0d2-abf34f5d61b1'
+  const B2 = '951dff16-ed25-45bc-87af-8710e52e685f'
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [`${HOME}/${CONN_CACHE_REL}`]: `Gmail\tok\n#checked\t${Math.floor(NOW / 1000)}\n` }
+  panelWorld(on, files, DONE_FULL)
+  const list = `[{"deviceId":"${B1}","name":"Browser 1","connectedAt":1},{"deviceId":"${B2}","name":"Browser 2","connectedAt":1,"inUse":true}]`
+  on('tool.call', () => ({ result: [{ type: 'text', text: list }] }) as never)
+  const sent: string[] = []
+  on('prompt.submit', (_, e) => { sent.push(String(e.text)); return { drop: 'test' } as never })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  await $.tool.call({ tool: 'mcp__claude-in-chrome__list_connected_browsers' } as never)
+  await ui.press({ key: 'tab-connectors' })
+  let text = await allText(ui)
+  expect(text).toContain('Chrome: Browser 2 · account unknown')
+  expect(text.split('[Check account]').length - 1).toBe(2)
+  await ui.press({ key: 'c-chrome-chk' })
+  await new Promise(r => setTimeout(r, 50))
+  expect(sent.some(t => t.startsWith(`Check which Google account Chrome browser "Browser 2" (${B2}) is signed in to: open https://myaccount.google.com/`))).toBe(true)
+  expect(JSON.parse(files[`${HOME}/.claude-progress/.state/chrome-checks.json`]!)[B2]).toBeGreaterThan(0)
+  text = await allText(ui)
+  expect(text.split('[Check account]').length - 1).toBe(1)
+  await ui.press({ key: 'c-chrome-ochk0' })
+  await new Promise(r => setTimeout(r, 50))
+  expect(sent.some(t => t.includes(`select_browser to deviceId ${B1}`) && t.endsWith(`select_browser back to deviceId ${B2}.`))).toBe(true)
+  await ui.press({ key: 'tab-list' })
+  expect(await allText(ui)).not.toContain('[Check account]')
   await ui.unmount()
 })
