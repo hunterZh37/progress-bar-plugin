@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { EMPTY_STATE, accountPageEmail, applyCall, chromeView, gmailTitleEmail, mergeAccount, parseAccountsFile, parseBrowsers, parseLocalState, parseState, parseTabs, resultText } from '../hooks/chrome'
+import { EMPTY_STATE, accountPageEmail, applyCall, applySwitch, chromeView, lastChromeCommand, mergeLocal, parseChromeCommand, parseLocalAccounts, gmailTitleEmail, mergeAccount, parseAccountsFile, parseBrowsers, parseLocalState, parseState, parseTabs, resultText } from '../hooks/chrome'
 
 const NOW = 1_800_000_000_000
 const B1 = '9038508d-6835-4fe2-a0d2-abf34f5d61b1'
@@ -120,4 +120,68 @@ test('chromeView: the line, and a warning when the browser is not on this Mac or
   expect(chromeView(s, acc, ['hunter@protocolvr.com'], 'Hunter@ProtocolVR.com').warn).toBe('')
   // UI copy rules: no semicolons or em dashes
   for (const v of [away, here]) expect(`${v.line}${v.warn}`.match(/[;—]/)).toBeNull()
+})
+
+test('parseChromeCommand: the browser /chrome picked, or not connected', () => {
+  expect(parseChromeCommand('<local-command-stdout>Now using browser "Browser 2" for Chrome actions.</local-command-stdout>')).toEqual({ name: 'Browser 2' })
+  expect(parseChromeCommand('<local-command-stdout>Now using browser "Thes MacBook Air" for Chrome actions.</local-command-stdout>\n')).toEqual({ name: 'Thes MacBook Air' })
+  expect(parseChromeCommand("<local-command-stdout>Couldn't list connected browsers: bridge unreachable</local-command-stdout>")).toEqual({ connected: false })
+  expect(parseChromeCommand('<local-command-stdout>Chrome extension not detected</local-command-stdout>')).toEqual({ connected: false })
+  expect(parseChromeCommand('<local-command-stdout>(no content)</local-command-stdout>')).toBeNull()
+  // a prompt quoting the line is not a switch, unless the row came in as a command's output
+  expect(parseChromeCommand('Now using browser "Browser 2" for Chrome actions.')).toBeNull()
+  expect(parseChromeCommand('Now using browser "Browser 2" for Chrome actions.', true)).toEqual({ name: 'Browser 2' })
+})
+
+test('lastChromeCommand: the newest /chrome output row in the transcript, not a quote of it', () => {
+  const row = (content: unknown, ts: string, type = 'user') => JSON.stringify({ type, message: { role: 'user', content }, timestamp: ts })
+  const jsonl = [
+    row('<local-command-stdout>Now using browser "Browser 1" for Chrome actions.</local-command-stdout>', '2026-11-08T22:20:40.623Z'),
+    row('<local-command-stdout>Now using browser "Browser 2" for Chrome actions.</local-command-stdout>', '2026-11-09T00:45:28.713Z'),
+    row('fix it: <local-command-stdout>Now using browser "Browser 9" for Chrome actions.</local-command-stdout>', '2026-11-09T00:46:00.000Z'),
+    row([{ type: 'text', text: '<local-command-stdout>Now using browser "Browser 8" for Chrome actions.</local-command-stdout>' }], '2026-11-09T00:47:00.000Z'),
+    '{"type":"user","message":{"content":"<local-command-stdout>Now using brow',
+  ].join('\n')
+  expect(lastChromeCommand(jsonl)).toEqual({ name: 'Browser 2', at: Date.parse('2026-11-09T00:45:28.713Z') })
+  expect(lastChromeCommand('')).toBeNull()
+})
+
+test('applySwitch: the name maps to a deviceId through the last list, an unknown name has no account', () => {
+  const s = { ...applyCall(EMPTY_STATE, `${P}list_connected_browsers`, {}, LIST, NOW).state, email: 'hunter@protocolvr.com' }
+  const acc = { [B2]: { email: 'hunter@protocolvr.com', seenAt: NOW, from: 'account' as const } }
+  const one = applySwitch(s, { name: 'Browser 1' }, NOW + 1000)
+  expect(one.inUse).toBe(B1)
+  expect(one.email).toBeUndefined()
+  expect(one.switchAt).toBe(NOW + 1000)
+  expect(one.browsers.find(b => b.deviceId === B1)!.inUse).toBe(true)
+  expect(one.browsers.find(b => b.deviceId === B2)!.inUse).toBeUndefined()
+  expect(chromeView(one, acc, null).line).toBe('Chrome: Browser 1 · account unknown')
+  // a name not in the list: the old browser is no longer in use
+  const odd = applySwitch(s, { name: 'Browser 3' }, NOW + 1000)
+  expect(odd.inUse).toBe('')
+  expect(odd.browsers.some(b => b.inUse)).toBe(false)
+  expect(chromeView(odd, acc, ['hunter@iog.org']).line).toBe('Chrome: Browser 3 · account unknown')
+  expect(chromeView(odd, acc, ['hunter@iog.org']).warn).toBe('')
+  // the next list names it again
+  expect(applyCall(odd, `${P}list_connected_browsers`, {}, LIST, NOW + 2000).state.inUseName).toBeUndefined()
+  // not connected
+  expect(chromeView(applySwitch(s, { connected: false }, NOW + 1000), acc, null).line).toBe('Chrome: not connected')
+  // the same browser keeps its email
+  expect(applySwitch(s, { name: 'Browser 2' }, NOW + 1000).email).toBe('hunter@protocolvr.com')
+})
+
+test('parseLocalAccounts and mergeLocal: this Mac\'s accounts from the file and Local State', () => {
+  expect(parseLocalAccounts('# this Mac\nHunter@InstituteOnGenerosity.org\n\nnot an email\nhunter@instituteongenerosity.org # again\n')).toEqual(['hunter@instituteongenerosity.org'])
+  expect(parseLocalAccounts('')).toEqual([])
+  expect(mergeLocal(null, null)).toBeNull()
+  expect(mergeLocal(['a@x.org'], null)).toEqual(['a@x.org'])
+  expect(mergeLocal(['a@x.org'], ['b@x.org', 'a@x.org'])).toEqual(['a@x.org', 'b@x.org'])
+  // the file's list drives the warning
+  const s = applyCall(EMPTY_STATE, `${P}list_connected_browsers`, {}, LIST, NOW).state
+  const acc = { [B2]: { email: 'hunter@protocolvr.com', seenAt: NOW, from: 'account' as const } }
+  const v = chromeView(s, acc, mergeLocal(null, parseLocalAccounts('hunter@instituteongenerosity.org')))
+  expect(v.line).toBe('Chrome: Browser 2 · hunter@protocolvr.com · other computer')
+  expect(v.tone).toBe('warn')
+  expect(v.warn).toBe("Chrome is controlling hunter@protocolvr.com, which isn't signed in on this Mac. Run /chrome to switch.")
+  expect(`${v.line}${v.warn}`.match(/[;—]/)).toBeNull()
 })

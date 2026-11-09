@@ -4,6 +4,7 @@ import type { On } from 'claude-code'
 
 import { CONN_CACHE_REL, connUrl, connName, connSummary, formatCache, parseAccounts, parseCache, parseLogin, parseMcpList } from '../hooks/connectors'
 import { CHECKPOINT_PY } from '../hooks/checkpoint'
+import { forgetLocalState } from '../hooks/chrome'
 import { closestFile } from '../hooks/render'
 import { finishedTaskIds } from '../hooks/report'
 import { loginKey, usageFileRel } from '../hooks/usage'
@@ -1460,6 +1461,46 @@ test('loginKey gives each Claude login its own usage reading', () => {
   expect(loginKey('/Users/h/.claude-personal/', '/Users/h')).toBe('claude-personal')
   expect(usageFileRel('')).toBe('.claude-progress/.state/max-usage.json')
   expect(usageFileRel('claude-personal')).toBe('.claude-progress/.state/max-usage-claude-personal.json')
+})
+
+test('Claude in Chrome: a /chrome switch and this Mac\'s accounts file update the panel without a Chrome call', async ($, on) => {
+  forgetLocalState()
+  const B1 = 'cbb87c8d-e32f-4099-99d2-80fda22e8e05'
+  const B2 = '951dff16-ed25-45bc-87af-8710e52e685f'
+  const files: Record<string, string> = {
+    [SCRIPT]: statusScript(), [FLAG]: 'on\n', [`${HOME}/${CONN_CACHE_REL}`]: `Gmail\tok\n#checked\t${Math.floor(NOW / 1000)}\n`,
+    [`${HOME}/.claude-progress/.state/chrome-accounts.json`]: JSON.stringify({ [B1]: { email: 'hunter@protocolvr.com', seenAt: NOW, from: 'account' } }),
+  }
+  panelWorld(on, files, DONE_FULL, argv => (argv[0] === 'uname' ? 'Darwin\n' : undefined))
+  on('tool.call', () => ({ result: [{ type: 'text', text: `[{"deviceId":"${B1}","name":"Browser 1","inUse":true},{"deviceId":"${B2}","name":"Browser 2"}]` }] }) as never)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__claude-in-chrome__list_connected_browsers' } as never)
+  const sfile = Object.keys(files).find(f => /\.state\/chrome-[^/]*\.json$/.test(f) && !f.endsWith('accounts.json'))!
+  expect(JSON.parse(files[sfile]!).inUse).toBe(B1)
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  await ui.press({ key: 'tab-connectors' })
+  // No Local State and no accounts file: no location, and the dim hint
+  let text = await allText(ui)
+  expect(text).toContain('Chrome: Browser 1 · hunter@protocolvr.com')
+  expect(text).toContain("Add this Mac's Google accounts to ~/.claude-progress/chrome-local-accounts.txt to get wrong-browser warnings.")
+  // the accounts file names this Mac's accounts: Browser 1 is another computer's
+  files[`${HOME}/.claude-progress/chrome-local-accounts.txt`] = '# this Mac\nhunter@instituteongenerosity.org\n'
+  await $.tool.call({ tool: 'mcp__claude-in-chrome__list_connected_browsers' } as never)
+  await ui.press({ key: 'tab-list' })
+  await ui.press({ key: 'tab-connectors' })
+  text = await allText(ui)
+  expect(text).toContain('Chrome: Browser 1 · hunter@protocolvr.com · other computer')
+  expect(text).toContain("Chrome is controlling hunter@protocolvr.com, which isn't signed in on this Mac. Run /chrome to switch.")
+  expect(text).not.toContain('chrome-local-accounts.txt')
+  // /chrome picks Browser 2: its output row as it is stored
+  await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: '<local-command-stdout>Now using browser "Browser 2" for Chrome actions.</local-command-stdout>' }] }, door: 'command', origin: { kind: 'composer' }, uuid: 'u1' } as never)
+  expect(JSON.parse(files[sfile]!).inUse).toBe(B2)
+  await ui.press({ key: 'tab-list' })
+  await ui.press({ key: 'tab-connectors' })
+  text = await allText(ui)
+  expect(text).toContain('Chrome: Browser 2 · account unknown')
+  expect(text).not.toContain('Chrome is controlling')
+  await ui.unmount()
 })
 
 test('Claude in Chrome: the browser in use and its account show in Connectors, a warning on List when not on this Mac', async ($, on) => {

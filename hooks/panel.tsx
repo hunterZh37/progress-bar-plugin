@@ -1588,6 +1588,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           </Box>
           {chrome.warn ? <Text key="c-chrome-w" color="yellow" wrap="truncate-end">{`    ${chrome.warn}`}</Text> : null}
           {chrome.tone !== 'dim' ? chrome.others.map((o, i) => <Text key={`c-chrome-o${i}`} dimColor wrap="truncate-end">{`    Also connected: ${o}`}</Text>) : null}
+          {chrome.hint && chrome.tone !== 'dim' ? <Text key="c-chrome-h" dimColor wrap="truncate-end">{`    ${chrome.hint}`}</Text> : null}
           {conns.list.length === 0 && <Text dimColor>{conns.checking ? '  checking…' : '  No check yet.'}</Text>}
           {ordered.flatMap(connRow)}
           <Box key="c-foot">

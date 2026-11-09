@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
 import type { ChromeView } from '../types'
+import { isDarwin } from './mac'
 
 // Which Chrome browser Claude in Chrome drives, under which Google account, and whether it is on this Mac.
 // Nothing is asked of Chrome: the plugin reads the results of the session's own mcp__claude-in-chrome__* calls.
@@ -12,16 +13,25 @@ import type { ChromeView } from '../types'
 // session: ~/.claude-progress/.state/chrome-accounts.json, deviceId -> {email, seenAt, from}.
 // The Google accounts signed in to Chrome on this Mac come from Chrome's "Local State" file (profile.info_cache),
 // read only, and only the names and emails are kept. Missing on Linux: then no email check is made.
+// Chrome's Local State is unreadable on most Macs (privacy protection), so the person can list this Mac's accounts:
+// ~/.claude-progress/chrome-local-accounts.txt, one email per line, # comments. Both lists are merged.
+// The built-in /chrome command switches browsers without a tool call. Its output row ("Now using browser "X" for
+// Chrome actions.") is seen two ways: the session.append hook as it is stored, and the session transcript's new bytes
+// on each poll (after a reload). The name maps to a deviceId through the last browser list.
 // A project can name the account it expects: "chromeAccount" in ~/.claude-progress/goals/<slug>.json. Off by default.
 
 export const CHROME_PREFIX = 'mcp__claude-in-chrome__'
 export const chromeStateRel = (key: string) => `.claude-progress/.state/chrome-${key}.json`
 export const CHROME_ACCOUNTS_REL = '.claude-progress/.state/chrome-accounts.json'
 export const CHROME_LOCAL_STATE_REL = 'Library/Application Support/Google/Chrome/Local State'
+export const CHROME_LOCAL_ACCOUNTS_REL = '.claude-progress/chrome-local-accounts.txt'
+export const LOCAL_ACCOUNTS_HINT = "Add this Mac's Google accounts to ~/.claude-progress/chrome-local-accounts.txt to get wrong-browser warnings."
+const TX_TAIL = 4 * 1024 * 1024
 const LOCAL_EVERY = 5 * 60_000
 
 export type ChromeBrowser = { deviceId: string; name: string; osPlatform?: string; isLocal?: boolean; onThisComputer?: boolean; inUse?: boolean; connectedAt?: number }
-export type ChromeState = { browsers: ChromeBrowser[]; inUse: string; connected: boolean | null; lastUseAt: number; email?: string; tabs: Record<string, string> }
+// inUseName: a browser /chrome picked that is not in the last list. switchAt: the last /chrome switch applied.
+export type ChromeState = { browsers: ChromeBrowser[]; inUse: string; connected: boolean | null; lastUseAt: number; email?: string; tabs: Record<string, string>; inUseName?: string; switchAt?: number }
 export type ChromeAccount = { email: string; seenAt: number; from: 'account' | 'gmail' }
 export type ChromeAccounts = Record<string, ChromeAccount>
 
@@ -150,6 +160,7 @@ export function applyCall(prev: ChromeState, tool: string, input: Record<string,
       const using = list.find(b => b.inUse)
       if (using) s.inUse = using.deviceId
       else if (!list.some(b => b.deviceId === s.inUse)) s.inUse = list.length === 1 ? list[0]!.deviceId : ''
+      if (s.inUse) delete s.inUseName
     }
     return { state: s, email, from }
   }
@@ -169,7 +180,71 @@ export function applyCall(prev: ChromeState, tool: string, input: Record<string,
   const acct = onAccountPage ? accountPageEmail(text) : ''
   if (acct) { email = acct; from = 'account' } else if (gmail) { email = gmail; from = 'gmail' }
   if (email) s.email = email
+  if (s.inUse) delete s.inUseName
   return { state: s, email, from }
+}
+
+export type ChromeCommand = { name: string } | { connected: false }
+
+const CMD_OUT = /^<local-command-stdout>([\s\S]*)<\/local-command-stdout>$/
+const CMD_SWITCHED = /^Now using browser "(.+)" for Chrome actions\.$/
+const CMD_OFF = /^(?:Couldn't list connected browsers|No browsers are connected|Chrome can't be reached)|extension (?:is )?not (?:detected|connected|installed)/i
+
+/** /chrome's output: the browser picked, or not connected. null for any other text. Tags are required unless `bare`. */
+export function parseChromeCommand(text: string, bare = false): ChromeCommand | null {
+  const t = text.trim()
+  const inner = CMD_OUT.exec(t)?.[1]?.trim() ?? (bare ? t : '')
+  if (!inner) return null
+  const name = CMD_SWITCHED.exec(inner)?.[1]
+  if (name) return { name: clean(name) }
+  return CMD_OFF.test(inner) ? { connected: false } : null
+}
+
+/** The newest /chrome output row in transcript lines (JSONL): only a user row whose whole content is the output. */
+export function lastChromeCommand(jsonl: string): (ChromeCommand & { at: number }) | null {
+  const lines = jsonl.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i]!
+    if (!l.includes('local-command-stdout>') || !l.includes('rowser')) continue
+    try {
+      const j = JSON.parse(l) as { type?: unknown; message?: { content?: unknown }; timestamp?: unknown }
+      if (j.type !== 'user' || typeof j.message?.content !== 'string') continue
+      const cmd = parseChromeCommand(j.message.content)
+      const at = Date.parse(str(j.timestamp))
+      if (cmd && Number.isFinite(at)) return { ...cmd, at }
+    } catch { /* a cut line */ }
+  }
+  return null
+}
+
+/** A /chrome switch: the named browser from the last list, else that name with no deviceId and no account. */
+export function applySwitch(prev: ChromeState, cmd: ChromeCommand, at: number): ChromeState {
+  const s: ChromeState = { ...prev, browsers: [...prev.browsers], tabs: { ...prev.tabs }, lastUseAt: Math.max(prev.lastUseAt, at), switchAt: at }
+  if (!('name' in cmd)) { s.connected = false; return s }
+  const b = s.browsers.find(x => x.name === cmd.name)
+  if (b?.deviceId !== prev.inUse) delete s.email
+  s.inUse = b?.deviceId ?? ''
+  if (b) delete s.inUseName
+  else s.inUseName = cmd.name
+  s.connected = true
+  s.browsers = s.browsers.map(x => ({ ...x, inUse: x.deviceId === s.inUse || undefined }))
+  return s
+}
+
+/** chrome-local-accounts.txt: one email per line, # comments, lowercased. */
+export function parseLocalAccounts(text: string): string[] {
+  const out: string[] = []
+  for (const l of text.split('\n')) {
+    const e = l.replace(/#.*/, '').trim().toLowerCase()
+    if (e && new RegExp(`^${EMAIL.source}$`).test(e) && !out.includes(e)) out.push(e)
+  }
+  return out
+}
+
+/** This machine's accounts: Local State's and the file's, merged. null when neither is there. */
+export function mergeLocal(localState: string[] | null, file: string[] | null): string[] | null {
+  if (!localState && !file) return null
+  return [...new Set([...(localState ?? []), ...(file ?? [])])]
 }
 
 /** Saves an email for a browser. A Gmail title never replaces an account page's email seen in the last day. */
@@ -217,7 +292,7 @@ export function parseAccountsFile(text: string): ChromeAccounts {
 export function chromeView(s: ChromeState, acc: ChromeAccounts, local: string[] | null, expected = '', here = 'this Mac'): ChromeView {
   if (!s.lastUseAt || s.connected === false || (s.connected === null && !s.inUse)) return { ...EMPTY_VIEW, usedAt: s.lastUseAt }
   const b = s.browsers.find(x => x.deviceId === s.inUse)
-  const name = b?.name || (s.inUse ? 'Browser' : 'browser')
+  const name = b?.name || s.inUseName || (s.inUse ? 'Browser' : 'browser')
   const email = (s.inUse ? acc[s.inUse]?.email : '') || s.email || ''
   const lower = email.toLowerCase()
   const knownHere = !!email && !!local?.length && local.includes(lower)
@@ -257,24 +332,65 @@ export async function recordChromeCall($: EngineInterface, h: string, key: strin
   }
 }
 
+/** A /chrome output row seen as it is stored (session.append): applied to the session's state now. */
+export async function recordChromeCommand($: EngineInterface, h: string, key: string, cmd: ChromeCommand) {
+  if (!h || !key) return
+  const file = `${h}/${chromeStateRel(key)}`
+  await $.fs.write(file, JSON.stringify(applySwitch(parseState(await readText($, file)), cmd, await $.clock.now())))
+}
+
+// How far each transcript was read: only its new bytes are read again, and nothing when its size is the same.
+const txRead = new Map<string, number>()
+
+/** The transcript's new lines: the newest /chrome switch, when it is newer than the session's last Chrome action. */
+async function switchFromTranscript($: EngineInterface, h: string, key: string, tx: string) {
+  let size = 0
+  try { const st = await $.fs.stat(tx); if (st.kind !== 'file') return; size = st.size } catch { return }
+  const seen = txRead.get(tx) ?? 0
+  if (size === seen) return
+  const from = Math.max(seen < size ? seen : 0, size - TX_TAIL)
+  let text = ''
+  try { text = String((await $.process.run(['tail', '-c', `+${from + 1}`, tx], { timeoutMs: 5000 })).stdout ?? '') } catch { return }
+  const end = text.lastIndexOf('\n')
+  if (end < 0) return
+  txRead.set(tx, from + new TextEncoder().encode(text.slice(0, end + 1)).length)
+  const cmd = lastChromeCommand(text.slice(0, end))
+  if (!cmd) return
+  const file = `${h}/${chromeStateRel(key)}`
+  const state = parseState(await readText($, file))
+  if (cmd.at <= (state.switchAt ?? 0) || cmd.at < state.lastUseAt) return
+  await $.fs.write(file, JSON.stringify(applySwitch(state, cmd, cmd.at)))
+}
+
 let localAt = 0
 let localEmails: string[] | null = null
+let onMac = false
+/** Tests: read Local State again on the next poll. */
+export function forgetLocalState() { localAt = 0; localEmails = null; onMac = false; txRead.clear() }
 
-/** The panel's poll: the session's Chrome state into the atom. Chrome's Local State is read at most every 5 minutes. */
-export async function readChrome($: EngineInterface, h: string, key: string, projectSlug = '') {
+/**
+ * The panel's poll: the session's Chrome state into the atom. Chrome's Local State is read at most every 5 minutes,
+ * chrome-local-accounts.txt every poll. `tx` is the session transcript, read for /chrome switches.
+ */
+export async function readChrome($: EngineInterface, h: string, key: string, projectSlug = '', tx = '') {
   if (!h || !key) return
   const now = await $.clock.now()
   if (now - localAt >= LOCAL_EVERY) {
     localAt = now
     const text = await readText($, `${h}/${CHROME_LOCAL_STATE_REL}`)
     localEmails = text ? parseLocalState(text).map(p => p.email) : null
+    onMac = !!localEmails || await isDarwin($)
   }
+  if (tx) await switchFromTranscript($, h, key, tx).catch(() => undefined)
+  let file: string[] | null = null
+  try { file = parseLocalAccounts(String(await $.fs.read(`${h}/${CHROME_LOCAL_ACCOUNTS_REL}`))) } catch { file = null }
+  const local = mergeLocal(localEmails, file)
   const state = parseState(await readText($, `${h}/${chromeStateRel(key)}`))
   const acc = parseAccountsFile(await readText($, `${h}/${CHROME_ACCOUNTS_REL}`))
   let expected = ''
   if (projectSlug) {
     try { expected = str((JSON.parse(await readText($, `${h}/.claude-progress/goals/${projectSlug}.json`)) as { chromeAccount?: unknown })?.chromeAccount) } catch { expected = '' }
   }
-  const view = chromeView(state, acc, localEmails, EMAIL.test(expected) ? expected : '', localEmails ? 'this Mac' : 'this computer')
+  const view: ChromeView = { ...chromeView(state, acc, local, EMAIL.test(expected) ? expected : '', onMac ? 'this Mac' : 'this computer'), hint: local ? '' : LOCAL_ACCOUNTS_HINT }
   if (JSON.stringify(await read($, chromeAtom)) !== JSON.stringify(view)) await update($, chromeAtom, () => view)
 }

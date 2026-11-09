@@ -6,10 +6,10 @@ import { backfillChat, sayCommand } from './chat'
 import { CHANNEL_EVERY, SEND_TOOL, channelCommand, pollChannel, sendCommand, sendFile } from './channel'
 import { inboxCommand } from './inbox'
 import { chainable } from './chain'
-import { CHROME_PREFIX, readChrome, recordChromeCall } from './chrome'
+import { CHROME_PREFIX, parseChromeCommand, readChrome, recordChromeCall, recordChromeCommand, resultText } from './chrome'
 import { SNIPPET, installedPrev, writeLib } from './setup'
 import { resolveHome } from './home'
-import { USAGE_CHECK, probeUsage } from './usage'
+import { USAGE_CHECK, probeUsage, sessionLogin } from './usage'
 import { macClicks, parseMacClicks } from './mac'
 import { checkpointCommand, noteStatusLine, panelCommand, registerPanel, startPanel } from './panel'
 import { FILE_FRESH_MS, FRESH_MS, closestFile, eta, pickMeta, expandHome, rateLeft, trackJob, lines, parseProgress, parseWatch, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
@@ -474,6 +474,15 @@ async function endFinishedShells($: EngineInterface) {
   if (done.size) await endShellsFor($, done)
 }
 
+/** The session's transcript: from the last Stop, else its folder under this login's config dir. */
+async function transcriptFile($: EngineInterface, h: string): Promise<string> {
+  if (txBase) return `${txBase}.jsonl`
+  try {
+    const { dir } = await sessionLogin($, h)
+    return `${dir || `${h}/.claude`}/projects/${(await $.session.cwd()).replace(/[^A-Za-z0-9]/g, '-')}/${await $.session.id()}.jsonl`
+  } catch { return '' }
+}
+
 async function poll($: EngineInterface) {
   await endFinishedShells($).catch(() => undefined)
   await touchShells($)
@@ -485,7 +494,7 @@ async function poll($: EngineInterface) {
   const mine = rows.filter(r => r.id.startsWith('file:') && !shared.has(r.id))
   const jobs = rows.filter(r => shared.has(r.id))
   // Chrome status refreshes on every poll too, so it shows after a reload or a /chrome switch.
-  void sessionProject($, home).then(p => readChrome($, home, sessionKey, p.slug)).catch(() => undefined)
+  void Promise.all([sessionProject($, home), transcriptFile($, home)]).then(([p, tx]) => readChrome($, home, sessionKey, p.slug, tx)).catch(() => undefined)
   const base = `${dirOf(home)}/.lines`
   try { await $.fs.write(`${base}/agents-${sessionKey}.txt`, lines(agents, now).join('\n')) } catch { /* next poll */ }
   try { await $.fs.write(`${base}/jobs-${sessionKey}.txt`, lines(mine, now).join('\n')) } catch { /* next poll */ }
@@ -881,6 +890,22 @@ export const register: Register = (on, options) => {
     const i = e as unknown as { title?: unknown; command?: unknown; why?: unknown; check?: unknown; global?: unknown }
     const s = (v: unknown) => (typeof v === 'string' ? v : '')
     return { result: await addFromClaude($, await resolveHome($), { title: s(i.title), command: s(i.command), why: s(i.why), check: s(i.check), global: i.global === true }) }
+  })
+
+  // /chrome's output row as it is stored: the browser it picked, or not connected. Watched only, never changed.
+  on('session.append', async ($, e, next) => {
+    const r = await next(e)
+    try {
+      if (!e.agentId && e.message.type !== 'assistant') {
+        const cmd = parseChromeCommand(resultText(e.message.content), e.door === 'command' || e.door === 'notice')
+        if (cmd) {
+          const h = await resolveHome($)
+          await recordChromeCommand($, h, await sessionKeyOf($), cmd)
+          await readChrome($, h, await sessionKeyOf($), (await sessionProject($, h)).slug)
+        }
+      }
+    } catch { /* not Chrome's */ }
+    return r
   })
 
   // The gate: while an action is open, the person's prompts are held (slash commands always pass).
