@@ -484,6 +484,8 @@ async function poll($: EngineInterface) {
   const agents = rows.filter(r => !r.id.startsWith('file:'))
   const mine = rows.filter(r => r.id.startsWith('file:') && !shared.has(r.id))
   const jobs = rows.filter(r => shared.has(r.id))
+  // Chrome status refreshes on every poll too, so it shows after a reload or a /chrome switch.
+  void sessionProject($, home).then(p => readChrome($, home, sessionKey, p.slug)).catch(() => undefined)
   const base = `${dirOf(home)}/.lines`
   try { await $.fs.write(`${base}/agents-${sessionKey}.txt`, lines(agents, now).join('\n')) } catch { /* next poll */ }
   try { await $.fs.write(`${base}/jobs-${sessionKey}.txt`, lines(mine, now).join('\n')) } catch { /* next poll */ }

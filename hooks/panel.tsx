@@ -1728,6 +1728,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         {actBlock}
         {inboxBlock}
         {chanBlock}
+        {chrome.tone !== 'dim' ? <Text key="chrome-l" color={chrome.tone === 'warn' ? 'yellow' : undefined} dimColor={chrome.tone !== 'warn'} wrap="truncate-end">{chrome.line}</Text> : null}
         {chrome.warn ? <Text key="chrome-w" color="yellow" wrap="truncate-end">{chrome.warn}</Text> : null}
         {banner}
         {healthBlock}
