@@ -3,7 +3,7 @@ import type { ElementConstructor, EngineInterface, InputProps, On, RenderChildre
 
 import { AWAY_S, GAP_MS, OVERNIGHT_REL, dayOf, snapOf } from './checkpoint'
 import { readChrome, startAccountCheck } from './chrome'
-import { localRows, portsOf } from './localhost'
+import { localRows, openLocalPage, parseEntry, portsOf, saveLabel } from './localhost'
 import { connSummary, readConns, refreshConns, resetConns } from './connectors'
 import { EVENTS_REL, LOG_DIRS_REL, SEEN_REL, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from './events'
 import { GH_EVERY, openUrl, openWeb, readGh } from './github'
@@ -79,7 +79,7 @@ const connsAtom = atom({ plugin: 'progress-bar', key: 'conns' } as const, { at: 
 // The same state chrome.ts writes: which Chrome browser and Google account Claude in Chrome drives.
 const chromeAtom = atom({ plugin: 'progress-bar', key: 'chrome' } as const, { line: 'Chrome: not connected', tone: 'dim', warn: '', usedAt: 0, others: [] })
 // The same state localhost.ts writes: what listens on this machine, for the LOCALHOST list.
-const localAtom = atom({ plugin: 'progress-bar', key: 'local' } as const, { listening: [], root: '', at: 0 } as LocalView)
+const localAtom = atom({ plugin: 'progress-bar', key: 'local' } as const, { listening: [], root: '', at: 0, labels: [], labelsPath: '' } as LocalView)
 const tabAtom = atom({ plugin: 'progress-bar', key: 'tab' } as const, 'list')
 // Topology tab: topology.json and heartbeat health, read each tick while the tab shows.
 const topoAtom = atom({ plugin: 'progress-bar', key: 'topo' } as const, { cfg: DEFAULT_TOPOLOGY, health: {} })
@@ -1936,16 +1936,42 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
 
     // LOCALHOST: each server with its address (press to open it), up or down
     const lrows = localRows(runAll.map(r => ({ title: plain(metaOf(runCard(r).name).title || prettyName(runCard(r).name)), ports: portsOfRow(r) })), local)
-    const localBlock = lrows.length ? (
+    // LOCALHOST, foldable: each page with its address (press to open it in the browser) and its name. [edit] names a
+    // page (saved to ~/.claude-progress/localhost/<project>.txt), [+ page] adds one, e.g. "5381/__stage/one.html One phone".
+    const { Input: LInput } = $.ui.resolve(e) as { Input?: ElementConstructor<InputProps> }
+    const localOpen = !openCards.has('local:closed')
+    const editing = [...openCards].find(k => k.startsWith('lh-edit:'))?.slice('lh-edit:'.length) ?? ''
+    const endEdit = () => update($, openAtom, l => l.filter(x => !x.startsWith('lh-edit:')))
+    const startEdit = (k: string) => update($, openAtom, l => [...l.filter(x => !x.startsWith('lh-edit:')), `lh-edit:${k}`])
+    const darwin = await isDarwin($)
+    const editField = (key: string, value: string, placeholder: string, save: (v: string) => unknown) => (LInput
+      ? <Box key={`lh-in-${key}`} paddingLeft={4}>
+          <LInput key={`lh-inp-${key}`} value={value} placeholder={placeholder} submitLabel="save" onSubmit={async (v: string) => { await save(v); await endEdit() }} />
+          <Button key={`lh-x-${key}`} plain onPress={endEdit}><Text dimColor>{' [cancel]'}</Text></Button>
+        </Box>
+      : null)
+    const localBlock = lrows.length || local.labelsPath ? (
       <Box key="local" flexDirection="column" marginTop={1}>
-        <Text key="local-h" bold>{'LOCALHOST'}</Text>
-        {lrows.map(r => (
-          <Box key={`lh-${r.port}`}>
-            <Text color={r.up ? 'green' : 'red'}>{r.up ? '  ● ' : '  ○ '}</Text>
-            <Button key={`lhb-${r.port}`} plain onPress={() => openUrl($, r.url)}><Text color="cyan">{`localhost:${r.port}`}</Text></Button>
-            <Text dimColor wrap="truncate-end">{`  ${r.up ? '' : 'down · '}${clip(r.title, Math.max(8, width - 26))}`}</Text>
-          </Box>
-        ))}
+        <Box key="local-h">
+          <Button key="local-hb" plain onPress={() => toggleCard('local:closed')}>
+            <Text bold>{`${localOpen ? '▾' : '▸'} LOCALHOST`}</Text>
+            <Text dimColor>{`  ${lrows.filter(r => r.up).length}${lrows.some(r => !r.up) ? ` · ${lrows.filter(r => !r.up).length} down` : ''}`}</Text>
+          </Button>
+          {localOpen && LInput ? <Button key="local-add" plain onPress={() => startEdit('+')}><Text dimColor>{'  [+ page]'}</Text></Button> : null}
+        </Box>
+        {localOpen ? lrows.flatMap(r => {
+          const addr = `localhost:${r.port}${r.path === '/' ? '' : r.path}`
+          return [
+            <Box key={`lh-${r.key}`}>
+              <Box flexShrink={0}><Text color={r.up ? 'green' : 'red'}>{r.up ? '  ● ' : '  ○ '}</Text></Box>
+              <Box flexShrink={0}><Button key={`lhb-${r.key}`} plain onPress={() => openLocalPage($, r.url, darwin)}><Text color="cyan">{clip(addr, Math.max(16, Math.floor(width / 2)))}</Text></Button></Box>
+              <Text dimColor={!r.named} wrap="truncate-end">{`  ${r.up ? '' : 'down · '}${r.title}`}</Text>
+              {LInput ? <Box flexShrink={0}><Button key={`lhe-${r.key}`} plain onPress={() => startEdit(r.key)}><Text dimColor>{' [edit]'}</Text></Button></Box> : null}
+            </Box>,
+            editing === r.key ? editField(r.key, r.named ? r.title : '', 'a name for this page (empty: back to the default)', v => saveLabel($, homeDir, r.port, r.path, v)) : null,
+          ].filter(Boolean)
+        }) : []}
+        {localOpen && editing === '+' ? editField('+', '', '5381/__stage/one.html One phone', v => { const x = parseEntry(v); return x ? saveLabel($, homeDir, x.port, x.path, x.label) : undefined }) : null}
       </Box>
     ) : null
 

@@ -538,7 +538,7 @@ async function poll($: EngineInterface) {
   // Chrome status refreshes on every poll too, so it shows after a reload or a /chrome switch.
   void Promise.all([sessionProject($, home), transcriptFile($, home)]).then(([p, tx]) => readChrome($, home, sessionKey, p.slug, tx)).catch(() => undefined)
   // The project's localhost servers, listed under the panel's job list (read at most every 10 s).
-  void sessionProject($, home).then(p => readLocal($, p.root, p.cwd, home)).catch(() => undefined)
+  void sessionProject($, home).then(p => readLocal($, p.root, p.cwd, home, p.slug)).catch(() => undefined)
   const base = `${dirOf(home)}/.lines`
   try { await $.fs.write(`${base}/agents-${sessionKey}.txt`, lines(agents, now).join('\n')) } catch { /* next poll */ }
   try { await $.fs.write(`${base}/jobs-${sessionKey}.txt`, lines(mine, now).join('\n')) } catch { /* next poll */ }

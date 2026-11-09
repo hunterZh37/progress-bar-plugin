@@ -153,7 +153,8 @@ test('the List tab: a status line, then TO-DO, RUNNING, WAITING, DONE; two-line 
   expect(all).not.toMatch(/[\u{1F000}-\u{1FFFF}⛔⚙⏱⚡☀✉]/u)
   expect(all).not.toMatch(/today: |quality|machines:|◒/)
   // Level 2: what matters now first. Never two blank lines in a row.
-  expect(lines.filter(l => /^[▾▸] /.test(l))).toEqual(['▾ TO-DO  1', '▾ RUNNING  2', '▸ DONE TODAY  1'])
+  // LOCALHOST is always last, open, with [+ page] (nothing listens in a test)
+  expect(lines.filter(l => /^[▾▸] /.test(l))).toEqual(['▾ TO-DO  1', '▾ RUNNING  2', '▸ DONE TODAY  1', '▾ LOCALHOST  0  [+ page]'])
   expect(all).not.toMatch(/\n\s*\n\s*\n/)
   // Level 3 and 4: the mark, the bold title, a thin bar and the percent, time left after it; then the step (or the
   // count) dim under the title text. No area, no why until the row opens. The title column fits the longest title.

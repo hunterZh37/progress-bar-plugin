@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
-import type { Listening, LocalView } from '../types'
+import type { Listening, LocalLabel, LocalView } from '../types'
 
 // The project's localhost servers, always listed under the Status panel's job list.
 // Every TCP port listening on this machine comes from lsof (pid, command, port), with each listener's working folder.
@@ -11,8 +11,58 @@ import type { Listening, LocalView } from '../types'
 // environment carries CLAUDE_CODE_SESSION_ID, and this project's sessions are the transcripts in
 // ~/.claude/projects/<folder>/ (a background server outlives its shell, and its progress file may keep no command).
 
+// Names are the person's: ~/.claude-progress/localhost/<project>.txt, one "<port>[/path]<TAB><name>" line per page,
+// so one server can list two pages (5381/__stage/ and 5381/__stage/one.html). Edited from the panel or by hand.
+
 export const LOCAL_EVERY = 10_000
-export const EMPTY_LOCAL: LocalView = { listening: [], root: '', at: 0 }
+export const EMPTY_LOCAL: LocalView = { listening: [], root: '', at: 0, labels: [], labelsPath: '' }
+export const labelsRel = (project: string) => `.claude-progress/localhost/${project || 'default'}.txt`
+
+/** "<port>[/path]<TAB or spaces><name>" lines; # starts a comment. A bad line is skipped. */
+export function parseLabels(text: string): LocalLabel[] {
+  const out: LocalLabel[] = []
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    if (!line || line.startsWith('#')) continue
+    const m = /^:?(\d{2,5})(\/\S*)?\s+(.+)$/.exec(line)
+    if (!m) continue
+    const port = Number(m[1])
+    const path = m[2] ?? '/'
+    if (port < 1 || port > 65535 || out.some(l => l.port === port && l.path === path)) continue
+    out.push({ port, path, label: (m[3] ?? '').trim().slice(0, 80) })
+  }
+  return out
+}
+
+/** The labels file with one page's name set (an empty name removes the page). */
+export function setLabel(labels: LocalLabel[], port: number, path: string, label: string): string {
+  const rest = labels.filter(l => !(l.port === port && l.path === path))
+  const next = label.trim() ? [...rest, { port, path, label: label.trim().slice(0, 80) }] : rest
+  next.sort((a, b) => a.port - b.port || a.path.localeCompare(b.path))
+  return `# localhost pages for this project: <port>[/path]<TAB><name>. Shown in the Status panel's LOCALHOST list.\n${next.map(l => `${l.port}${l.path === '/' ? '' : l.path}\t${l.label}`).join('\n')}\n`
+}
+
+/** "5381/__stage/one.html One phone" typed in the panel: a page and its name, or null. */
+export function parseEntry(text: string): LocalLabel | null {
+  return parseLabels(text.replace(/^\s*(?:https?:\/\/)?(?:localhost|127\.0\.0\.1)?:?/i, ''))[0] ?? null
+}
+
+/** Writes one page's name to the labels file and shows it at once. */
+export async function saveLabel($: EngineInterface, home: string, port: number, path: string, label: string) {
+  const cur = await read($, localAtom)
+  if (!home || !cur.labelsPath) return
+  const text = setLabel(cur.labels ?? [], port, path, label)
+  try {
+    await $.process.run(['/bin/sh', '-c', 'mkdir -p "$(dirname "$1")" && cat > "$1"', 'sh', `${home}/${cur.labelsPath}`], { stdin: text, timeoutMs: 5000 })
+  } catch { return }
+  await update($, localAtom, v => ({ ...v, labels: parseLabels(text) }))
+}
+
+/** Opens a local page in the browser: only http://localhost:<port>/<path>. */
+export async function openLocalPage($: EngineInterface, url: string, darwin: boolean) {
+  if (!/^http:\/\/localhost:\d{2,5}(\/[^\s"'`]*)?$/.test(url)) return
+  try { await $.process.run([darwin ? 'open' : 'xdg-open', url], { timeoutMs: 5000 }) } catch { /* nothing to open */ }
+}
 export const localAtom = atom({ plugin: 'progress-bar', key: 'local' } as const, EMPTY_LOCAL)
 
 /** The ports a shell command names, in order, without repeats. */
@@ -76,10 +126,11 @@ export function parsePsEnv(text: string): { started: Record<number, string>; arg
     const m = /^\s*(\d+)\s+(.*)$/.exec(line)
     if (!m) continue
     const pid = Number(m[1])
-    const sid = /(?:^|\s)CLAUDE_CODE_SESSION_ID=([\w-]+)/.exec(m[2])
-    if (sid) started[pid] = sid[1]
+    const rest = m[2] ?? ''
+    const sid = /(?:^|\s)CLAUDE_CODE_SESSION_ID=([\w-]+)/.exec(rest)
+    if (sid?.[1]) started[pid] = sid[1]
     // the environment starts at the first NAME=value word after the command
-    const words = m[2].split(' ')
+    const words = rest.split(' ')
     const envAt = words.findIndex((w, i) => i > 0 && /^[A-Z_][A-Z0-9_]*=/.test(w))
     args[pid] = (envAt > 0 ? words.slice(0, envAt) : words).join(' ')
   }
@@ -93,7 +144,7 @@ export function shortArgs(args: string): string {
 }
 
 /** Reads what listens on this machine into the atom, at most every LOCAL_EVERY ms. */
-export async function readLocal($: EngineInterface, root: string, cwd = '', home = '') {
+export async function readLocal($: EngineInterface, root: string, cwd = '', home = '', project = '') {
   const now = await $.clock.now()
   const cur = await read($, localAtom)
   if (now - cur.at < LOCAL_EVERY && cur.root === root) return
@@ -121,32 +172,40 @@ export async function readLocal($: EngineInterface, root: string, cwd = '', home
       for (const f of await $.fs.list(`${home}/.claude/projects/${projectDir(cwd)}`)) if (f.name.endsWith('.jsonl')) mine.add(f.name.slice(0, -6))
     } catch { /* no transcripts */ }
   }
+  const labelsPath = labelsRel(project)
+  let labels: LocalLabel[] = []
+  try { labels = home ? parseLabels(String(await $.fs.read(`${home}/${labelsPath}`))) : [] } catch { labels = [] }
   const view: LocalView = {
-    listening: listen.map(l => ({ ...l, cwd: cwds[l.pid] ?? '', mine: !!started[l.pid] && mine.has(started[l.pid]), args: shortArgs(args[l.pid] ?? l.cmd) })),
+    labels,
+    labelsPath,
+    listening: listen.map(l => ({ ...l, cwd: cwds[l.pid] ?? '', mine: mine.has(started[l.pid] ?? ''), args: shortArgs(args[l.pid] ?? l.cmd) })),
     root,
     at: now,
   }
   if (JSON.stringify({ ...cur, at: 0 }) !== JSON.stringify({ ...view, at: 0 }) || now - cur.at >= LOCAL_EVERY) await update($, localAtom, () => view)
 }
 
-export type LocalRow = { port: number; url: string; title: string; up: boolean }
+export type LocalRow = { key: string; port: number; path: string; url: string; title: string; named: boolean; up: boolean }
+
+/** Claude Code's own helper processes listen too: never a project server. */
+const isClaude = (l: Listening) => /^claude\b/.test(l.args ?? '') || l.cmd === 'claude'
 
 /**
- * The rows to list: this session's background shells that name a port (portsOf their command), then listeners this
- * process started or started inside the project folder (up when that port listens), then listeners
- * started inside the project folder that no shell named. Sorted by port.
+ * The rows to list: the named pages first (up when their port listens), then this session's background shells that
+ * name a port (portsOf their command), then listeners a session of this project started or started inside the
+ * project folder. A port with a named page is not listed again unnamed. Sorted by port, then path.
  */
 export function localRows(shells: { title: string; ports: number[] }[], view: LocalView): LocalRow[] {
   const up = new Set(view.listening.map(l => l.port))
   const rows: LocalRow[] = []
-  for (const s of shells) {
-    for (const port of s.ports) {
-      if (!rows.some(r => r.port === port)) rows.push({ port, url: `http://localhost:${port}/`, title: s.title, up: up.has(port) })
-    }
-  }
+  const has = (port: number) => rows.some(r => r.port === port)
+  const row = (port: number, path: string, title: string, named: boolean, isUp: boolean): LocalRow =>
+    ({ key: `${port}${path}`, port, path, url: `http://localhost:${port}${path}`, title, named, up: isUp })
+  for (const l of view.labels ?? []) rows.push(row(l.port, l.path, l.label, true, up.has(l.port)))
+  for (const s of shells) for (const port of s.ports) if (!has(port)) rows.push(row(port, '/', s.title, false, up.has(port)))
   const inside = (cwd: string) => !!view.root && !!cwd && (cwd === view.root || cwd.startsWith(`${view.root}/`))
   for (const l of view.listening) {
-    if ((l.mine || inside(l.cwd)) && !rows.some(r => r.port === l.port)) rows.push({ port: l.port, url: `http://localhost:${l.port}/`, title: l.args || l.cmd, up: true })
+    if ((l.mine || inside(l.cwd)) && !isClaude(l) && !has(l.port)) rows.push(row(l.port, '/', l.args || l.cmd, false, true))
   }
-  return rows.sort((a, b) => a.port - b.port)
+  return rows.sort((a, b) => a.port - b.port || a.path.localeCompare(b.path))
 }

@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { localRows, parseCwds, parseListen, parsePsEnv, portsOf, projectDir, shortArgs } from '../hooks/localhost'
+import { localRows, parseCwds, parseEntry, parseLabels, parseListen, parsePsEnv, portsOf, projectDir, setLabel, shortArgs } from '../hooks/localhost'
 
 test('portsOf: the ports a server command names', () => {
   expect(portsOf('npx vite --config x.mjs --port 5381 --strictPort --host 0.0.0.0')).toEqual([5381])
@@ -29,6 +29,7 @@ test('localRows: shells that name a port, up or down, then listeners inside the 
   const view = {
     root: '/Users/a/demo',
     at: 0,
+    labels: [],
     listening: [
       { pid: 1, cmd: 'node', port: 5381, cwd: '/Users/a/other' },
       { pid: 2, cmd: 'node', port: 5174, cwd: '/Users/a/demo' },
@@ -62,4 +63,39 @@ test('projectDir and shortArgs', () => {
 test('localRows: a listener a session of this project started is listed, wherever its folder', () => {
   const view = { root: '/Users/a/demo', at: 0, listening: [{ pid: 1, cmd: 'node', port: 5381, cwd: '/Users/a/other', mine: true, args: 'node vite --port 5381' }] }
   expect(localRows([], view).map(r => [r.port, r.title])).toEqual([[5381, 'node vite --port 5381']])
+})
+
+test('parseLabels and setLabel: named pages, two on one port, round trip', () => {
+  const text = '# names\n5381/__stage/\tThree phones + dashboard\n5381/__stage/one.html  One phone\n5174 Playground\nbad line\n'
+  const l = parseLabels(text)
+  expect(l).toEqual([
+    { port: 5381, path: '/__stage/', label: 'Three phones + dashboard' },
+    { port: 5381, path: '/__stage/one.html', label: 'One phone' },
+    { port: 5174, path: '/', label: 'Playground' },
+  ])
+  const renamed = parseLabels(setLabel(l, 5174, '/', 'The playground'))
+  expect(renamed.find(x => x.port === 5174)?.label).toBe('The playground')
+  expect(parseLabels(setLabel(l, 5174, '/', '')).some(x => x.port === 5174)).toBe(false)
+})
+
+test('parseEntry: what the person types to add a page', () => {
+  expect(parseEntry('5381/__stage/one.html One phone')).toEqual({ port: 5381, path: '/__stage/one.html', label: 'One phone' })
+  expect(parseEntry('http://localhost:5381/club Dashboard')).toEqual({ port: 5381, path: '/club', label: 'Dashboard' })
+  expect(parseEntry('just words')).toBe(null)
+})
+
+test('localRows: named pages first-class, their port not listed again, Claude helpers never listed', () => {
+  const view = {
+    root: '/Users/a/demo', at: 0,
+    labels: [{ port: 5381, path: '/__stage/', label: 'Three phones' }, { port: 5381, path: '/__stage/one.html', label: 'One phone' }],
+    listening: [
+      { pid: 1, cmd: 'node', port: 5381, cwd: '/x', mine: true, args: 'node vite --port 5381' },
+      { pid: 2, cmd: 'claude', port: 49608, cwd: '/Users/a/demo', mine: true, args: 'claude bg-spare --bg-spare x' },
+    ],
+  }
+  const rows = localRows([], view)
+  expect(rows.map(r => [r.url, r.title, r.named, r.up])).toEqual([
+    ['http://localhost:5381/__stage/', 'Three phones', true, true],
+    ['http://localhost:5381/__stage/one.html', 'One phone', true, true],
+  ])
 })
