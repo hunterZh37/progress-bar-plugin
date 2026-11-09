@@ -3,6 +3,7 @@ import type { ElementConstructor, EngineInterface, InputProps, On, RenderChildre
 
 import { AWAY_S, GAP_MS, OVERNIGHT_REL, dayOf, snapOf } from './checkpoint'
 import { readChrome, startAccountCheck } from './chrome'
+import { localRows, portsOf } from './localhost'
 import { connSummary, readConns, refreshConns, resetConns } from './connectors'
 import { EVENTS_REL, LOG_DIRS_REL, SEEN_REL, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from './events'
 import { GH_EVERY, openUrl, openWeb, readGh } from './github'
@@ -26,6 +27,7 @@ import { turnOnStatusLine } from './setup'
 import { parseSaved, sessionLogin, usageFileRel } from './usage'
 import type { UsageReading } from './usage'
 import { FEW_STEPS, FILE_FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, serverOf, slug } from './render'
+import type { LocalView } from '../types'
 import type { Action, ActionUi, Channel, ChatMsg, ChatState, Checkpoint, ChromeCheck, Conn, Ctl, DoneRec, Ev, GoalArea, Health, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
 
 // The Status panel: the grouped status line, drawn in a docked pane beside the chat.
@@ -76,6 +78,8 @@ const menuAtom = atom({ plugin: 'progress-bar', key: 'menuFor' } as const, -1)
 const connsAtom = atom({ plugin: 'progress-bar', key: 'conns' } as const, { at: 0, checking: false, login: '', list: [] })
 // The same state chrome.ts writes: which Chrome browser and Google account Claude in Chrome drives.
 const chromeAtom = atom({ plugin: 'progress-bar', key: 'chrome' } as const, { line: 'Chrome: not connected', tone: 'dim', warn: '', usedAt: 0, others: [] })
+// The same state localhost.ts writes: what listens on this machine, for the LOCALHOST list.
+const localAtom = atom({ plugin: 'progress-bar', key: 'local' } as const, { listening: [], root: '', at: 0 } as LocalView)
 const tabAtom = atom({ plugin: 'progress-bar', key: 'tab' } as const, 'list')
 // Topology tab: topology.json and heartbeat health, read each tick while the tab shows.
 const topoAtom = atom({ plugin: 'progress-bar', key: 'topo' } as const, { cfg: DEFAULT_TOPOLOGY, health: {} })
@@ -602,7 +606,7 @@ async function readMeta($: EngineInterface, h: string) {
         const m = pickMeta(raw)
         const k = f.name.slice(0, -5)
         if (Object.keys(m).length) meta[k] = { ...meta[k], ...m }
-        if (raw && typeof raw === 'object' && now - f.mtimeMs <= FILE_FRESH_MS) files[k] = { ...(typeof raw.command === 'string' && raw.command.trim() ? { command: 'yes' } : {}), ...(typeof raw.pid === 'number' ? { pid: raw.pid } : {}) }
+        if (raw && typeof raw === 'object' && now - f.mtimeMs <= FILE_FRESH_MS) files[k] = { ...(typeof raw.command === 'string' && raw.command.trim() ? { command: 'yes', ports: portsOf(raw.command) } : {}), ...(typeof raw.pid === 'number' ? { pid: raw.pid } : {}) }
       } catch { /* half written */ }
     }
   } catch { /* no folder */ }
@@ -1845,7 +1849,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // second line, and rows cluster by area inside a section.
     // Background servers (a dev server) are up by design: no bar, never stuck, listed last under a small SERVERS label.
     const runAll = sections.find(x => x.key === 'running')?.rows ?? []
-    const isServer = (row: string) => { const c = runCard(row); return serverNote(c, metaOf(c.name).title) !== null }
+    const local = await read($, localAtom)
+    const listeningPorts = new Set(local.listening.map(l => l.port))
+    const portsOfRow = (row: string) => ctl.files[runCard(row).name]?.ports ?? []
+    // a server by its command or title, or a background shell whose named port is listening
+    const isServer = (row: string) => { const c = runCard(row); return serverNote(c, metaOf(c.name).title) !== null || portsOfRow(row).some(p => listeningPorts.has(p)) }
     const serverRows = runAll.filter(isServer)
     const tops = runTops(runAll.filter(r => !isServer(r))).map(t => ({ ...t, ar: runArea(t.c.name, t.c.step) }))
     const waits = (sections.find(x => x.key === 'waiting')?.rows ?? []).map((row, i) => ({ row, i, ar: runArea(runCard(row).name, runCard(row).step) }))
@@ -1890,7 +1898,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const serverRow = (row: string, i: number) => {
       const c = runCard(row)
       const title = plain(metaOf(c.name).title || prettyName(c.name))
-      const note = serverNote(c, metaOf(c.name).title) ?? 'serving'
+      const ports = portsOfRow(row)
+      const note = serverNote(c, metaOf(c.name).title) ?? `serving${ports[0] ? ` :${ports[0]}` : ''}${c.elapsed || c.ran ? ` · up ${c.elapsed || c.ran}` : ''}`
       const col = Math.max(4, width - 10 - note.length)
       return [
         <Box key={`sv${i}`}>
@@ -1925,6 +1934,21 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       return String(sec.count)
     }
 
+    // LOCALHOST: each server with its address (press to open it), up or down
+    const lrows = localRows(runAll.map(r => ({ title: plain(metaOf(runCard(r).name).title || prettyName(runCard(r).name)), ports: portsOfRow(r) })), local)
+    const localBlock = lrows.length ? (
+      <Box key="local" flexDirection="column" marginTop={1}>
+        <Text key="local-h" bold>{'LOCALHOST'}</Text>
+        {lrows.map(r => (
+          <Box key={`lh-${r.port}`}>
+            <Text color={r.up ? 'green' : 'red'}>{r.up ? '  ● ' : '  ○ '}</Text>
+            <Button key={`lhb-${r.port}`} plain onPress={() => openUrl($, r.url)}><Text color="cyan">{`localhost:${r.port}`}</Text></Button>
+            <Text dimColor wrap="truncate-end">{`  ${r.up ? '' : 'down · '}${clip(r.title, Math.max(8, width - 26))}`}</Text>
+          </Box>
+        ))}
+      </Box>
+    ) : null
+
     return (
       <Box flexDirection="column">
         {tabBar}
@@ -1949,13 +1973,13 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           )
         })}
         {other.map((l, i) => <Text key={`o${i}`} dimColor>{l}</Text>)}
-        {/* The Chrome line only when its account is unknown, to check it. A wrong account is a NEEDS YOU line. */}
-        {!chrome.warn && chrome.tone !== 'dim' && chrome.check ? (
-          <Box key="chrome-l" marginTop={1}>
-            <Text dimColor wrap="truncate-end">{chrome.line}</Text>
-            {checkBtn(chrome.check, 'chrome-chk')}
-          </Box>
-        ) : null}
+        {/* Always under the list: this project's localhost servers, then the Chrome browser Claude drives and its
+            Google account (a wrong account is also a NEEDS YOU line). */}
+        {localBlock}
+        <Box key="chrome-l" marginTop={localBlock ? 0 : 1}>
+          <Text color={chrome.tone === 'warn' ? 'yellow' : undefined} dimColor={chrome.tone !== 'warn'} wrap="truncate-end">{chrome.line}</Text>
+          {checkBtn(chrome.check, 'chrome-chk')}
+        </Box>
       </Box>
     )
   }
