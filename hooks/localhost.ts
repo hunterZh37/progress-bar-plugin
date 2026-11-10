@@ -175,20 +175,56 @@ export async function readLocal($: EngineInterface, root: string, cwd = '', home
   const labelsPath = labelsRel(project)
   let labels: LocalLabel[] = []
   try { labels = home ? parseLabels(String(await $.fs.read(`${home}/${labelsPath}`))) : [] } catch { labels = [] }
+  let ignore: string[] = []
+  try { ignore = home ? parseIgnore(String(await $.fs.read(`${home}/.claude-progress/localhost-ignore.txt`))) : [] } catch { ignore = [] }
   const view: LocalView = {
     labels,
+    ignore,
     labelsPath,
-    listening: listen.map(l => ({ ...l, cwd: cwds[l.pid] ?? '', mine: mine.has(started[l.pid] ?? ''), args: shortArgs(args[l.pid] ?? l.cmd) })),
+    listening: await probeAll($, listen.map(l => ({ ...l, cwd: cwds[l.pid] ?? '', mine: mine.has(started[l.pid] ?? ''), args: shortArgs(args[l.pid] ?? l.cmd) })), root, ignore),
     root,
     at: now,
   }
   if (JSON.stringify({ ...cur, at: 0 }) !== JSON.stringify({ ...view, at: 0 }) || now - cur.at >= LOCAL_EVERY) await update($, localAtom, () => view)
 }
 
+/** A project listener that may be listed gets an HTTP probe (curl, 1s): `http: false` when it does not answer HTTP. */
+async function probeAll($: EngineInterface, ls: Listening[], root: string, ignore: string[]): Promise<Listening[]> {
+  const inside = (cwd: string) => !!root && !!cwd && (cwd === root || cwd.startsWith(`${root}/`))
+  const ports = [...new Set(ls.filter(l => (l.mine || inside(l.cwd)) && !isInfra(l, ignore)).map(l => l.port))].slice(0, 12)
+  const http: Record<number, boolean> = {}
+  await Promise.all(ports.map(async port => {
+    try {
+      const out = (await $.process.run(['curl', '-s', '-o', '/dev/null', '-m', '1', '-w', '%{http_code}', `http://127.0.0.1:${port}/`], { timeoutMs: 3000 })).stdout.trim()
+      http[port] = /^[1-5]\d\d$/.test(out)
+    } catch { http[port] = false }
+  }))
+  return ls.map(l => (l.port in http ? { ...l, http: http[l.port] } : l))
+}
+
 export type LocalRow = { key: string; port: number; path: string; url: string; title: string; named: boolean; up: boolean }
 
 /** Claude Code's own helper processes listen too: never a project server. */
 const isClaude = (l: Listening) => /^claude\b/.test(l.args ?? '') || l.cmd === 'claude'
+
+/**
+ * System and infrastructure listeners, never a project page unless the person named the page: Docker Desktop and its
+ * VMs (com.docker.backend, vpnkit, docker-proxy, OrbStack, colima, limactl), macOS (ControlCenter/AirPlay on 5000
+ * and 7000, rapportd), desktop apps (Spotify, Dropbox, Code Helper) and databases (postgres, redis, mysqld).
+ */
+export const DENY = /^(com\.docker|docker|vpnkit|Docker|OrbStack|orbstack|colima|limactl|ControlCe|ControlCenter|AirPlay|rapportd|Spotify|Dropbox|Code\b|Code Helper|postgres|redis|mysqld|mongod|sharingd|identitys|launchd)/i
+
+/** ~/.claude-progress/localhost-ignore.txt: one process name (prefix, any case) or port per line; # comments. */
+export function parseIgnore(text: string): string[] {
+  return text.split('\n').map(l => l.replace(/#.*/, '').trim()).filter(Boolean)
+}
+
+/** A listener that is never listed on its own: system/infra by DENY, or by the person's ignore list. */
+export function isInfra(l: Pick<Listening, 'cmd' | 'port'> & { args?: string }, ignore: string[] = []): boolean {
+  const names = [l.cmd, (l.args ?? '').split(/\s+/)[0] ?? ''].filter(Boolean)
+  if (names.some(n => DENY.test(n))) return true
+  return ignore.some(x => (/^\d+$/.test(x) ? Number(x) === l.port : names.some(n => n.toLowerCase().startsWith(x.toLowerCase()))))
+}
 
 /**
  * The rows to list: the named pages first (up when their port listens), then this session's background shells that
@@ -202,10 +238,12 @@ export function localRows(shells: { title: string; ports: number[] }[], view: Lo
   const row = (port: number, path: string, title: string, named: boolean, isUp: boolean): LocalRow =>
     ({ key: `${port}${path}`, port, path, url: `http://localhost:${port}${path}`, title, named, up: isUp })
   for (const l of view.labels ?? []) rows.push(row(l.port, l.path, l.label, true, up.has(l.port)))
-  for (const s of shells) for (const port of s.ports) if (!has(port)) rows.push(row(port, '/', s.title, false, up.has(port)))
+  const ignore = view.ignore ?? []
+  const ignoredPort = (port: number) => ignore.includes(String(port)) || view.listening.some(l => l.port === port && isInfra(l, ignore))
+  for (const s of shells) for (const port of s.ports) if (!has(port) && !ignoredPort(port)) rows.push(row(port, '/', s.title, false, up.has(port)))
   const inside = (cwd: string) => !!view.root && !!cwd && (cwd === view.root || cwd.startsWith(`${view.root}/`))
   for (const l of view.listening) {
-    if ((l.mine || inside(l.cwd)) && !isClaude(l) && !has(l.port)) rows.push(row(l.port, '/', l.args || l.cmd, false, true))
+    if ((l.mine || inside(l.cwd)) && !isClaude(l) && !isInfra(l, ignore) && l.http !== false && !has(l.port)) rows.push(row(l.port, '/', l.args || l.cmd, false, true))
   }
   return rows.sort((a, b) => a.port - b.port || a.path.localeCompare(b.path))
 }

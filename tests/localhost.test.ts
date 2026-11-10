@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { localRows, parseCwds, parseEntry, parseLabels, parseListen, parsePsEnv, portsOf, projectDir, setLabel, shortArgs } from '../hooks/localhost'
+import { isInfra, localRows, parseCwds, parseIgnore, parseEntry, parseLabels, parseListen, parsePsEnv, portsOf, projectDir, setLabel, shortArgs } from '../hooks/localhost'
 
 test('portsOf: the ports a server command names', () => {
   expect(portsOf('npx vite --config x.mjs --port 5381 --strictPort --host 0.0.0.0')).toEqual([5381])
@@ -98,4 +98,29 @@ test('localRows: named pages first-class, their port not listed again, Claude he
     ['http://localhost:5381/__stage/', 'Three phones', true, true],
     ['http://localhost:5381/__stage/one.html', 'One phone', true, true],
   ])
+})
+
+test('localRows: Docker and system listeners hidden, the project dev server and named pages kept, ignore file respected', () => {
+  const view = {
+    root: '/Users/a/demo',
+    at: 0,
+    labels: [{ port: 5432, path: '/', label: 'My db page' }],
+    ignore: parseIgnore('# mine\nmyhelper\n8999\n'),
+    listening: [
+      { pid: 1, cmd: 'com.docker.backend', port: 55321, cwd: '/Users/a/demo', mine: true, args: 'com.docker.backend services' },
+      { pid: 2, cmd: 'ControlCe', port: 7000, cwd: '/Users/a/demo', mine: true },
+      { pid: 3, cmd: 'node', port: 3000, cwd: '/Users/a/demo', http: true },
+      { pid: 4, cmd: 'postgres', port: 5432, cwd: '/Users/a/demo' },
+      { pid: 5, cmd: 'myhelper', port: 4100, cwd: '/Users/a/demo' },
+      { pid: 6, cmd: 'node', port: 8999, cwd: '/Users/a/demo' },
+      { pid: 7, cmd: 'node', port: 9229, cwd: '/Users/a/demo', http: false },
+      { pid: 8, cmd: 'vpnkit-br', port: 55322, cwd: '/' },
+    ],
+  }
+  const rows = localRows([{ title: 'Start dev server', ports: [3000] }, { title: 'docker', ports: [55322] }], view)
+  expect(rows.map(r => [r.port, r.title])).toEqual([[3000, 'Start dev server'], [5432, 'My db page']])
+  expect(isInfra({ cmd: 'Spotify', port: 57621 })).toBe(true)
+  expect(isInfra({ cmd: 'rapportd', port: 49152 })).toBe(true)
+  expect(isInfra({ cmd: 'node', port: 3000 })).toBe(false)
+  expect(isInfra({ cmd: 'node', port: 8999 }, ['8999'])).toBe(true)
 })

@@ -1042,6 +1042,15 @@ export function registerPanel(on: On) {
     await readActions($, homeDir)
     return <Box flexDirection="column">{await actionBox($, e, homeDir, Math.max(30, e.props.bodyColumns ?? 60), true)}</Box>
   })
+  // Escape (or Tab, a click) moving the focus off a LOCALHOST name prompt closes it.
+  on('ui.focus', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    if (!/^lh-(?:in|inp|x)-/.test(e.element ?? '')) {
+      const open = await read($, openAtom)
+      if (open.some(x => x.startsWith('lh-edit:'))) await update($, openAtom, l => l.filter(x => !x.startsWith('lh-edit:')))
+    }
+    return next(e)
+  })
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     // The panel never draws blank: a failure to draw shows why.
     try { return await drawPane($, e) } catch (err) {
@@ -1943,10 +1952,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const editing = [...openCards].find(k => k.startsWith('lh-edit:'))?.slice('lh-edit:'.length) ?? ''
     const endEdit = () => update($, openAtom, l => l.filter(x => !x.startsWith('lh-edit:')))
     const startEdit = (k: string) => update($, openAtom, l => [...l.filter(x => !x.startsWith('lh-edit:')), `lh-edit:${k}`])
+    // an open name prompt closes when its row is gone (the server stopped, the page was removed)
+    if (editing && editing !== '+' && !lrows.some(r => r.key === editing)) await endEdit()
     const darwin = await isDarwin($)
     const editField = (key: string, value: string, placeholder: string, save: (v: string) => unknown) => (LInput
       ? <Box key={`lh-in-${key}`} paddingLeft={4}>
-          <LInput key={`lh-inp-${key}`} value={value} placeholder={placeholder} submitLabel="save" onSubmit={async (v: string) => { await save(v); await endEdit() }} />
+          <LInput key={`lh-inp-${key}`} autoFocus value={value} placeholder={placeholder} submitLabel="save" onSubmit={async (v: string) => { await save(v); await endEdit() }} />
           <Button key={`lh-x-${key}`} plain onPress={endEdit}><Text dimColor>{' [cancel]'}</Text></Button>
         </Box>
       : null)

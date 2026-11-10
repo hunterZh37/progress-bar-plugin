@@ -422,6 +422,8 @@ Since 0.28.10 the plugin keeps the session's running agents (id, description, st
 
 **One writer per session (0.28.10).** Each copy of the plugin claims its session at start in `.state/owner-<session>.json`. A copy that `/reload-plugins` replaced sees the newer claim at its next tick, stops its timers and writes nothing more, so two copies no longer take turns writing the line files (a row that came and went every few seconds). A copy also stops its timers when the session ends.
 
+**LOCALHOST lists only real pages (0.28.11).** A port is listed when this session's background shell names it (`-p 3000`, `PORT=`), when a server inside the project folder or started by this project's session listens on it and answers HTTP, or when you added the page with [+ page]. System and infra listeners are never listed on their own: Docker Desktop (com.docker.backend, vpnkit, docker-proxy), OrbStack, colima/limactl, ControlCenter/AirPlay (5000, 7000), rapportd, Spotify, Dropbox, Code Helper, postgres, redis, mysqld. Hide more in `~/.claude-progress/localhost-ignore.txt`: one process name (prefix, any case) or port per line, `#` comments. A page you named stays listed. A name prompt closes when the focus leaves it or its row disappears.
+
 ## Running cards
 
 Each running job in the Status panel is two lines: the bold title, bar, percent and time left, then the current step and run time dim (`scoring · 42m`). The bars line up. Press a title to open its card with the details, press it again to close it.

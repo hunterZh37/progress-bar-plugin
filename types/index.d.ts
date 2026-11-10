@@ -25,11 +25,11 @@ export type Conns = { at: number; checking: boolean; login: string; list: Conn[]
 // `otherChecks`: one per `others` entry, the same.
 export type ChromeCheck = { key: string; prompt: string }
 /** Status panel: a TCP port listening on this machine (hooks/localhost.ts). */
-export type Listening = { pid: number; cmd: string; port: number; cwd: string; mine?: boolean; args?: string }
+export type Listening = { pid: number; cmd: string; port: number; cwd: string; mine?: boolean; args?: string; http?: boolean }
 /** Status panel: what listens on this machine, the project folder it is matched against, and when it was read. */
 /** Status panel: a localhost page the person named (port, path from "/", name). */
 export type LocalLabel = { port: number; path: string; label: string }
-export type LocalView = { listening: Listening[]; root: string; at: number; labels?: LocalLabel[]; labelsPath?: string }
+export type LocalView = { listening: Listening[]; root: string; at: number; labels?: LocalLabel[]; labelsPath?: string; ignore?: string[] }
 export type ChromeView = { line: string; tone: 'ok' | 'warn' | 'dim'; warn: string; usedAt: number; others: string[]; hint?: string; check?: ChromeCheck | null; otherChecks?: (ChromeCheck | null)[] }
 /** Status panel: the open [x] stop/pause menu (a row key, '' for none), each fresh progress file's controllable bits and the paused rows (hooks/control.ts). */
 export type Ctl = { open: string; files: Record<string, { command?: string; pid?: number; ports?: number[] }>; paused: Record<string, number> }
