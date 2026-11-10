@@ -935,19 +935,19 @@ export async function panelCommand($: EngineInterface, h: string, arg: string): 
  * At session start: poll every second while the pane is open, and open it when the panel is on.
  * `defaultOn` (a new install): the panel is on unless `/progress-bar panel off` turned it off.
  */
-export async function startPanel($: EngineInterface, h: string, defaultOn = false) {
+export async function startPanel($: EngineInterface, h: string, defaultOn = false, every: (ms: number, fn: () => unknown) => unknown = (ms, fn) => $.clock.every(ms, fn as () => void)) {
   if (h && defaultOn && !(await isPanelOn($, h)) && !(await $.fs.exists(`${h}/${PANEL_OFF_REL}`).catch(() => false))) {
     await $.fs.write(`${h}/${PANEL_FLAG_REL}`, 'on\n').catch(() => undefined)
   }
   await resetConns($)
   // The recap ticks whether the pane is open or not, so a sleep shows as a gap between two ticks.
   await tickRecap($, h)
-  $.clock.every(2000, () => tickRecap($, h))
-  $.clock.every(1000, async () => {
+  every(2000, () => tickRecap($, h))
+  every(1000, async () => {
     const open = await $.ui.panes().then(ps => ps.some(p => p.id === PANE)).catch(() => false)
     if (open) await pollPanel($, h)
   })
-  $.clock.every(GH_EVERY, async () => {
+  every(GH_EVERY, async () => {
     if ((await read($, tabAtom)) !== 'github') return
     const open = await $.ui.panes().then(ps => ps.some(p => p.id === PANE)).catch(() => false)
     if (open) await readGh($, h)

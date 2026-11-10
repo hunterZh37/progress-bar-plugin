@@ -7,6 +7,7 @@ import { CHANNEL_EVERY, SEND_TOOL, channelCommand, pollChannel, sendCommand, sen
 import { inboxCommand } from './inbox'
 import { chainable } from './chain'
 import { readLocal } from './localhost'
+import { claim, every, newOwner, owns, stop } from './owner'
 import { CHROME_PREFIX, parseChromeCommand, readChrome, recordChromeCall, recordChromeCommand, resultText } from './chrome'
 import { SNIPPET, installedPrev, writeLib } from './setup'
 import { resolveHome } from './home'
@@ -93,6 +94,18 @@ const STALE_WAIT_MS = 30 * 60_000
 // long ago (or was stopped), and its finished notices never reached it, so it would sit in WAITING forever.
 export const ABANDONED_WAIT_MS = 6 * 3_600_000
 const TRACK_REL = '.state/job-track.json'
+
+/**
+ * The session's running agents as this plugin last saw them, saved in .state/agents-<session>.json so a copy loaded
+ * by /reload-plugins still shows agents started before it (its $.agent.list may not name them). `file` is the
+ * progress file paired with the agent. `files` stamps each paired progress file with this session in the plugin's own
+ * state, so a file with no `session` field still routes here after a reload.
+ */
+export type Known = { description: string; startedAt: number; status: string; lastAt: number; file?: string }
+const known = new Map<string, Known>()
+const stamped = new Map<string, number>()
+export const agentsRel = (key: string) => `.state/agents-${key}.json`
+const STAMP_KEEP_MS = 86_400_000
 const TRACK_KEEP_MS = 2 * 86_400_000
 
 // The session's in-flight background tasks from the last Stop or SubagentStop, saved beside seen-<session>.json.
@@ -179,6 +192,40 @@ async function projectOfCwd($: EngineInterface, h: string, cwd: string, projects
 }
 
 /**
+ * The engine's agents plus the ones saved in agents-<session>.json that it no longer names (a copy loaded after they
+ * started). A saved agent leaves when the engine lists it finished, when it handed its report back, or when nothing
+ * of it (its tool calls, progress file, transcript) moved for ABANDONED_WAIT_MS.
+ */
+async function withKnown<A extends { id: string; description: string; status: string }>($: EngineInterface, dir: string, agents: A[], now: number): Promise<A[]> {
+  const listed = new Set(agents.map(a => a.id))
+  for (const a of agents) {
+    if (!LIVE.has(a.status)) { known.delete(a.id); continue }
+    const k = known.get(a.id)
+    known.set(a.id, { description: a.description, startedAt: k?.startedAt ?? seen.get(a.id)?.startedAt ?? now, status: a.status, lastAt: now, file: k?.file })
+  }
+  const out = [...agents]
+  for (const [id, k] of [...known]) {
+    if (listed.has(id)) continue
+    if (handedBack.has(id) || seen.get(id)?.lastTool === 'SubagentHandback') { known.delete(id); continue }
+    let act = Math.max(k.lastAt, seen.get(id)?.lastAt ?? 0)
+    for (const p of [k.file ? `${dir}/${k.file}.json` : '', `${dir}/${slug(k.description)}.json`, txPath(id)]) {
+      if (!p) continue
+      try { act = Math.max(act, (await $.fs.stat(p)).mtimeMs) } catch { /* none */ }
+    }
+    if (now - act > ABANDONED_WAIT_MS) { known.delete(id); continue }
+    k.lastAt = act
+    out.push({ id, description: k.description, status: k.status === 'waiting' ? 'waiting' : 'running' } as A)
+  }
+  return out
+}
+
+/** Writes the running agents and the progress files stamped with this session. */
+async function saveKnown($: EngineInterface, dir: string, key: string, now: number) {
+  for (const [n, at] of stamped) if (now - at > STAMP_KEEP_MS) stamped.delete(n)
+  await $.fs.write(`${dir}/${agentsRel(key)}`, JSON.stringify({ agents: Object.fromEntries(known), files: Object.fromEntries(stamped) })).catch(() => undefined)
+}
+
+/**
  * Builds the rows: live subagents first, then every other fresh progress file. `shared` holds the ids of the rows
  * that go to the shared jobs.txt; the other file rows belong to this session (see route.ts).
  */
@@ -198,6 +245,13 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
       if (!snap && b.snap && Array.isArray(b.snap.tasks)) snap = b.snap
       if (!txBase && typeof b.txBase === 'string') txBase = b.txBase
     } catch { /* none yet */ }
+    try {
+      const k = JSON.parse(String(await $.fs.read(`${dir}/${agentsRel(key)}`))) as { agents?: Record<string, Known>; files?: Record<string, number> }
+      for (const [id, v] of Object.entries(k.agents ?? {})) {
+        if (v && typeof v.description === 'string' && typeof v.startedAt === 'number' && !known.has(id)) known.set(id, { ...v, lastAt: typeof v.lastAt === 'number' ? v.lastAt : 0 })
+      }
+      for (const [n, at] of Object.entries(k.files ?? {})) if (typeof at === 'number' && !stamped.has(n)) stamped.set(n, at)
+    } catch { /* none yet */ }
     // Before any Stop names it: the session's transcript folder, ~/.claude/projects/<folder with - for each symbol>/<session id>.
     if (!txBase) {
       try {
@@ -208,6 +262,7 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
   }
   let agents: Awaited<ReturnType<typeof $.agent.list>> = []
   try { agents = await $.agent.list() } catch { agents = [] }
+  agents = await withKnown($, dir, agents, now)
   const rows: Row[] = []
   const liveIds: string[] = []
   // Fresh progress files, so an agent whose file name differs a little from its description still finds its own.
@@ -226,7 +281,7 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
   const kept: { a: (typeof agents)[number]; s: { startedAt: number; tools: number; lastTool: string } }[] = []
   for (const a of agents) {
     if (!LIVE.has(a.status)) continue
-    const s = seen.get(a.id) ?? { startedAt: now, tools: 0, lastTool: '' }
+    const s = seen.get(a.id) ?? { startedAt: known.get(a.id)?.startedAt ?? now, tools: 0, lastTool: '' }
     seen.set(a.id, s)
     liveIds.push(a.id)
     // An agent that handed its report back is finished, even while the harness still lists it as waiting.
@@ -244,12 +299,20 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
   // Each agent's progress file: named after its description, else a close name (closestFile), else the one fresh
   // file of this session created since it started whose name or title shares its words (pairFile).
   const fileOf = new Map<string, string>()
+  const pairs: Record<string, string> = {}
+  // A file named exactly after a running agent's description, or the one paired with it before a reload, is its own
+  // even when stale or missing session and startedAt.
+  const onDisk = async (n: string) => !!h && (loose.includes(n) || (await $.fs.exists(`${dir}/${n}.json`).catch(() => false)))
   for (const { a } of kept) {
     const own = slug(a.description)
-    const name = loose.includes(own) ? own : closestFile(a.description, loose.filter(n => !exact.has(n) && !claimed.has(n)))
+    const before = known.get(a.id)?.file
+    const name = before && !claimed.has(before) && (await onDisk(before)) ? before
+      : (await onDisk(own)) ? own
+      : closestFile(a.description, loose.filter(n => !exact.has(n) && !claimed.has(n)))
     if (name) { fileOf.set(a.id, name); claimed.add(name) }
+    // Paired by pairFile before a reload: it may not pair again, as the start it compares with can be later now.
+    if (name && name === before && name !== own) pairs[own] = name
   }
-  const pairs: Record<string, string> = {}
   if (h && kept.some(k => !fileOf.has(k.a.id))) {
     let sid = ''
     try { sid = await $.session.id() } catch { sid = '' }
@@ -269,6 +332,12 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
     }
   }
   if (h) await $.fs.write(`${dir}/.state/pairs-${key}.json`, JSON.stringify(pairs)).catch(() => undefined)
+  for (const { a } of kept) {
+    const k = known.get(a.id)
+    const f = fileOf.get(a.id)
+    if (k && f) { k.file = f; stamped.set(f, now) }
+  }
+  if (h) await saveKnown($, dir, key, now)
   for (const { a, s } of kept) {
     let p: Progress | null = null
     const name = fileOf.get(a.id)
@@ -346,7 +415,9 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
       }
       continue
     }
-    const owner = pickOwner(raw)
+    // A file paired with one of this session's agents is this session's, with or without its own `session`.
+    const owner0 = pickOwner(raw)
+    const owner = !owner0.session && stamped.has(name) ? { ...owner0, session: key } : owner0
     if (owner.cwd && !projects.has(owner.cwd)) projects.set(owner.cwd, await projectOfCwd($, h, owner.cwd, projectsText))
     const route = routeOf(owner, { key, project }, live, c => projects.get(c) ?? '')
     if (route === 'skip') continue
@@ -525,7 +596,12 @@ async function transcriptFile($: EngineInterface, h: string): Promise<string> {
   } catch { return '' }
 }
 
+// This copy's claim on the session (owner.ts): a copy another one replaced writes nothing.
+let owner = newOwner(0)
+const ownsSession = async ($: EngineInterface) => owns($, owner, await resolveHome($), await sessionKeyOf($))
+
 async function poll($: EngineInterface) {
+  if (!(await ownsSession($))) return
   await endFinishedShells($).catch(() => undefined)
   await touchShells($)
   const { rows, now, shared } = await collect($)
@@ -886,6 +962,7 @@ export const register: Register = (on, options) => {
         const agentId = e.agentId
         if (String(e.tool) === 'SubagentHandback' && typeof input.message === 'string' && input.message.trim()) {
           handedBack.add(agentId)
+          if (known.delete(agentId)) { const h = await resolveHome($); if (h) await saveKnown($, dirOf(h), await sessionKeyOf($), await $.clock.now()) }
           await recordAgent($, agentId, input.message).catch(() => undefined)
         }
       }
@@ -914,18 +991,29 @@ export const register: Register = (on, options) => {
         .then(async () => noteStatusLine($, await resolveHome($), hookApplied, await ownStatusLine($)))
         .catch(() => undefined)
     }
+    // This copy now owns the session: a copy /reload-plugins replaced sees the claim at its next tick and stops.
+    stop(owner)
+    owner = newOwner(await $.clock.now())
+    await claim($, owner, await resolveHome($), await sessionKeyOf($), await $.clock.now())
+    const tick = (ms: number, fn: () => unknown) => every($, owner, ms, fn, () => ownsSession($))
     void poll($).catch(() => undefined)
-    $.clock.every(5000, () => { void poll($).catch(() => undefined); void tickAutonext($).catch(() => undefined) })
-    await startPanel($, await resolveHome($), autoPanel)
+    tick(5000, () => { void poll($).catch(() => undefined); void tickAutonext($).catch(() => undefined) })
+    await startPanel($, await resolveHome($), autoPanel, tick)
     const home = await resolveHome($)
     void backfillChat($, home).then(() => pollChannel($, home)).catch(() => undefined)
-    $.clock.every(CHANNEL_EVERY, () => pollChannel($, home))
+    tick(CHANNEL_EVERY, () => pollChannel($, home))
     // Action needed: checks every 30 s, and the in-app pane for actions not shown in the last 10 min.
     void tickActions($, home).catch(() => undefined)
-    $.clock.every(CHECK_EVERY, () => tickActions($, home))
+    tick(CHECK_EVERY, () => tickActions($, home))
     // Usage meter: a fresh reading when the saved one is over 30 min old, one session per machine.
     void probeUsage($, home).catch(() => undefined)
-    $.clock.every(USAGE_CHECK, () => probeUsage($, home))
+    tick(USAGE_CHECK, () => probeUsage($, home))
+    return next(e)
+  })
+
+  // The session ends: this copy's timers stop. (A /clear goes on in the same process, so its timers keep running.)
+  on('session.end', async ($, e, next) => {
+    if (e.reason !== 'clear') stop(owner)
     return next(e)
   })
 

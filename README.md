@@ -418,6 +418,10 @@ A RUNNING row with something to control ends with a dim `[x]`. Press it for `Sto
 
 A subagent's bar sits on its line when its progress file is named after the slug of its Agent `description`, or close to it. When the name differs, the plugin pairs the agent with the one fresh file of its session created since the agent started whose name or title shares at least two of the description's words (with several, a clear leader by two words). Paired, the agent is one row with the file's title, area and progress. A file with no known birth (no `startedAt`, no file-system birth time) never pairs.
 
+Since 0.28.10 the plugin keeps the session's running agents (id, description, start, status, paired file) in `~/.claude-progress/.state/agents-<session>.json`, so after `/reload-plugins` the new copy still shows agents started before it, each paired with its file. A file named exactly the slug of a running agent's description is always that agent's, even with no `session` or `startedAt`. A paired file is stamped with the session in the plugin's own state, never in the job's file. Saved agents leave when they finish, hand their report back, or show no activity for 6 hours.
+
+**One writer per session (0.28.10).** Each copy of the plugin claims its session at start in `.state/owner-<session>.json`. A copy that `/reload-plugins` replaced sees the newer claim at its next tick, stops its timers and writes nothing more, so two copies no longer take turns writing the line files (a row that came and went every few seconds). A copy also stops its timers when the session ends.
+
 ## Running cards
 
 Each running job in the Status panel is two lines: the bold title, bar, percent and time left, then the current step and run time dim (`scoring · 42m`). The bars line up. Press a title to open its card with the details, press it again to close it.
