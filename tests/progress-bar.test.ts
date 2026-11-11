@@ -14,7 +14,7 @@ import { clock } from '../hooks/done'
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
 import { draw } from './render'
-import { glanceParts, nowLine, verbSplit, TIE, tieFirst } from '../hooks/panel'
+import { fitChrome, glanceParts, nowLine, verbSplit, TIE, tieFirst } from '../hooks/panel'
 import { PANE, rowCol, maxReading, noteShows, NOTE_MS, sameName, waitPhrase, waitReason, badge, evId, fitLabel, labelCol, machineTitle, machines, maxMeter, nestRows, runCount, shortTitle, parseSections, runCard, shortAge, timeTail, slide, stripAnsi } from '../hooks/panel'
 import { EVENTS_PY, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from '../hooks/events'
 import { REPOS_REL, parseBranches, parseCommits, webUrl } from '../hooks/github'
@@ -1033,7 +1033,7 @@ test('the panel: titles, ids with badges, unlocks, a nested child, waiting on an
   expect(await buttons()).toEqual(['Train the model', 'Big batch'.padEnd(col), 'Other'.padEnd(col)])
   let lines = await pic()
   // Status at a glance: no goal name, nothing needs you (the stuck parent waits on its busy child).
-  expect(lines[2]).toBe('3 running · 3 done today')
+  expect(lines[2]).toBe('3 running · 3 done today · Chrome: not connected')
   expect(lines.join('\n')).not.toMatch(/NEEDS YOU|generosity|⚠ stuck/)
   // Line one: mark, bold title, bar, %, the note cut to what is left (less 4 for the [x] on a row that can be stopped).
   // Line two: the step and the time, dim. No area, no why until it opens.
@@ -1597,6 +1597,48 @@ test('Claude in Chrome: Check account submits a prompt to read the account page 
   await ui.unmount()
 })
 
+test('fitChrome: the Chrome part is cut first by the account, then where, then the browser name', () => {
+  const l = 'Chrome: IOG · hunter@instituteongenerosity.org · this Mac'
+  expect(fitChrome(l, 80)).toBe(l)
+  expect(fitChrome(l, 40)).toBe('Chrome: IOG · hunter@institu… · this Mac')
+  expect(fitChrome(l, 26)).toBe('Chrome: IOG · this Mac')
+  expect(fitChrome(l, 15)).toBe('Chrome: IOG')
+  expect(fitChrome(l, 10)).toBe('Chrome: I…')
+  expect(fitChrome(l, 5)).toBe('')
+  expect(fitChrome('Chrome: Browser 2 · account unknown', 30)).toBe('Chrome: Browser 2 · account u…')
+  expect(fitChrome('Chrome: not connected', 15)).toBe('Chrome: not co…')
+})
+
+test('Claude in Chrome: the List tab shows Chrome on the status line after the counts, cut before the counts, no line of its own', async ($, on) => {
+  forgetLocalState()
+  const B1 = 'cbb87c8d-e32f-4099-99d2-80fda22e8e05'
+  const files: Record<string, string> = {
+    [SCRIPT]: statusScript(), [FLAG]: 'on\n',
+    [`${HOME}/.claude-progress/.state/chrome-accounts.json`]: JSON.stringify({ [B1]: { email: 'hunter@instituteongenerosity.org', seenAt: NOW, from: 'account' } }),
+    [`${HOME}/.claude-progress/chrome-local-accounts.txt`]: 'hunter@instituteongenerosity.org\n',
+  }
+  panelWorld(on, files, DONE_FULL, argv => (argv[0] === 'uname' ? 'Darwin\n' : undefined))
+  on('tool.call', () => ({ result: [{ type: 'text', text: `[{"deviceId":"${B1}","name":"IOG","inUse":true}]` }] }) as never)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__claude-in-chrome__list_connected_browsers' } as never)
+  let ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 90 } })
+  let lines = draw((await ui.find({ type: 'Box' })) as never)
+  expect(lines[2]).toBe('1 running · 1 done today · Chrome: IOG · hunter@instituteongenerosity.org · this Mac')
+  expect(lines.filter(l => l.includes('Chrome:')).length).toBe(1)
+  const dim = (await ui.find({ type: 'Text', text: /^Chrome: IOG/ })) as unknown as { props?: { dimColor?: boolean } }
+  expect(dim.props?.dimColor).toBe(true)
+  await ui.unmount()
+  // Narrow: the counts stay whole, the account is cut first.
+  ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 64 } })
+  lines = draw((await ui.find({ type: 'Box' })) as never)
+  expect(lines[2]).toBe('1 running · 1 done today · Chrome: IOG · hunter@inst… · this Mac')
+  await ui.unmount()
+  ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 40 } })
+  lines = draw((await ui.find({ type: 'Box' })) as never)
+  expect(lines[2]).toBe('1 running · 1 done today · Chrome: IOG')
+  await ui.unmount()
+})
+
 // ---- 0.28.6: server rows, agents paired with differently named files, stop/pause from the [x] ----
 
 test('serverOf: dev and app server commands are servers, with the port when the command names one', () => {
@@ -1773,7 +1815,7 @@ test('NEEDS YOU: first under the status line, a bold verb per line, problems and
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 60 } })
   const lines = draw((await ui.find({ type: 'Box' })) as never)
-  expect(lines[2]).toBe('2 running · 3 needs you')
+  expect(lines[2]).toBe('2 running · 3 needs you · Chrome: not connected')
   const strong = (await ui.find({ type: 'Text', text: /needs you$/ })) as unknown as { props?: { bold?: boolean; color?: string } }
   expect([strong.props?.bold, strong.props?.color]).toEqual([true, 'yellow'])
   // The block comes right after the status line, before any section, one line each, verb first.
@@ -1800,7 +1842,7 @@ test('NEEDS YOU: absent when nothing needs you, no empty heading', async ($, on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
   const lines = draw((await ui.find({ type: 'Box' })) as never)
-  expect(lines[2]).toBe('1 running')
+  expect(lines[2]).toBe('1 running · Chrome: not connected')
   expect(lines[4]).toBe('▾ TO-DO  1')
   expect(lines.join('\n')).not.toMatch(/NEEDS YOU|needs you/)
   // Two lines for the running row: bold title with bar and %, then the step and time, dim.

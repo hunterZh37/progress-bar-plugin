@@ -145,7 +145,7 @@ test('the List tab: a status line, then TO-DO, RUNNING, WAITING, DONE; two-line 
   const lines = draw((await ui.find({ type: 'Box' })) as never)
   const at = (re: RegExp) => lines.findIndex(l => re.test(l))
   // Level 1: status at a glance, right under the tabs, one blank line after it. No goal name, nothing needs you.
-  expect(lines[2]).toBe('2 running · 1 done today')
+  expect(lines[2]).toBe('2 running · 1 done today · Chrome: not connected')
   expect(lines[3]).toBe('')
   expect(lines.join('\n')).not.toMatch(/generosity|NEEDS YOU/)
   // No emoji anywhere: nothing from U+1F000 up, and none of the old badge glyphs. No lens line, no chips, no machines.
@@ -230,7 +230,7 @@ async function paneIn($: Engine, on: On, files: Record<string, string>, cwd: str
 test('goals are per project: a project with no goals/<slug>.json shows its folder name, never another project goal', async ($, on) => {
   const files = PROJECTS()
   const lines = await paneIn($, on, files, `${HOME}/Desktop/agentic-scheduling/src`)
-  expect(lines[2]).toBe('2 running · 1 done today')
+  expect(lines[2]).toBe('2 running · 1 done today · Chrome: not connected')
   expect(lines.join('\n')).not.toMatch(/generosity/)
   // No area known: the opened card names none (no "Other").
   expect(lines.join('\n')).not.toMatch(/Other|Login/)

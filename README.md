@@ -304,6 +304,7 @@ NEEDS YOU  2
 ```
 
 - **Status line first:** `2 running · 1 waiting · 2 needs you · 15 done today`, the counts that are not zero, right under the tabs. The `needs you` count is bold yellow. Nothing at all reads `Nothing running`. The goal's name is no longer shown: it repeated the project.
+- **Chrome on the same line (0.28.14):** the `Chrome:` line follows the counts, dim (yellow on a warning), with **[Check account]** after it when that applies. It has no line of its own under LOCALHOST any more. In a narrow pane the Chrome part is cut first, never the counts: the account is cut (`hunter@inst…`), then dropped, then `this Mac`, then the browser name. The status line's own summary (`▶ 2 running · … full view in the Status panel`) is unchanged.
 - **NEEDS YOU:** next, and only when something needs you (no empty heading). One line each, its verb first and bold: open actions (title, full command, **▶ Run**, **Copy**, **✓ I ran it**, **Skip**), your `[you]` to-dos (press for the to-do menu), a Chrome account warning (**Switch**, with **[Check account]** when it applies), stuck jobs (**Check**, press to open the job) and problems (**Fix**, red). Warnings and commands are never cut, they wrap.
 - **Sections:** TO-DO (machines' to-dos: per machine, priorities, blockers, the menu), RUNNING, WAITING, DONE. Problems are NEEDS YOU lines, not a section. Headers have no hotkeys. Inside RUNNING and WAITING, rows cluster by area in the goal's order. To-dos keep their priority order.
 - **Running rows, two lines:** the mark, the **bold** title, a thin bar and the percent, then time left, `⚠ stuck 14m`, `waiting on X` or `paused`. Line two, dim: the current step (or `a of b steps`) and how long it has run (`scoring · 42m`, never "so far"). Titles are cut to one line. The title column fits the longest title shown, so the bars still line up and the note keeps its room.
@@ -348,7 +349,7 @@ On by default. Shows the full groups in a docked pane named **Status**, and shri
 ```
 List  Connectors  GitHub  Log  Chat  Topology
 
-1 running · 3 needs you · 1 done today
+1 running · 3 needs you · 1 done today · Chrome: Work · you@work.example · this Mac
 
 NEEDS YOU  3
   ○ Review the deploy PR
@@ -376,6 +377,7 @@ The status line then reads:
 - **On by default:** the first session writes `~/.claude-progress/.state/panel-on`. With that file the pane opens at session start and the status line prints the summary. `panel off` deletes it, writes `.state/panel-off` so the default never turns it back on, and closes the pane. `panel on` undoes that. With **Open the Status panel** off in `/config`, nothing is written and `/progress-bar` opens it once.
 - **To-do menu:** click a to-do (under TO-DO, or your own under NEEDS YOU) for Done, Up, Down, Start (a ready machine item), Delete or Move back to to-do (a checked-off one). It edits this project's list, on the line that still holds that item's text, so a line added since the panel drew never hits the wrong item. TO-DO lists open items only. Checked-off ones move to DONE under **Checked-off to-dos**, after finished jobs, and count there.
 - **Rows:** clustered by area (see **Goal view**). To-dos one per line under each machine (yours under NEEDS YOU), running jobs a line and a dim step line each, a press opening the details (see **Running cards**), done jobs one line each with their impact and finish time (see **Done rows**).
+- **Chrome beside the counts (0.28.14):** the List tab's first line ends with the `Chrome:` line, `1 running · 3 needs you · 1 done today · Chrome: Work · you@work.example · this Mac` (see **Goal view** and **Chrome line**).
 - **Tied lines (0.28.13):** every dim line under a row starts with a dim `⎿ `, as Claude Code ties a command's output to it. Only the first line under a row gets it, the next ones line up under its text, and wrapped text indents under the text, not under `⎿`. This covers running and waiting rows, open cards, open DONE rows, `waits for` to-do lines, recap and inbox lines, Log details and Connectors accounts. One-line rows (LOCALHOST, to-dos) have none.
 - **Status line on:** after **▶ Turn on status line**, the answer (`Status line on: ...`) shows for 3 minutes, then clears.
 - **Tabs:** words, `List  Connectors  GitHub  Log  Chat  Topology`. The shown tab is bold cyan, the others dim. Connectors adds `!N` when N need attention (`Connectors !2`), Log adds `!N` for unseen errors, Chat adds the unread count (`Chat 3`). In a pane too narrow for the full names they shorten to `List  Conn  Git  Log  Chat  Topo`. **List** (the default) shows the goal view above. **Connectors** shows your connectors, **GitHub** your repos, **Log** the events log, **Topology** your machines.
@@ -456,7 +458,7 @@ Waiting jobs draw no bar: `⏸ <title>`, then a dim line with why it waits and f
 ```
 List  Connectors  GitHub  Log  Chat  Topology          Max 62% ━━━── 7d
 
-2 running · 1 needs you
+2 running · 1 needs you · Chrome: not connected
 
 NEEDS YOU  1
   ⚠ Check Nightly import, stuck 14m
@@ -831,7 +833,7 @@ Google Drive	work@example.com
 The `Chrome:` line says which browser Claude in Chrome drives for this session, under which Google account, and whether it is on this Mac.
 
 - **Shows:** `Chrome: Browser 2 · you@gmail.com · this Mac`, `… · other computer` or `Chrome: Browser 1 · account unknown`. `Chrome: not connected` (dim) before the first Chrome call or while the extension is not connected. `used 14:02` is the last Chrome call. Other connected browsers follow, dim.
-- **Warning (yellow):** when the in-use browser's account is not signed in to any Chrome profile on this Mac, or the browser reports `onThisComputer: false`. On the List tab the warning is a NEEDS YOU line, `⚠ Switch Chrome is controlling …`, in full. A fine account is not shown there (the Connectors tab has it). An unknown one shows the dim `Chrome:` line with **[Check account]** at the end of the List tab. It refreshes every 5 seconds. `isLocal` is not trusted: it said true for a browser on another computer.
+- **Warning (yellow):** when the in-use browser's account is not signed in to any Chrome profile on this Mac, or the browser reports `onThisComputer: false`. On the List tab the warning is a NEEDS YOU line, `⚠ Switch Chrome is controlling …`, in full. A fine account is not shown there (the Connectors tab has it). The `Chrome:` line sits on the List tab's status line, after the counts, and an unknown account adds **[Check account]** after it. It refreshes every 5 seconds. `isLocal` is not trusted: it said true for a browser on another computer.
 - **Browser in use:** read from the session's own `mcp__claude-in-chrome__*` results: `list_connected_browsers` (deviceId, name, isLocal, inUse, connectedAt), `select_browser` and `switch_browser`.
 - **`/chrome` switches:** its output row (`Now using browser "Browser 2" for Chrome actions.`) is seen as the session stores it, and in the session transcript's new lines on each 5 second poll (so a switch made before a reload shows too, if it is in the transcript's last 4 MB and newer than the last Chrome call). The name maps to a browser through the last `list_connected_browsers`. A name not in that list shows `Chrome: Browser 2 · account unknown` until the next list. A `/chrome` output saying no browser is connected shows `Chrome: not connected`. Names are not stable across reconnects, so the mapping can be wrong until the next Chrome call.
 - **Account:** the first email on a page read on `accounts.google.com` or `myaccount.google.com`, else a Gmail tab title (`Inbox - you@gmail.com - Gmail`). An account page wins over a Gmail title for a day. Saved per browser in `~/.claude-progress/.state/chrome-accounts.json`, shared by all sessions. Until Claude opens one of those pages in that browser, the account is unknown. The name on the line above the email (`Hunter Zhang`) is saved too, and the line then shows `Hunter Zhang (you@gmail.com)`.

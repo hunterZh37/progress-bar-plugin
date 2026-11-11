@@ -483,6 +483,19 @@ export function glanceParts(n: { running: number; waiting: number; needs: number
   return parts.length ? parts : [{ text: 'Nothing running', strong: false }]
 }
 
+/** The Chrome part at the end of the status line, cut to `room` columns. The account is cut first ("hunter@inst…"),
+ * then dropped, then where it runs ("this Mac"), then the browser name is cut. Under 9 columns it is left out. */
+export function fitChrome(line: string, room: number): string {
+  if (line.length <= room) return line
+  const [head = '', acc = '', where = ''] = line.split(' · ')
+  const tail = where ? ` · ${where}` : ''
+  const accRoom = room - head.length - 3 - tail.length
+  if (acc && accRoom >= 6) return `${head} · ${clip(acc, accRoom)}${tail}`
+  if (`${head}${tail}`.length <= room) return `${head}${tail}`
+  if (head.length <= room) return head
+  return room >= 9 ? clip(head, room) : ''
+}
+
 /** A NEEDS YOU line starts with its verb, bold: "review the PR" splits to ["Review", " the PR"]. */
 export function verbSplit(text: string): [string, string] {
   const m = /^(\S+)([\s\S]*)$/.exec(text.trim())
@@ -1917,12 +1930,20 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         {problems.map((row, i) => verbRow(`needs-prob-${i}`, '✖', 'Fix', row.replace(/^[✖!⚠■]\s*/, ''), 'red'))}
       </Box>,
     ]
+    // The counts, then the Chrome browser Claude drives and its Google account on the same line. The counts are never
+    // cut: the Chrome part takes what is left (a wrong account is also a NEEDS YOU line).
+    const gParts = glanceParts({ running: tops.length, waiting: waits.length, needs: needsN, done: doneN })
+    const gUsed = gParts.reduce((n, p) => n + p.text.length, 0) + 3 * (gParts.length - 1)
+    const gChrome = fitChrome(chrome.line, width - gUsed - 3 - (chrome.check ? 17 : 0))
     const glance = (
       <Box key="glance" marginBottom={1}>
-        {glanceParts({ running: tops.length, waiting: waits.length, needs: needsN, done: doneN }).flatMap((p, i) => [
+        {gParts.flatMap((p, i) => [
           i ? <Text key={`gl-s${i}`} dimColor>{' · '}</Text> : null,
           <Text key={`gl-${i}`} bold={p.strong} color={p.strong ? 'yellow' : undefined}>{p.text}</Text>,
         ]).filter(Boolean)}
+        {gChrome ? <Text key="gl-cs" dimColor>{' · '}</Text> : null}
+        {gChrome ? <Text key="gl-chrome" color={chrome.tone === 'warn' ? 'yellow' : undefined} dimColor={chrome.tone !== 'warn'} wrap="truncate-end">{gChrome}</Text> : null}
+        {gChrome ? checkBtn(chrome.check, 'chrome-chk') : null}
       </Box>
     )
     const runRows = () => byArea(tops, x => x.ar).flatMap(x => x.draw())
@@ -2024,13 +2045,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           )
         })}
         {other.map((l, i) => <Text key={`o${i}`} dimColor>{l}</Text>)}
-        {/* Always under the list: this project's localhost servers, then the Chrome browser Claude drives and its
-            Google account (a wrong account is also a NEEDS YOU line). */}
+        {/* Always under the list: this project's localhost servers. */}
         {localBlock}
-        <Box key="chrome-l" marginTop={localBlock ? 0 : 1}>
-          <Text color={chrome.tone === 'warn' ? 'yellow' : undefined} dimColor={chrome.tone !== 'warn'} wrap="truncate-end">{chrome.line}</Text>
-          {checkBtn(chrome.check, 'chrome-chk')}
-        </Box>
       </Box>
     )
   }
