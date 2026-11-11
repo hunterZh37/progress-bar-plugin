@@ -400,13 +400,23 @@ DONE starts folded to `▸ DONE TODAY  N`. Open, each finished job is a button, 
 
 ## Server rows
 
-A background Bash shell that runs a server (`npm run dev`, `pnpm start`, `next dev`, `vite`, `uvicorn`, `gunicorn`, `flask run`, `manage.py runserver`, `rails s`, `python -m http.server`, `node server.js`, `docker compose up` and the like, or one whose description reads "Start/Run ... server") stays up by design. It shows at the end of RUNNING under a small `SERVERS` label: no bar, never stuck, a dim `serving :3000 · up 28m` (the port when the command names one). It ends when the shell exits.
+A background Bash shell that runs a server (`npm run dev`, `pnpm start`, `next dev`, `vite`, `uvicorn`, `gunicorn`, `flask run`, `manage.py runserver`, `rails s`, `python -m http.server`, `node server.js`, `docker compose up` and the like, or one whose description reads "Start/Run ... server", or a background shell whose port listens) stays up by design. Since 0.28.12 it is not a RUNNING row: it shows once under LOCALHOST, in the row of its port, with its uptime and `[x]`. It ends when the shell exits.
+
+    ▾ LOCALHOST  2
+      ● localhost:3000  WayToMatter dev server  up 0m [edit] [x]
+      ● localhost:4000  NomBot with trends  up 16h02m [edit] [x]
+
+- **One row per port:** a server shell joins the row of its port, so a port is never listed twice. A page you named keeps your name.
+- **What it is for:** your name for the page when you set one with `[edit]`, else the shell's description without its leading verbs (`Build, swap and health-check NomBot with trends` reads `NomBot with trends`).
+- **Port from the process tree:** when the command names no port (`npm run dev`), each listener's parent processes are walked up to the shell Claude started, and that shell's command is matched to the background shell's. So `npm run dev` that listens on :3000 shows as `localhost:3000`.
+- **Port not known yet:** the row reads `localhost:?` with the shell's purpose, until its port listens.
+- **RUNNING** keeps the other background jobs. When only servers run, RUNNING is not shown.
 
 ## Stop or pause a job
 
 A RUNNING row with something to control ends with a dim `[x]`. Press it for `Stop · Pause · Cancel` under the row.
 
-- **Background shell** (dev servers too): Stop sends SIGTERM to the shell Claude started for that command and its child processes; Pause sends SIGSTOP and the row reads `paused`, then the menu offers `Resume · Stop`. If its process is not found, Stop asks Claude to TaskStop it.
+- **Background shell** (dev servers too, from their LOCALHOST row's `[x]`): Stop sends SIGTERM to the shell Claude started for that command and its child processes; Pause sends SIGSTOP and the row reads `paused`, then the menu offers `Resume · Stop`. If its process is not found, Stop asks Claude to TaskStop it.
 - **Subagent:** Stop asks Claude, as a prompt, to stop it with TaskStop and say what it had done. There is no pause.
 - **Progress-file job with a `pid`:** Stop (SIGTERM), Pause (SIGSTOP), Resume (SIGCONT), and Stop marks the file stopped.
 - **Progress-file job without a `pid`:** Stop writes `"stopped": true, "stoppedAt": <ms>` into its file. The row moves to DONE as `stopped by you`. Scripts should read their file before each write and quit when `stopped` is true.

@@ -3,7 +3,7 @@ import type { ElementConstructor, EngineInterface, InputProps, On, RenderChildre
 
 import { AWAY_S, GAP_MS, OVERNIGHT_REL, dayOf, snapOf } from './checkpoint'
 import { readChrome, startAccountCheck } from './chrome'
-import { localRows, openLocalPage, parseEntry, portsOf, saveLabel } from './localhost'
+import { localRows, openLocalPage, parseEntry, portsOf, saveLabel, shellPorts } from './localhost'
 import { connSummary, readConns, refreshConns, resetConns } from './connectors'
 import { EVENTS_REL, LOG_DIRS_REL, SEEN_REL, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from './events'
 import { GH_EVERY, openUrl, openWeb, readGh } from './github'
@@ -595,7 +595,10 @@ export const meterOnTabRow = (tabsW: number, meterW: number, width: number) => t
 async function readMeta($: EngineInterface, h: string) {
   const dir = `${h}/${DIR_REL}`
   let meta: Record<string, Meta> = {}
-  const files: Record<string, { command?: string; pid?: number }> = {}
+  const files: Record<string, { command?: string; pid?: number; ports?: number[] }> = {}
+  // a shell's ports: the ones its command names, then the ones its own processes listen on (npm run dev on :3000)
+  const listening = (await read($, localAtom)).listening
+  const shellPortsOf = (cmd: string) => [...new Set([...portsOf(cmd), ...shellPorts(cmd, listening)])]
   try { meta = parseTitles(String(await $.fs.read(`${dir}/titles.txt`))) } catch { meta = {} }
   try {
     const now = await $.clock.now()
@@ -606,7 +609,7 @@ async function readMeta($: EngineInterface, h: string) {
         const m = pickMeta(raw)
         const k = f.name.slice(0, -5)
         if (Object.keys(m).length) meta[k] = { ...meta[k], ...m }
-        if (raw && typeof raw === 'object' && now - f.mtimeMs <= FILE_FRESH_MS) files[k] = { ...(typeof raw.command === 'string' && raw.command.trim() ? { command: 'yes', ports: portsOf(raw.command) } : {}), ...(typeof raw.pid === 'number' ? { pid: raw.pid } : {}) }
+        if (raw && typeof raw === 'object' && now - f.mtimeMs <= FILE_FRESH_MS) files[k] = { ...(typeof raw.command === 'string' && raw.command.trim() ? { command: 'yes', ports: shellPortsOf(raw.command) } : {}), ...(typeof raw.pid === 'number' ? { pid: raw.pid } : {}) }
       } catch { /* half written */ }
     }
   } catch { /* no folder */ }
@@ -1856,7 +1859,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // The List tab: the anchor on one line (the goal, done today, running), then the sections as always: TO-DO,
     // PROBLEMS, RUNNING, WAITING, DONE, foldable, with hotkeys 1, 2, 3... Each job's area is the first word of its dim
     // second line, and rows cluster by area inside a section.
-    // Background servers (a dev server) are up by design: no bar, never stuck, listed last under a small SERVERS label.
+    // Background servers (a dev server) are up by design: no bar, never stuck, and not in RUNNING: each is a LOCALHOST
+    // row (its port, what it is for, its uptime and [x]).
     const runAll = sections.find(x => x.key === 'running')?.rows ?? []
     const local = await read($, localAtom)
     const listeningPorts = new Set(local.listening.map(l => l.port))
@@ -1904,26 +1908,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         ]).filter(Boolean)}
       </Box>
     )
-    const serverRow = (row: string, i: number) => {
-      const c = runCard(row)
-      const title = plain(metaOf(c.name).title || prettyName(c.name))
-      const ports = portsOfRow(row)
-      const note = serverNote(c, metaOf(c.name).title) ?? `serving${ports[0] ? ` :${ports[0]}` : ''}${c.elapsed || c.ran ? ` · up ${c.elapsed || c.ran}` : ''}`
-      const col = Math.max(4, width - 10 - note.length)
-      return [
-        <Box key={`sv${i}`}>
-          <Text color="cyan" dimColor>{'  ● '}</Text>
-          <Text bold wrap="truncate-end">{clip(title, col)}</Text>
-          <Text dimColor wrap="truncate-end">{`  ${ctl.paused[c.name] ? 'paused' : note}`}</Text>
-          {ctlBtn(c, slug(c.name))}
-        </Box>,
-        ctlMenu(c, slug(c.name), 4, title),
-      ].filter(Boolean)
-    }
-    const runRows = () => [
-      ...byArea(tops, x => x.ar).flatMap(x => x.draw()),
-      ...(serverRows.length ? [<Text key="sv-h" dimColor>{'  SERVERS'}</Text>, ...serverRows.flatMap(serverRow)] : []),
-    ]
+    const runRows = () => byArea(tops, x => x.ar).flatMap(x => x.draw())
     const waitRows = () => byArea(waits, x => x.ar).flatMap(x => waitRow(x.row, x.i))
     // DONE shows the latest DONE_FOLD in time order, then "+N more" to show the rest.
     const allDone = openCards.has('done:all')
@@ -1935,16 +1920,19 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     ].filter(Boolean)
     // What matters now first: to-do, running, waiting, done. Problems are NEEDS YOU lines, not a section.
     const ORDER: Key[] = ['problems', 'todo', 'running', 'waiting', 'done']
-    const shown = sections.filter(x => x.key !== 'problems').sort((a, b) => ORDER.indexOf(a.key) - ORDER.indexOf(b.key))
+    // RUNNING with only servers in it is not shown: they are LOCALHOST rows.
+    const shown = sections.filter(x => x.key !== 'problems' && !(x.key === 'running' && x.rows.length && x.rows.every(isServer))).sort((a, b) => ORDER.indexOf(a.key) - ORDER.indexOf(b.key))
     const count = (sec: (typeof sections)[number]) => {
       if (sec.key === 'todo') return String(openTodos)
       if (sec.key === 'done') return String((sec.folded ? sec.count : doneList.length) + doneTodos.length)
-      if (sec.key === 'running' && sec.rows.length) return `${runCount(sec.rows.filter(r => !isServer(r)).map(r => runCard(r).name), meta)}${serverRows.length ? ` · ${serverRows.length} serving` : ''}`
+      if (sec.key === 'running' && sec.rows.length) return runCount(sec.rows.filter(r => !isServer(r)).map(r => runCard(r).name), meta)
       return String(sec.count)
     }
 
-    // LOCALHOST: each server with its address (press to open it), up or down
-    const lrows = localRows(runAll.map(r => ({ title: plain(metaOf(runCard(r).name).title || prettyName(runCard(r).name)), ports: portsOfRow(r) })), local)
+    // LOCALHOST: each server with its address (press to open it), up or down. A background server shell joins the row
+    // of its port (one row per server), or is its own localhost:? row while its port is not known.
+    const serverCards = new Map(serverRows.map(r => [runCard(r).name, runCard(r)] as const))
+    const lrows = localRows(runAll.map(r => ({ name: runCard(r).name, server: isServer(r), title: plain(metaOf(runCard(r).name).title || prettyName(runCard(r).name)), ports: portsOfRow(r) })), local)
     // LOCALHOST, foldable: each page with its address (press to open it in the browser) and its name. [edit] names a
     // page (saved to ~/.claude-progress/localhost/<project>.txt), [+ page] adds one, e.g. "5381/__stage/one.html One phone".
     const { Input: LInput } = $.ui.resolve(e) as { Input?: ElementConstructor<InputProps> }
@@ -1971,14 +1959,23 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           {localOpen && LInput ? <Button key="local-add" plain onPress={() => startEdit('+')}><Text dimColor>{'  [+ page]'}</Text></Button> : null}
         </Box>
         {localOpen ? lrows.flatMap(r => {
-          const addr = `localhost:${r.port}${r.path === '/' ? '' : r.path}`
+          const addr = r.port ? `localhost:${r.port}${r.path === '/' ? '' : r.path}` : 'localhost:?'
+          // the server shell behind the row: its uptime (or paused) dim after the name, and its [x] to stop it
+          const c = r.shell ? serverCards.get(r.shell) : undefined
+          const upFor = c ? (ctl.paused[c.name] ? 'paused' : c.elapsed || c.ran ? `up ${c.elapsed || c.ran}` : '') : ''
+          const shellTitle = c ? plain(metaOf(c.name).title || prettyName(c.name)) : ''
           return [
             <Box key={`lh-${r.key}`}>
               <Box flexShrink={0}><Text color={r.up ? 'green' : 'red'}>{r.up ? '  ● ' : '  ○ '}</Text></Box>
-              <Box flexShrink={0}><Button key={`lhb-${r.key}`} plain onPress={() => openLocalPage($, r.url, darwin)}><Text color="cyan">{clip(addr, Math.max(16, Math.floor(width / 2)))}</Text></Button></Box>
+              <Box flexShrink={0}>{r.port
+                ? <Button key={`lhb-${r.key}`} plain onPress={() => openLocalPage($, r.url, darwin)}><Text color="cyan">{clip(addr, Math.max(16, Math.floor(width / 2)))}</Text></Button>
+                : <Text color="cyan" dimColor>{addr}</Text>}</Box>
               <Text dimColor={!r.named} wrap="truncate-end">{`  ${r.up ? '' : 'down · '}${r.title}`}</Text>
-              {LInput ? <Box flexShrink={0}><Button key={`lhe-${r.key}`} plain onPress={() => startEdit(r.key)}><Text dimColor>{' [edit]'}</Text></Button></Box> : null}
+              {upFor ? <Box flexShrink={0}><Text dimColor>{`  ${upFor}`}</Text></Box> : null}
+              {LInput && r.port ? <Box flexShrink={0}><Button key={`lhe-${r.key}`} plain onPress={() => startEdit(r.key)}><Text dimColor>{' [edit]'}</Text></Button></Box> : null}
+              {c ? ctlBtn(c, slug(c.name)) : null}
             </Box>,
+            c ? ctlMenu(c, slug(c.name), 4, shellTitle) : null,
             editing === r.key ? editField(r.key, r.named ? r.title : '', 'a name for this page (empty: back to the default)', v => saveLabel($, homeDir, r.port, r.path, v)) : null,
           ].filter(Boolean)
         }) : []}

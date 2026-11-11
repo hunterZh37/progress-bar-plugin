@@ -25,7 +25,9 @@ export type Conns = { at: number; checking: boolean; login: string; list: Conn[]
 // `otherChecks`: one per `others` entry, the same.
 export type ChromeCheck = { key: string; prompt: string }
 /** Status panel: a TCP port listening on this machine (hooks/localhost.ts). */
-export type Listening = { pid: number; cmd: string; port: number; cwd: string; mine?: boolean; args?: string; http?: boolean }
+// `shell`: the command of the shell Claude started that this listener runs under (normalized), to match a background
+// shell whose command names no port (npm run dev) to the port it listens on.
+export type Listening = { pid: number; cmd: string; port: number; cwd: string; mine?: boolean; args?: string; http?: boolean; shell?: string }
 /** Status panel: what listens on this machine, the project folder it is matched against, and when it was read. */
 /** Status panel: a localhost page the person named (port, path from "/", name). */
 export type LocalLabel = { port: number; path: string; label: string }

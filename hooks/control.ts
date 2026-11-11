@@ -50,9 +50,9 @@ export function parsePs(text: string): Proc[] {
   return out
 }
 
-const norm = (s: string) => s.replace(/['"\\]/g, '').replace(/\s+/g, ' ').trim()
+export const norm = (s: string) => s.replace(/['"\\]/g, '').replace(/\s+/g, ' ').trim()
 /** Claude Code itself: never signalled. */
-const isClaude = (command: string) => /(^|\/)claude(\s|$)|\/claude\/versions\//.test(command.split(' ')[0] ?? '') || /^claude\b/.test(command)
+export const isClaude = (command: string) => /(^|\/)claude(\s|$)|\/claude\/versions\//.test(command.split(' ')[0] ?? '') || /^claude\b/.test(command)
 
 /**
  * Why a pid must not be signalled, or '' when it is safe: it exists, is this user's, is not pid 1, this process or

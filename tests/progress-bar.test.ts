@@ -1691,9 +1691,17 @@ test('the List tab: a server row has no bar and no stuck mark, a paired agent is
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 80 } })
   let texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  // The server: under SERVERS at the end, a dim "serving :3000 · up 28m", no bar, no stuck.
-  expect(texts).toContain('  SERVERS')
-  expect(texts).toContain('  serving :3000 · up 28m')
+  // The server: no SERVERS label and no RUNNING row; one LOCALHOST row "localhost:3000  WayToMatter dev server  up 28m [x]", no stuck.
+  expect(texts).not.toContain('  SERVERS')
+  expect(texts.some(t => /serving/.test(t))).toBe(false)
+  expect(texts).toContain('localhost:3000')
+  // no lsof in this test world, so the port reads down
+  expect(texts).toContain('  down · WayToMatter dev server')
+  expect(texts).toContain('  up 28m')
+  expect(texts.filter(t => t === 'localhost:3000').length).toBe(1)
+  await ui.press({ key: 'xb-shell-start-waytomatter-dev-server' })
+  expect((await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')).toContain('Stop')
+  await ui.press({ key: 'xb-shell-start-waytomatter-dev-server' })
   expect(texts.some(t => /stuck/.test(t))).toBe(false)
   // The agent shows the paired file's title and area once; no bare "Other" row for it.
   const titles = (await ui.findAll({ type: 'Button' })).filter(b => /^open-/.test(b.key ?? '')).map(b => (b.text ?? '').trim())

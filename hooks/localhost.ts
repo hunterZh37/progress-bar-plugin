@@ -2,6 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
 import type { Listening, LocalLabel, LocalView } from '../types'
+import { isClaude as isClaudeCmd, norm, parsePs } from './control'
+import type { Proc } from './control'
 
 // The project's localhost servers, always listed under the Status panel's job list.
 // Every TCP port listening on this machine comes from lsof (pid, command, port), with each listener's working folder.
@@ -10,6 +12,8 @@ import type { Listening, LocalLabel, LocalView } from '../types'
 // this project's folder is listed too, and so is any listener a Claude Code session of this project started: its
 // environment carries CLAUDE_CODE_SESSION_ID, and this project's sessions are the transcripts in
 // ~/.claude/projects/<folder>/ (a background server outlives its shell, and its progress file may keep no command).
+// A shell whose command names no port (npm run dev) gets its port from the process tree: each listener's parents are
+// walked up to the shell Claude started, and that shell's command is matched to the background shell's (shellPorts).
 
 // Names are the person's: ~/.claude-progress/localhost/<project>.txt, one "<port>[/path]<TAB><name>" line per page,
 // so one server can list two pages (5381/__stage/ and 5381/__stage/one.html). Edited from the panel or by hand.
@@ -143,6 +147,26 @@ export function shortArgs(args: string): string {
   return words.slice(0, 6).join(' ').slice(0, 60)
 }
 
+/** The shell Claude started that a process runs under (its parents walked up to the one whose parent is Claude): that shell's command, normalized, or ''. */
+export function shellOf(pid: number, procs: Pick<Proc, 'pid' | 'ppid' | 'command'>[]): string {
+  const by = new Map(procs.map(p => [p.pid, p]))
+  let p = by.get(pid)
+  for (let i = 0; p && i < 40; i++) {
+    const parent = by.get(p.ppid)
+    if (!parent) return ''
+    if (isClaudeCmd(parent.command)) return isClaudeCmd(p.command) ? '' : norm(p.command)
+    p = parent
+  }
+  return ''
+}
+
+/** The ports a background shell listens on through its own processes: listeners whose Claude-started shell holds its command. */
+export function shellPorts(command: string, listening: Listening[]): number[] {
+  const c = norm(command)
+  if (!c) return []
+  return [...new Set(listening.filter(l => l.shell && l.shell.includes(c)).map(l => l.port))]
+}
+
 /** Reads what listens on this machine into the atom, at most every LOCAL_EVERY ms. */
 export async function readLocal($: EngineInterface, root: string, cwd = '', home = '', project = '') {
   const now = await $.clock.now()
@@ -166,6 +190,14 @@ export async function readLocal($: EngineInterface, root: string, cwd = '', home
       ;({ started, args } = parsePsEnv(out))
     } catch { started = {} }
   }
+  // each listener's Claude-started shell, so a shell that names no port (npm run dev) still finds its port
+  let shells: Record<number, string> = {}
+  if (pids.length) {
+    try {
+      const procs = parsePs((await $.process.run(['ps', '-x', '-ww', '-o', 'pid=,ppid=,uid=,lstart=,command='], { timeoutMs: 5000 })).stdout)
+      for (const pid of pids) { const sh = shellOf(pid, procs); if (sh) shells[pid] = sh }
+    } catch { shells = {} }
+  }
   const mine = new Set<string>()
   if (home && cwd) {
     try {
@@ -181,7 +213,7 @@ export async function readLocal($: EngineInterface, root: string, cwd = '', home
     labels,
     ignore,
     labelsPath,
-    listening: await probeAll($, listen.map(l => ({ ...l, cwd: cwds[l.pid] ?? '', mine: mine.has(started[l.pid] ?? ''), args: shortArgs(args[l.pid] ?? l.cmd) })), root, ignore),
+    listening: await probeAll($, listen.map(l => ({ ...l, cwd: cwds[l.pid] ?? '', mine: mine.has(started[l.pid] ?? ''), args: shortArgs(args[l.pid] ?? l.cmd), ...(shells[l.pid] ? { shell: shells[l.pid] } : {}) })), root, ignore),
     root,
     at: now,
   }
@@ -202,7 +234,20 @@ async function probeAll($: EngineInterface, ls: Listening[], root: string, ignor
   return ls.map(l => (l.port in http ? { ...l, http: http[l.port] } : l))
 }
 
-export type LocalRow = { key: string; port: number; path: string; url: string; title: string; named: boolean; up: boolean }
+/**
+ * One LOCALHOST row. `port` 0: a server shell whose port is not known yet (shown as localhost:?). `shell`: the RUNNING
+ * row name of the background server shell behind it, for its uptime and [x].
+ */
+export type LocalRow = { key: string; port: number; path: string; url: string; title: string; named: boolean; up: boolean; shell?: string }
+
+const VERB = String.raw`(?:build|rebuild|start|restart|run|launch|serve|boot|spin up|bring up|swap|deploy|redeploy|health-check|check|open)`
+const LEAD = new RegExp(String.raw`^\s*${VERB}(?:\s*(?:,\s*and|,|and)\s*${VERB})*\s+(?:(?:the|a|an)\s+)?`, 'i')
+
+/** What a server is for, from its shell's description: the leading verbs dropped ("Start the WayToMatter dev server" is "WayToMatter dev server"). */
+export function purposeOf(title: string): string {
+  const t = title.replace(LEAD, '').trim()
+  return t ? t.charAt(0).toUpperCase() + t.slice(1) : title
+}
 
 /** Claude Code's own helper processes listen too: never a project server. */
 const isClaude = (l: Listening) => /^claude\b/.test(l.args ?? '') || l.cmd === 'claude'
@@ -228,22 +273,32 @@ export function isInfra(l: Pick<Listening, 'cmd' | 'port'> & { args?: string }, 
 
 /**
  * The rows to list: the named pages first (up when their port listens), then this session's background shells that
- * name a port (portsOf their command), then listeners a session of this project started or started inside the
- * project folder. A port with a named page is not listed again unnamed. Sorted by port, then path.
+ * name a port (portsOf their command, or shellPorts from the process tree), then listeners a session of this project
+ * started or started inside the project folder. A port with a named page is not listed again unnamed. A server shell
+ * (`server`) joins the row of its port, so it shows once with its uptime and [x]; one with no known port is its own
+ * localhost:? row. A shell's row is titled by what it is for (purposeOf). Sorted by port, then path, unknown ports last.
  */
-export function localRows(shells: { title: string; ports: number[] }[], view: LocalView): LocalRow[] {
+export function localRows(shells: { title: string; ports: number[]; name?: string; server?: boolean }[], view: LocalView): LocalRow[] {
   const up = new Set(view.listening.map(l => l.port))
   const rows: LocalRow[] = []
   const has = (port: number) => rows.some(r => r.port === port)
-  const row = (port: number, path: string, title: string, named: boolean, isUp: boolean): LocalRow =>
-    ({ key: `${port}${path}`, port, path, url: `http://localhost:${port}${path}`, title, named, up: isUp })
+  const row = (port: number, path: string, title: string, named: boolean, isUp: boolean, shell?: string): LocalRow =>
+    ({ key: `${port}${path}`, port, path, url: `http://localhost:${port}${path}`, title, named, up: isUp, ...(shell ? { shell } : {}) })
   for (const l of view.labels ?? []) rows.push(row(l.port, l.path, l.label, true, up.has(l.port)))
   const ignore = view.ignore ?? []
   const ignoredPort = (port: number) => ignore.includes(String(port)) || view.listening.some(l => l.port === port && isInfra(l, ignore))
-  for (const s of shells) for (const port of s.ports) if (!has(port) && !ignoredPort(port)) rows.push(row(port, '/', s.title, false, up.has(port)))
+  for (const s of shells) {
+    const shell = s.server && s.name ? s.name : undefined
+    const ports = s.ports.filter(p => !ignoredPort(p))
+    for (const port of ports) {
+      if (!has(port)) rows.push(row(port, '/', purposeOf(s.title), false, up.has(port), shell))
+      else if (shell) for (const r of rows) if (r.port === port && !r.shell) r.shell = shell
+    }
+    if (shell && !s.ports.length) rows.push({ key: `?-${shell}`, port: 0, path: '/', url: '', title: purposeOf(s.title), named: false, up: true, shell })
+  }
   const inside = (cwd: string) => !!view.root && !!cwd && (cwd === view.root || cwd.startsWith(`${view.root}/`))
   for (const l of view.listening) {
     if ((l.mine || inside(l.cwd)) && !isClaude(l) && !isInfra(l, ignore) && l.http !== false && !has(l.port)) rows.push(row(l.port, '/', l.args || l.cmd, false, true))
   }
-  return rows.sort((a, b) => a.port - b.port || a.path.localeCompare(b.path))
+  return rows.sort((a, b) => (a.port || 1e6) - (b.port || 1e6) || a.path.localeCompare(b.path) || a.key.localeCompare(b.key))
 }
