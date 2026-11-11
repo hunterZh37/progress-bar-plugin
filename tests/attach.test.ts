@@ -2,10 +2,10 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { ATTACH_COMMAND, NOT_MAC_PICKER, PICKER_TIMEOUT_MS, insertText, isCancel, mentionOf, parsePicked, pickArgv } from '../hooks/attach'
+import { ATTACH_COMMAND, NOT_MAC_PICKER, PICKER_TIMEOUT_MS, PICKER_TIMEOUT_S, PICK_SCRIPT, insertText, isCancel, mentionOf, parsePicked, pickArgv } from '../hooks/attach'
 
 // 0.29.0: /attach (or a chord bound to command:attach) opens the macOS file picker and puts each chosen file in the
-// prompt at the cursor as an @ mention.
+// prompt at the cursor as an @ mention. 0.29.1: the frontmost app shows the picker, so it opens in about 0.1 s, not 2 s.
 
 const HOME = '/home/u'
 const CMD = { origin: { kind: 'composer' as const }, presentation: { isFullscreen: false, columns: 120 } }
@@ -78,13 +78,44 @@ test('parsePicked and isCancel', () => {
   expect(isCancel(0, '')).toBe(false)
 })
 
-test('pickArgv: osascript, brought to the front, multiple selections, POSIX paths', () => {
+test('pickArgv: the frontmost app shows the picker (no slow bare activate first), multiple selections, POSIX paths', () => {
   const a = pickArgv()
   expect(a[0]).toBe('osascript')
-  const script = a.filter((_, i) => i > 0 && a[i - 1] === '-e').join('\n')
-  expect(script.startsWith('activate')).toBe(true)
-  expect(script).toContain('choose file with prompt "Attach to Claude" with multiple selections allowed')
+  expect(a.length).toBe(1 + PICK_SCRIPT.length * 2)
+  expect(a.filter((_, i) => i % 2 === 1).every(x => x === '-e')).toBe(true)
+  const lines = a.filter((_, i) => i > 0 && a[i - 1] === '-e')
+  expect(lines).toEqual(PICK_SCRIPT)
+  const script = lines.join('\n')
+  // The first line is no longer a bare `activate`: that one costs about 2 s before the picker shows.
+  expect(lines[0]).not.toBe('activate')
+  expect(script).toContain('set frontApp to id of application (path to frontmost application as text)')
+  const tellAt = lines.indexOf('tell application id frontApp')
+  expect(tellAt).toBeGreaterThan(0)
+  expect(lines[tellAt + 1]).toBe('activate')
+  expect(lines[tellAt + 2]).toBe('set picked to choose file with prompt "Attach to Claude" with multiple selections allowed')
+  expect(lines[tellAt + 3]).toBe('end tell')
+  expect(script).toContain(`with timeout of ${PICKER_TIMEOUT_S} seconds`)
+  expect(PICKER_TIMEOUT_S * 1000).toBeLessThan(PICKER_TIMEOUT_MS)
   expect(script).toContain('POSIX path of f')
+  expect(lines.at(-1)).toBe('return out')
+})
+
+test('pickArgv: Cancel still exits -128, and focus goes back to the terminal on pick, cancel and error', () => {
+  const lines = PICK_SCRIPT
+  const restore = 'if frontApp is not "" then tell application id frontApp to activate'
+  // three restores: cancel or timeout rethrow, the fallback's error, and after a pick
+  expect(lines.filter(l => l === restore).length).toBe(3)
+  lines.forEach((l, i) => { if (l === restore) { expect(lines[i - 1]).toBe('try'); expect(lines[i + 1]).toBe('end try') } })
+  const cancelAt = lines.indexOf('if errNum is -128 or errNum is -1712 then')
+  expect(cancelAt).toBeGreaterThan(0)
+  expect(lines.slice(cancelAt, cancelAt + 6)).toContain(restore)
+  expect(lines.slice(cancelAt, cancelAt + 6)).toContain('error errMsg number errNum')
+  // after the pick: restore comes before the output is built
+  expect(lines.lastIndexOf(restore)).toBeLessThan(lines.indexOf('set out to ""'))
+  // the fallback is the old path: a bare activate, then the same picker
+  const fb = lines.lastIndexOf('activate')
+  expect(fb).toBeGreaterThan(cancelAt)
+  expect(lines[fb + 1]).toContain('choose file with prompt "Attach to Claude"')
 })
 
 test('/attach inserts the picked files at the cursor, quietly', async ($, on) => {

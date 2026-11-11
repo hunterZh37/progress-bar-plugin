@@ -13,10 +13,44 @@ export const ATTACH_CHORD = 'ctrl+x ctrl+f'
 export const PICKER_TIMEOUT_MS = 10 * 60_000
 export const NOT_MAC_PICKER = 'File picker needs macOS'
 
-/** `activate` brings osascript's own dialog to the front. One POSIX path per line; Cancel exits with -128. */
+/** How long the picker may stay open, in seconds, for the AppleScript `with timeout` (just under PICKER_TIMEOUT_MS). */
+export const PICKER_TIMEOUT_S = PICKER_TIMEOUT_MS / 1000 - 10
+const CHOOSE = 'set picked to choose file with prompt "Attach to Claude" with multiple selections allowed'
+/** Gives focus back to the terminal. `activate` needs no Automation permission. */
+const RESTORE = ['try', 'if frontApp is not "" then tell application id frontApp to activate', 'end try']
+
+/**
+ * A bare `activate` makes osascript register as a GUI app, about 2 s before the picker shows. So the picker is asked of
+ * the frontmost app instead (the terminal the shortcut was pressed in), which shows it at once with no Automation
+ * prompt, since an app may script itself. Only when that app cannot take it does the old `activate` path run. The
+ * terminal is re-activated afterwards, picked or cancelled. One POSIX path per line; Cancel exits with -128.
+ */
 export const PICK_SCRIPT = [
+  'set frontApp to ""',
+  'try',
+  'set frontApp to id of application (path to frontmost application as text)',
+  'end try',
+  'try',
+  `with timeout of ${PICKER_TIMEOUT_S} seconds`,
+  'tell application id frontApp',
   'activate',
-  'set picked to choose file with prompt "Attach to Claude" with multiple selections allowed',
+  CHOOSE,
+  'end tell',
+  'end timeout',
+  'on error errMsg number errNum',
+  'if errNum is -128 or errNum is -1712 then',
+  ...RESTORE,
+  'error errMsg number errNum',
+  'end if',
+  'try',
+  'activate',
+  CHOOSE,
+  'on error errMsg number errNum',
+  ...RESTORE,
+  'error errMsg number errNum',
+  'end try',
+  'end try',
+  ...RESTORE,
   'set out to ""',
   'repeat with f in picked',
   'set out to out & POSIX path of f & linefeed',

@@ -930,7 +930,7 @@ RECENT COMMITS
 
 Press a shortcut, pick files in the macOS file picker, and they land in your prompt at the cursor. Works inside herdr too.
 
-- **Command:** `/attach` opens the picker. It runs at once, even mid-turn, and the prompt stays live while the picker is open.
+- **Command:** `/attach` opens the picker. It runs at once, even mid-turn.
 - **Shortcut:** bind a chord to it in `~/.claude/keybindings.json`. `ctrl+x ctrl+f` is free in Claude Code's defaults:
 
 ```json
@@ -944,6 +944,8 @@ Press a shortcut, pick files in the macOS file picker, and they land in your pro
 - **What it inserts:** one `@` mention per file, separated by spaces, with a space after. A path with spaces is quoted, `@"/Users/you/My Shots/screen 1.png"`, the form Claude Code reads whole.
 - **Images:** png, jpg, gif and webp attach as images, since Claude Code reads an `@` image path as an image.
 - **Cancel** leaves the prompt as it was, with no message.
+- **Opens fast:** your terminal shows the picker itself, in about 0.1 s. Focus goes back to the terminal after you pick or cancel. No Automation permission prompt, since an app may script itself. If the terminal can't show it, the picker falls back to `osascript`'s own window, which takes about 2 s.
+- **While it's open** the terminal waits for the picker, so finish or cancel it before typing.
 - **Pick several** with ⌘-click or shift-click in the picker.
 - **Other systems:** `/attach` shows "File picker needs macOS".
 
