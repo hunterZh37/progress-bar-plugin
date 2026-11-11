@@ -85,6 +85,7 @@ That's it. Answer `y` to add the marketplace and pick a scope. From the next ses
 | `/progress-bar say <name> <text>` | Sends a short chat line through a channel. See Chat |
 | `/progress-bar channel list\|read\|check\|leave` | Lists channels, lists received files, checks now, leaves a channel |
 | `/progress-bar fold <section>` | Folds a section to one line. `unfold` opens it, `toggle` flips it |
+| `/attach` | macOS: opens the file picker and adds the chosen files to your prompt as `@` mentions. See Attach files |
 
 ## File format
 
@@ -925,6 +926,27 @@ RECENT COMMITS
 - The choice is saved in `~/.claude-progress/.state/folded.txt`, which `group.py` reads.
 - In the Status panel DONE starts folded whatever the file says, and its header press opens it for the session.
 
+## Attach files (macOS)
+
+Press a shortcut, pick files in the macOS file picker, and they land in your prompt at the cursor. Works inside herdr too.
+
+- **Command:** `/attach` opens the picker. It runs at once, even mid-turn, and the prompt stays live while the picker is open.
+- **Shortcut:** bind a chord to it in `~/.claude/keybindings.json`. `ctrl+x ctrl+f` is free in Claude Code's defaults:
+
+```json
+{
+  "bindings": [
+    { "context": "Chat", "bindings": { "ctrl+x ctrl+f": "command:attach" } }
+  ]
+}
+```
+
+- **What it inserts:** one `@` mention per file, separated by spaces, with a space after. A path with spaces is quoted, `@"/Users/you/My Shots/screen 1.png"`, the form Claude Code reads whole.
+- **Images:** png, jpg, gif and webp attach as images, since Claude Code reads an `@` image path as an image.
+- **Cancel** leaves the prompt as it was, with no message.
+- **Pick several** with ⌘-click or shift-click in the picker.
+- **Other systems:** `/attach` shows "File picker needs macOS".
+
 ## Click to fold (macOS)
 
 Optional. Makes each section header a link that folds or unfolds that section.
@@ -942,7 +964,7 @@ Optional. Makes each section header a link that folds or unfolds that section.
 
 ## Privacy
 
-Everything stays on your machine. The plugin reads and writes only files under `~/.claude-progress/`, `~/.claude/progress-bar/` and `~/.cache/progress-bar/`, and reads the `*.log` files in folders you list in `log-dirs.txt`, plus `~/Applications/ProgressBarToggle.app` if you run `setup mac-clicks`, and reads (never writes) Chrome's `Local State` file for the emails of this Mac's Chrome profiles and the session transcript's latest lines for `/chrome` switches (see Chrome line). It runs an action's command only when you press **▶ Run** and confirm, in a new terminal window you can see. The plugin makes no network calls itself, except the secure channel once you open one: it then talks to GitHub through your own `gh` and `git`, and stores only ciphertext there. The optional inbox checker (`inbox setup`) runs only when you schedule it, and reads your mail through your own Gmail connector. While the Status panel is open, the Connectors tab runs `claude mcp list`, which contacts your configured connectors to check them. The GitHub tab runs local `git` only, and opens a page in your browser when you click. Every 30 minutes one session on the machine runs a tiny `claude -p` Haiku call on your default login to refresh the usage meter (see Running cards).
+Everything stays on your machine. The plugin reads and writes only files under `~/.claude-progress/`, `~/.claude/progress-bar/` and `~/.cache/progress-bar/`, and reads the `*.log` files in folders you list in `log-dirs.txt`, plus `~/Applications/ProgressBarToggle.app` if you run `setup mac-clicks`, and reads (never writes) Chrome's `Local State` file for the emails of this Mac's Chrome profiles and the session transcript's latest lines for `/chrome` switches (see Chrome line). `/attach` runs `osascript` to show the macOS file picker and only puts the chosen paths in your prompt. It runs an action's command only when you press **▶ Run** and confirm, in a new terminal window you can see. The plugin makes no network calls itself, except the secure channel once you open one: it then talks to GitHub through your own `gh` and `git`, and stores only ciphertext there. The optional inbox checker (`inbox setup`) runs only when you schedule it, and reads your mail through your own Gmail connector. While the Status panel is open, the Connectors tab runs `claude mcp list`, which contacts your configured connectors to check them. The GitHub tab runs local `git` only, and opens a page in your browser when you click. Every 30 minutes one session on the machine runs a tiny `claude -p` Haiku call on your default login to refresh the usage meter (see Running cards).
 
 ## License
 

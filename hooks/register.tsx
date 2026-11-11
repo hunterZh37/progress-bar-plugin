@@ -1,6 +1,7 @@
 import type { EngineInterface, Register } from 'claude-code'
 
 import { ACTION_TOOL, CHECK_EVERY, actionCommand, addFromClaude, gatePrompt, isGated, tickActions } from './actions'
+import { ATTACH_COMMAND, ATTACH_DESCRIPTION, attachFiles } from './attach'
 import { autonextCommand, ownJobs, tickAutonext } from './autonext'
 import { backfillChat, sayCommand } from './chat'
 import { CHANNEL_EVERY, SEND_TOOL, channelCommand, pollChannel, sendCommand, sendFile } from './channel'
@@ -978,6 +979,7 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup [mac-clicks [off]] | demo | action [list|add|done|skip <reason>] | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | channel | send <file> to <name> | say <name> <text> | fold <section>]' })
+    await $.command.register({ name: ATTACH_COMMAND, description: ATTACH_DESCRIPTION, immediate: true }).catch(() => undefined)
     await $.tool.register(SEND_TOOL).catch(() => undefined)
     await $.tool.register(ACTION_TOOL).catch(() => undefined)
     await $.tool.register(PROGRESS_TOOL).catch(() => undefined)
@@ -1052,6 +1054,13 @@ export const register: Register = (on, options) => {
     const input = e as unknown as { file?: unknown; to?: unknown }
     const text = await sendFile($, await resolveHome($), String(input.file ?? ''), String(input.to ?? '').toLowerCase())
     return { result: text }
+  })
+
+  // /attach, or its chord bound to command:attach: the picker runs in the background so the prompt stays live.
+  // No text: nothing goes to the model, and the files land in the draft at the cursor.
+  on('command.run', { command: ATTACH_COMMAND }, async ($) => {
+    void attachFiles($).catch(() => undefined)
+    return {}
   })
 
   on('command.run', { command: 'progress-bar' }, async ($, e) => {
