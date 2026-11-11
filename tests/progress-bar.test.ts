@@ -682,7 +682,11 @@ test('your open to-dos under NEEDS YOU, checked-off ones under DONE; the menu ma
   await ui.press({ key: 'h-done' })
   expect((await ui.find({ type: 'Button', text: /DONE/ }))?.text).toBe('▾ DONE TODAY  3')
   expect((await ui.find({ type: 'Button', key: 'dno-nightly' }))?.text).toBe('Nightly')
-  expect((await ui.find({ type: 'Text', text: /Checked-off to-dos/ }))?.text).toBe('    Checked-off to-dos')
+  // Checked-off to-dos sit behind one dim line, "▸ 2 checked-off to-dos", that a press opens.
+  expect((await ui.find({ type: 'Button', key: 'w-checked' }))?.text).toBe('    ▸ 2 checked-off to-dos')
+  expect(await ui.find({ type: 'Button', text: /old thing/ })).toBe(undefined)
+  await ui.press({ key: 'w-checked' })
+  expect((await ui.find({ type: 'Button', key: 'w-checked' }))?.text).toBe('    ▾ 2 checked-off to-dos')
   expect((await ui.find({ type: 'Button', text: /old thing/ }))?.text).toBe('  ✓ old thing')
   expect(await ui.find({ type: 'Button', text: /✓ Done/ })).toBe(undefined)
 
@@ -710,6 +714,50 @@ test('your open to-dos under NEEDS YOU, checked-off ones under DONE; the menu ma
   await ui.unmount()
 })
 
+test('an agent DONE row shows the title it gave progress_report, not a sentence from its report; the report shows when opened', async ($, on) => {
+  const files: Record<string, string> = {
+    [SCRIPT]: statusScript(), [FLAG]: 'on\n',
+    [`${DIR}/.state/done/merge-servers.json`]: JSON.stringify({ slug: 'merge-servers', title: 'Servers show once, under LOCALHOST', impact: ['12) in ~/Desktop/plugin.', 'Each server is now one row.'], finished: NOW - 60_000, machine: 'Mac', kind: 'agent' }),
+  }
+  panelWorld(on, files, '▾ ▶ RUNNING\n  ◐ job ██░░ 50.0% · 1/2\n')
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  await ui.press({ key: 'h-done' })
+  expect((await ui.find({ type: 'Button', key: 'dno-merge-servers' }))?.text).toBe('Servers show once, under LOCALHOST')
+  const row = (await ui.findAll({ type: 'Text' })).find(t => t.text === 'Servers show once, under LOCALHOST') as unknown as { props?: { bold?: boolean } }
+  expect(!!row.props?.bold).toBe(false)
+  await ui.press({ key: 'dno-merge-servers' })
+  const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(texts).toContain('Each server is now one row.')
+  await ui.unmount()
+})
+
+test('checked-off to-dos open dim, one line each, without "1." places, the first 5 then +N more', async ($, on) => {
+  const long = 'a very long checked-off to-do that would wrap back to column 0 in a narrow pane '.repeat(2)
+  const items = Array.from({ length: 7 }, (_, i) => `x ${i + 1}. item ${i + 1}${i === 0 ? ` ${long}` : ''}`).join('\n')
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [TODO_FILE]: `[mac]\n${items}\nopen one\n` }
+  panelWorld(on, files, DONE_FULL)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  await ui.press({ key: 'h-done' })
+  expect((await ui.find({ type: 'Button', key: 'w-checked' }))?.text).toBe('    ▸ 7 checked-off to-dos')
+  expect(await ui.find({ type: 'Button', key: 't-1' })).toBe(undefined)
+  await ui.press({ key: 'w-checked' })
+  const first = (await ui.find({ type: 'Button', key: 't-1' }))?.text ?? ''
+  expect(first.startsWith('  ✓ item 1 a very long')).toBe(true)
+  expect(first.endsWith('…')).toBe(true)
+  expect(first.length).toBe(PANE_PROPS.bodyColumns)
+  expect((await ui.find({ type: 'Button', key: 't-5' }))?.text).toBe('  ✓ item 5')
+  const dim = (await ui.findAll({ type: 'Text' })).find(t => t.text === '  ✓ item 5') as unknown as { props?: { dimColor?: boolean } }
+  expect(dim.props?.dimColor).toBe(true)
+  expect(await ui.find({ type: 'Button', key: 't-6' })).toBe(undefined)
+  expect((await ui.find({ type: 'Button', key: 'todos-more' }))?.text).toBe('    +2 more')
+  await ui.press({ key: 'todos-more' })
+  expect((await ui.find({ type: 'Button', key: 't-7' }))?.text).toBe('  ✓ item 7')
+  expect((await ui.find({ type: 'Button', key: 'todos-more' }))?.text).toBe('    show fewer')
+  await ui.unmount()
+})
+
 test('with every to-do done, TO-DO hides and DONE shows them, so one can be moved back', async ($, on) => {
   const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [TODO_FILE]: '[mac]\nx run import\n' }
   panelWorld(on, files, '▾ ▶ RUNNING\n  ◐ job ██░░ 50.0% · 1/2\n')
@@ -718,6 +766,7 @@ test('with every to-do done, TO-DO hides and DONE shows them, so one can be move
   expect(await ui.find({ type: 'Button', text: /TO-DO/ })).toBe(undefined)
   expect((await ui.find({ type: 'Button', text: /DONE/ }))?.text).toBe('▸ DONE TODAY  1')
   await ui.press({ key: 'h-done' })
+  await ui.press({ key: 'w-checked' })
   await ui.press({ key: 't-1' })
   await ui.press({ key: 'a-todo-1' })
   expect(files[TODO_FILE]).toBe('[mac]\nrun import\n')
@@ -1084,8 +1133,8 @@ test('the panel: titles, ids with badges, unlocks, a nested child, waiting on an
   expect(texts).toContain('  ✓ Finisher  finishing · 7/7')
   expect(texts.some(t => /█/.test(t) && /finish/.test(t))).toBe(false)
   expect(await done()).toEqual(['Board links rebuilt: 1.29M pairs', 'Person matcher fix'])
-  expect(texts).toContain('  10:12')
-  expect(texts).toContain(`  ${clock(NOW - 2 * 3_600_000)}`)
+  expect(texts.some(t => /^ *  10:12$/.test(t))).toBe(true)
+  expect(texts.some(t => t.endsWith(`  ${clock(NOW - 2 * 3_600_000)}`))).toBe(true)
   // Opened: the title under the area word, the rest of the impact, finish and run time with the machine, what it unlocks.
   await ui.press({ key: 'dno-nightly' })
   lines = await pic()

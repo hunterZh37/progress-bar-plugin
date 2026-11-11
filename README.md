@@ -310,7 +310,7 @@ NEEDS YOU  2
 - **Running rows, two lines:** the mark, the **bold** title, a thin bar and the percent, then time left, `⚠ stuck 14m`, `waiting on X` or `paused`. Line two, dim: the current step (or `a of b steps`) and how long it has run (`scoring · 42m`, never "so far"). Titles are cut to one line. The title column fits the longest title shown, so the bars still line up and the note keeps its room.
 - **Press a row** to open it: line two wraps in full, then `<Area> · <why>` (no `Other` when the area is unknown), the machine, a watcher and the gains the job named. Press again to close.
 - **Waiting rows:** `⏸` and the bold title, then why it waits and for how long, dim (`waiting on build · for 12m`).
-- **DONE starts folded** to one line, `▸ DONE TODAY  15`. Press it to open it for this session. Open, each job is one line, its impact first and bold (the title when it reported none), the finish time dim. DONE shows the latest 5, then `+N more`.
+- **DONE starts folded** to one line, `▸ DONE TODAY  15`. Press it to open it for this session. Open, each job is one line in normal weight, its outcome first, the finish time dim at the right edge. DONE shows the latest 5, then `+N more`, then checked-off to-dos folded to one dim line (see **Done rows**).
 - **Gutter:** the status mark (`◐ ⏸ ✓ ⚠ ✖ ○ ↳`) sits in one column and the title in the next.
 - **Plain titles:** the title is the improvement, with its machine left out (`Hunty grants linked to own filer` reads `Grants linked to own filer`).
 - **Lenses:** cost, quality and speed show only in an opened card, from the job's `gains`. A job that named none shows its likely lens from its title and why, `likely improves: speed`.
@@ -375,7 +375,7 @@ The status line then reads:
 - **Never blank:** when the script fails, or prints nothing but an error, the panel shows the reason (for example `Status script failed (exit 1): <first stderr line>`). A pane that cannot draw says why instead of nothing.
 - **Fold:** press a header. Headers have no hotkeys, so no `1:` number prefixes clutter the panel. It writes `~/.claude-progress/.state/folded.txt`, the same file `/progress-bar fold` uses. DONE is the exception: it starts folded in the panel and a press opens it for the session.
 - **On by default:** the first session writes `~/.claude-progress/.state/panel-on`. With that file the pane opens at session start and the status line prints the summary. `panel off` deletes it, writes `.state/panel-off` so the default never turns it back on, and closes the pane. `panel on` undoes that. With **Open the Status panel** off in `/config`, nothing is written and `/progress-bar` opens it once.
-- **To-do menu:** click a to-do (under TO-DO, or your own under NEEDS YOU) for Done, Up, Down, Start (a ready machine item), Delete or Move back to to-do (a checked-off one). It edits this project's list, on the line that still holds that item's text, so a line added since the panel drew never hits the wrong item. TO-DO lists open items only. Checked-off ones move to DONE under **Checked-off to-dos**, after finished jobs, and count there.
+- **To-do menu:** click a to-do (under TO-DO, or your own under NEEDS YOU) for Done, Up, Down, Start (a ready machine item), Delete or Move back to to-do (a checked-off one). It edits this project's list, on the line that still holds that item's text, so a line added since the panel drew never hits the wrong item. TO-DO lists open items only. Checked-off ones move to DONE, after finished jobs, folded to one dim line, `▸ 15 checked-off to-dos`, and count there.
 - **Rows:** clustered by area (see **Goal view**). To-dos one per line under each machine (yours under NEEDS YOU), running jobs a line and a dim step line each, a press opening the details (see **Running cards**), done jobs one line each with their impact and finish time (see **Done rows**).
 - **Chrome beside the counts (0.28.14):** the List tab's first line ends with the `Chrome:` line, `1 running · 3 needs you · 1 done today · Chrome: Work · you@work.example · this Mac` (see **Goal view** and **Chrome line**).
 - **Tied lines (0.28.13):** every dim line under a row starts with a dim `⎿ `, as Claude Code ties a command's output to it. Only the first line under a row gets it, the next ones line up under its text, and wrapped text indents under the text, not under `⎿`. This covers running and waiting rows, open cards, open DONE rows, `waits for` to-do lines, recap and inbox lines, Log details and Connectors accounts. One-line rows (LOCALHOST, to-dos) have none.
@@ -384,10 +384,48 @@ The status line then reads:
 
 ## Done rows
 
-DONE starts folded to `▸ DONE TODAY  N`. Open, each finished job is a button, one line: `✓ <impact>  11:27`, the impact bold and first, the finish time dim. A job with no impact shows its title instead. The title comes from its done record, else its progress file or `titles.txt`, else its id made readable (`hunty: hunty-board-cap-extract` reads `Hunty: Board cap extract`). Press it to open what it changed:
+DONE starts folded to `▸ DONE TODAY  N`. Open, each finished job is a button, one line: a green `✓`, the outcome in normal weight, the finish time dim at the right edge. A job shows its impact (its title when it reported none). An agent shows its title, the short name it gave `progress_report`, not a sentence cut from its report. The title comes from its done record, else its progress file or `titles.txt`, else its id made readable (`hunty: hunty-board-cap-extract` reads `Hunty: Board cap extract`). Checked-off to-dos come last, folded to one dim line.
+
+**Before (0.28.14)**
 
 ```
-  ✓ Board links rebuilt: 1.29M pairs  11:50
+▾ DONE TODAY  22
+  ✓ 12) in ~/Desktop/progress-bar-plugin.  10:11
+  ✓ 13 is out: every dim line under a Status panel row now starts with a …   10:19
+    +2 more
+    Checked-off to-dos
+  ✓ Set up MFA on the AWS root login
+  ✓ 1. Link more grants to the orgs that got them, rematch for new orgs (after
+Hunty places for the next 98K orgs)
+  ... 13 more, all bright
+```
+
+**After (0.28.15), folded**
+
+```
+▾ DONE TODAY  22
+  ✓ Servers show once, under LOCALHOST                  10:11
+  ✓ Status panel sub-lines start with ⎿                 10:19
+    +2 more
+    ▸ 15 checked-off to-dos
+```
+
+**After (0.28.15), to-dos opened** (dim, one line each, no `1.` places)
+
+```
+    ▾ 15 checked-off to-dos
+  ✓ Set up MFA on the AWS root login
+  ✓ Save a claude setup-token on personal-mac so it can …
+  ✓ Let personal-mac read the database: run the two Act…
+  ✓ Link more grants to the orgs that got them, rematch…
+  ✓ Board links for people on more than 8 boards in a s…
+    +10 more
+```
+
+Press a job row to open what it changed:
+
+```
+  ✓ Board links rebuilt: 1.29M pairs                    11:50
     ⎿ Boards · Board links rebuild
       109K split people merged
       finished 11:50 · ran 1h20m · machine: Mac
@@ -397,6 +435,8 @@ DONE starts folded to `▸ DONE TODAY  N`. Open, each finished job is a button, 
 - **Impact:** the job's `impact` lines, or an agent's short report, each wrapped under its indent. The first line is the row itself, and shows again in the card only when the row had to cut it. The card starts with `<Area> · <title>`. `no impact reported` when there is none. Named `gains` follow as `quality: …`.
 - **Time and machine:** `finished HH:MM · ran 1h20m` from the record's `started` and `finished`, then `machine: X` (the record's, else the row's `<host>:`, else this machine).
 - **Why:** `unlocks: …` when the job had a `why`.
+- **Checked-off to-dos:** one dim `▸ N checked-off to-dos` line. Press it to open the first 5 in `todo.txt` order (it keeps no dates), dim, one line each, cut with `…`, then `+N more`. Press a to-do for its menu (Move back to to-do, Delete).
+- **Agent impact (0.28.15):** a report is cut into sentences only where `.`, `!` or `?` is followed by a space and a word that does not start lower case, so `0.28.12` and `~/a.b` stay whole. Before, `Shipped 0.28.12 (cdf6f54) in ~/x.` became `12) in ~/x.`.
 - **Which rows:** the grouper's finished rows (30 minutes), then done records from the last 12 hours not shown yet and not running again, newest first, 20 rows at most. The latest 5 show, `+N more` opens the rest. The header and the status line count them.
 - **Older agents:** an agent that finished before the plugin kept records gets one from its transcript (this session's `subagents` folder) the first time its row is opened.
 - **Remote jobs:** a `<host>: name` row has a record only on the machine that ran it. Here it opens to `no impact reported` with its finish time.

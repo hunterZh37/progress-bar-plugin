@@ -168,14 +168,15 @@ test('the List tab: a status line, then TO-DO, RUNNING, WAITING, DONE; two-line 
   expect(title.props?.bold).toBe(true)
   // To-dos keep machines, priority and blockers.
   expect(lines[at(/Know where/)]).toBe('  ⏸  1. Know where more orgs serve')
-  // DONE opens to one line per job, outcome first and bold, the time dim.
+  // DONE opens to one line per job, outcome first in normal weight, the time dim.
   expect(all).not.toMatch(/Grant rematch|42K/)
   await ui.press({ key: 'h-done' })
   let open = draw((await ui.find({ type: 'Box' })) as never)
-  expect(open[open.findIndex(l => /42K/.test(l))]).toBe('  ✓ 42K more grants linked to the orgs that got them  10:12')
+  // The time sits at the right edge of the pane.
+  expect(open[open.findIndex(l => /42K/.test(l))]).toMatch(/^  ✓ 42K more grants linked to the orgs that got them +10:12$/)
   expect(open.join('\n')).not.toMatch(/Grant rematch/)
   const impact = (await ui.findAll({ type: 'Text' })).find(t => /^42K/.test(t.text ?? '')) as unknown as { props?: { bold?: boolean } }
-  expect(impact.props?.bold).toBe(true)
+  expect(!!impact.props?.bold).toBe(false)
   // Opened, a done row adds its title under the area word.
   await ui.press({ key: 'dno-grants-rematch' })
   open = draw((await ui.find({ type: 'Box' })) as never)

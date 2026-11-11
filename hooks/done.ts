@@ -34,7 +34,11 @@ export function plainMd(s: string): string {
     .trim()
 }
 
-const sentences = (s: string) => s.match(/[^.!?]+(?:[.!?]+(?=\s|$)|$)/g)?.map(x => x.trim()).filter(Boolean) ?? []
+/**
+ * Sentences: a cut only where a . ! or ? is followed by a space and a word that does not start lower case, so
+ * "0.28.12 is out" or "~/a.b" stay whole (a match on "[^.]+[.]" lost the text before "0.28." and kept "12) in ...").
+ */
+export const sentences = (s: string) => s.split(/(?<=[.!?])\s+(?=[^a-z])/).map(x => x.trim()).filter(Boolean)
 
 /** Lines cut to IMPACT_MAX characters in all, the last one ending in … when cut. */
 function capLines(lines: string[]): string[] {

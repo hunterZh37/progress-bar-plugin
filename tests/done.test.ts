@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { DONE_KEEP, IMPACT_MAX, doneDetails, impactLines, plainMd, prettyName, pruneList, ranFor, reportOf, summarize } from '../hooks/done'
+import { DONE_KEEP, IMPACT_MAX, doneDetails, impactLines, plainMd, prettyName, pruneList, ranFor, reportOf, sentences, summarize } from '../hooks/done'
 import { DONE_MAX, doneItems, doneTitle } from '../hooks/panel'
 
 // Done records (hooks/done.ts): what a finished task changed, shown when its DONE row is opened.
@@ -23,6 +23,13 @@ test('summarize: the first bold sentence, else the first prose lines, plain and 
   expect(long.join('').length).toBeLessThanOrEqual(IMPACT_MAX)
   expect(long[0]!.endsWith('…')).toBe(true)
   expect(plainMd('- **a** `b` __c__')).toBe('a b c')
+})
+
+test('sentences: version numbers, paths and lower case after a dot never split', () => {
+  // Before 0.28.15 this gave "12) in ~/Desktop/progress-bar-plugin." and lost the start.
+  expect(summarize('Shipped 0.28.12 (commit cdf6f54) in ~/Desktop/progress-bar-plugin. Each server is now one row.')).toEqual(['Shipped 0.28.12 (commit cdf6f54) in ~/Desktop/progress-bar-plugin.', 'Each server is now one row.'])
+  expect(sentences('0.28.13 is out: every dim line starts with ⎿ . It is pushed.')).toEqual(['0.28.13 is out: every dim line starts with ⎿ .', 'It is pushed.'])
+  expect(sentences('Read e.g. the file. Done!')).toEqual(['Read e.g. the file.', 'Done!'])
 })
 
 test('reportOf: the SubagentHandback message wins over the last text, with first and last times', () => {

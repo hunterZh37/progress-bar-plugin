@@ -67,6 +67,8 @@ type Key = (typeof SECTION_KEYS)[number]
 const TITLES: Record<string, Key> = { 'TO-DO': 'todo', RUNNING: 'running', WAITING: 'waiting', DONE: 'done', PROBLEMS: 'problems' }
 /** DONE shows this many of the latest finished jobs, then "+N more". */
 export const DONE_FOLD = 5
+/** Open, the checked-off to-dos under DONE show this many, then "+N more". */
+export const TODO_FOLD = 5
 /** What ties a dim line to the row above it, as in Claude Code's transcript. Later lines indent by its width. */
 export const TIE = '⎿ '
 /** Each line builder gets whether it is the first under its row (it takes the "⎿ "), unless one already sits above. */
@@ -1127,10 +1129,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const metaNow = await read($, metaAtom)
     const running = runNames.flatMap(n => [n, metaNow[slug(n)]?.title ?? ''].filter(Boolean))
 
-    // A checked-off to-do (under DONE) as a button. Pressing it opens its menu below it.
+    // A checked-off to-do (under DONE) as a button: dim, one line cut to the pane, without a leading "1." place.
+    // Pressing it opens its menu below it.
     const todoItem = (t: Todo) => [
       <Button key={`t-${t.line}`} plain onPress={() => update($, menuAtom, v => (v === t.line ? -1 : t.line))}>
-        {`  ${t.done ? '✓' : '○'} ${t.text}`}
+        <Text dimColor>{clip(`  ${t.done ? '✓' : '○'} ${t.text.replace(/^\d+[.)]\s+/, '')}`, width)}</Text>
       </Button>,
       menuFor === t.line
         ? <Box key={`m-${t.line}`}>
@@ -1425,21 +1428,25 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const tags = doneTags(d)
       const said = tags.find(t => !t.inferred)?.text ?? ''
       const impact = rec?.impact[0] || said
-      // One line, outcome first: the impact in bold (the title when there is none), the time dim. The first impact
-      // line shows again in the open card only when the row had to cut it.
-      const head = impact || title
+      // One line, outcome first, normal weight: a job's impact (the title when there is none), an agent's title (the
+      // short name it gave progress_report, not a sentence cut from its report), then the time dim at the right edge.
+      // The first impact line shows again in the open card only when the row had to cut it.
+      const useTitle = rec?.kind === 'agent' && !!title
+      const head = useTitle ? title : impact || title
       const room = Math.max(4, width - 4 - (d.at ? 7 : 0))
       const cut = head.length > room
-      const more = doneDetails(rec, d.at, mach).filter(t => cut || t !== impact)
+      const shownHead = clip(head, room)
+      const more = doneDetails(rec, d.at, mach).filter(t => useTitle || cut || t !== impact)
       return [
         <Box key={`dn${i}`}>
           <Text color="green">{'  ✓ '}</Text>
-          <Button key={`dno-${d.key}`} plain onPress={press}><Text bold>{clip(head, room)}</Text></Button>
-          <Text dimColor>{d.at ? `  ${d.at}` : ''}</Text>
+          <Button key={`dno-${d.key}`} plain onPress={press}><Text>{shownHead}</Text></Button>
+          {d.at ? <Text dimColor>{`${' '.repeat(Math.max(0, room - shownHead.length))}  ${d.at}`}</Text> : null}
         </Box>,
         ...(isOpen
           ? tieFirst([
-              impact ? (f: boolean) => (ar.id !== OTHER.id ? second(`dni${i}`, 4, ar, title, true, f) : hang(`dni${i}`, '    ', title, true, f)) : null,
+              useTitle ? (ar.id !== OTHER.id ? (f: boolean) => second(`dni${i}`, 4, ar, '', true, f) : null)
+                : impact ? (f: boolean) => (ar.id !== OTHER.id ? second(`dni${i}`, 4, ar, title, true, f) : hang(`dni${i}`, '    ', title, true, f)) : null,
               ...gainLines(tags).filter(g => !g.endsWith(`: ${impact}`)).map((g, j) => (f: boolean) => hang(`dg${i}-${j}`, '    ', g, true, f)),
               ...(impact && more[0] === 'no impact reported' ? more.slice(1) : more).map((t, j) => (f: boolean) => hang(`dd${i}-${j}`, '    ', t, !rec?.impact.length || !rec.impact.includes(t), f)),
             ])
@@ -1951,10 +1958,22 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // DONE shows the latest DONE_FOLD in time order, then "+N more" to show the rest.
     const allDone = openCards.has('done:all')
     const extra = Math.max(0, dones.length - DONE_FOLD)
+    // Checked-off to-dos: one dim "▸ 15 checked-off to-dos" line that a press opens. Open, the first TODO_FOLD in
+    // todo.txt order (it keeps no dates), then "+N more".
+    const todosOpen = openCards.has('done:todos')
+    const todosAll = openCards.has('done:todos-all')
+    const todoExtra = Math.max(0, doneTodos.length - TODO_FOLD)
+    const checkedRows = () => (doneTodos.length
+      ? [
+          <Button key="w-checked" plain onPress={() => toggleCard('done:todos')}><Text dimColor>{`    ${todosOpen ? '▾' : '▸'} ${doneTodos.length} checked-off to-do${doneTodos.length === 1 ? '' : 's'}`}</Text></Button>,
+          ...(todosOpen ? (todosAll ? doneTodos : doneTodos.slice(0, TODO_FOLD)).flatMap(todoItem) : []),
+          todosOpen && todoExtra ? <Button key="todos-more" plain onPress={() => toggleCard('done:todos-all')}><Text dimColor>{todosAll ? '    show fewer' : `    +${todoExtra} more`}</Text></Button> : null,
+        ]
+      : [])
     const doneRows = () => [
       ...(allDone ? dones : dones.slice(0, DONE_FOLD)).flatMap(x => finishedRow(x.d, x.i)),
       extra ? <Button key="done-more" plain onPress={() => toggleCard('done:all')}><Text dimColor>{allDone ? '    show fewer' : `    +${extra} more`}</Text></Button> : null,
-      ...(doneTodos.length ? [<Text key="w-checked" dimColor>{'    Checked-off to-dos'}</Text>, ...doneTodos.flatMap(todoItem)] : []),
+      ...checkedRows(),
     ].filter(Boolean)
     // What matters now first: to-do, running, waiting, done. Problems are NEEDS YOU lines, not a section.
     const ORDER: Key[] = ['problems', 'todo', 'running', 'waiting', 'done']
