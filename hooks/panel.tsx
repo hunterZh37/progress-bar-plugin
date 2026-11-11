@@ -67,6 +67,12 @@ type Key = (typeof SECTION_KEYS)[number]
 const TITLES: Record<string, Key> = { 'TO-DO': 'todo', RUNNING: 'running', WAITING: 'waiting', DONE: 'done', PROBLEMS: 'problems' }
 /** DONE shows this many of the latest finished jobs, then "+N more". */
 export const DONE_FOLD = 5
+/** What ties a dim line to the row above it, as in Claude Code's transcript. Later lines indent by its width. */
+export const TIE = '⎿ '
+/** Each line builder gets whether it is the first under its row (it takes the "⎿ "), unless one already sits above. */
+export function tieFirst<T>(lines: (((first: boolean) => T) | null | undefined | false)[], above = false): T[] {
+  return lines.filter((l): l is (first: boolean) => T => !!l).map((l, j) => l(!above && j === 0))
+}
 
 const foldedAtom = atom({ plugin: 'progress-bar', key: 'folded' } as const, [])
 const linesAtom = atom({ plugin: 'progress-bar', key: 'lines' } as const, [])
@@ -1067,6 +1073,9 @@ export function registerPanel(on: On) {
 async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
   {
     const { Box, Button, Text } = $.ui.resolve(e)
+    // The dim "⎿ " before the first line under a row, two spaces before the next ones. It never shrinks, so wrapped
+    // text lines up under the text, not under the connector.
+    const tie = (first: boolean) => <Box flexShrink={0}><Text dimColor>{first ? TIE : ' '.repeat(TIE.length)}</Text></Box>
     const homeDir = await resolveHome($)
     const login = await sessionLogin($, homeDir)
     const maxFile = `${homeDir}/${usageFileRel(login.key)}`
@@ -1158,7 +1167,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       if (row.kind === 'head') {
         return [<Box key={`w-${row.owner}`}><Text color="magenta">{`    ${row.owner.charAt(0).toUpperCase()}${row.owner.slice(1).toLowerCase()}`}</Text><Text dimColor>{`  ${row.count}`}</Text></Box>]
       }
-      if (row.kind === 'waits') return [<Text key={`wf-${row.at}`} dimColor>{`        ${row.text}`}</Text>]
+      if (row.kind === 'waits') return [<Text key={`wf-${row.at}`} dimColor>{`        ${TIE}${row.text}`}</Text>]
       const t = row.item
       return [
         <Box key={`tr-${t.line}`}>
@@ -1242,8 +1251,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const gainLines = (tags: LensTag[]) => tags.map(t => (t.inferred ? `likely improves: ${t.name}` : `${t.name}: ${t.text}`))
     // A to-do's area as a short dim word, padded so the titles line up.
     // A detail line under an open card: wrapped with a hanging indent, so long text never runs back to column 0.
-    const hang = (key: string, pad: string, text: string, dim = true) => (
-      <Box key={key} paddingLeft={pad.length}><Text dimColor={dim}>{text}</Text></Box>
+    // The first line under a row starts with a dim "⎿ " (pad is its column), later ones line up under its text.
+    const hang = (key: string, pad: string, text: string, dim = true, first = false) => (
+      <Box key={key} paddingLeft={pad.length}>{tie(first)}<Text dimColor={dim} wrap="wrap">{text}</Text></Box>
     )
     // A running job, two lines. Line one: the mark, "▸ <title>" (the improvement, no machine), a thin bar, the percent,
     // then time left (or stuck, or what it waits on) when it fits. Line two: "<Area> · <why>", one dim Text cut to
@@ -1295,21 +1305,24 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           {ctlBtn(r, key)}
         </Box>,
         ctlMenu(r, key, ind.length + 4, title),
-        // Line two, dim: what it does now and for how long. Open, it wraps in full, then the why, area and gains.
-        step ? <Box key={`rs${k}`} paddingLeft={ind.length + 4}><Text dimColor wrap={isOpen ? 'wrap' : 'truncate-end'}>{isOpen ? step : clip(step, Math.max(4, width - ind.length - 4))}</Text></Box> : null,
-        ...(isOpen ? details(r, k, pad, step.includes(waitOn) ? '' : waitOn, tags, machineOf(full, title), ar, why) : []),
+        // Line two, dim, tied to the row by "⎿ ": what it does now and for how long. Open, it wraps in full, then the
+        // why, area and gains, lined up under its text.
+        step ? <Box key={`rs${k}`} paddingLeft={ind.length + 4}>{tie(true)}<Text dimColor wrap={isOpen ? 'wrap' : 'truncate-end'}>{isOpen ? step : clip(step, Math.max(4, width - ind.length - 4 - TIE.length))}</Text></Box> : null,
+        ...(isOpen ? details(r, k, pad, step.includes(waitOn) ? '' : waitOn, tags, machineOf(full, title), ar, why, !!step) : []),
       ].filter(Boolean)
     }
     const toggleCard = (key: string) => update($, openAtom, l => (l.includes(key) ? l.filter(x => x !== key) : [...l, key]))
     // A row's second line, under the title text: the area word (a step brighter), then " · <text>" dim. Both parts are
     // cut so the line fits the pane: it never wraps.
     // An open row shows the whole text instead, wrapped beside the area word (no second copy below).
-    const second = (key: string, indent: number, ar: GoalArea, text: string, full = false) => {
-      const room = Math.max(4, width - indent)
+    // Like hang, it sits after "⎿ " (first) or two spaces, so the indent is the connector's column.
+    const second = (key: string, indent: number, ar: GoalArea, text: string, full = false, first = false) => {
+      const room = Math.max(4, width - indent - TIE.length)
       const tag = clip(ar.tag, room)
       const rest = !text || room - tag.length <= 4 ? '' : full ? ` · ${text}` : clip(` · ${text}`, room - tag.length)
       return (
         <Box key={key} paddingLeft={indent}>
+          {tie(first)}
           <Box flexShrink={0}><Text>{tag}</Text></Box>
           {rest ? <Text dimColor wrap={full ? 'wrap' : 'truncate-end'}>{rest}</Text> : null}
         </Box>
@@ -1318,13 +1331,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // An open card: the step (or what it waits on, or the count), the machine, the time, and the gains it named.
     // The step and time are on line two already, so the card adds only what line two leaves out: what it waits on,
     // the area and why (no "Other" when the area is unknown), the machine, a watcher and the gains it named.
-    const details = (r: RunCard, k: string, pad: string, waitOn: string, tags: LensTag[] = [], machine = '', ar?: GoalArea, why = '') => [
-      waitOn ? hang(`t${k}`, pad, `waiting on: ${waitOn}`, false) : null,
-      ar && ar.id !== OTHER.id ? second(`ar${k}`, pad.length, ar, why, true) : why ? hang(`wy${k}`, pad, why) : null,
-      machine ? hang(`mc${k}`, pad, `machine: ${machine}`) : null,
-      r.watchedBy ? hang(`wb${k}`, pad, `watched by ${r.watchedBy}`) : null,
-      ...gainLines(tags).map((g, j) => hang(`gn${k}-${j}`, pad, g)),
-    ].filter(Boolean)
+    // `above`: a sub-line already sits over these, so none of them takes the "⎿ ".
+    const details = (r: RunCard, k: string, pad: string, waitOn: string, tags: LensTag[] = [], machine = '', ar?: GoalArea, why = '', above = true) => tieFirst([
+      waitOn ? (f: boolean) => hang(`t${k}`, pad, `waiting on: ${waitOn}`, false, f) : null,
+      ar && ar.id !== OTHER.id ? (f: boolean) => second(`ar${k}`, pad.length, ar, why, true, f) : why ? (f: boolean) => hang(`wy${k}`, pad, why, true, f) : null,
+      machine ? (f: boolean) => hang(`mc${k}`, pad, `machine: ${machine}`, true, f) : null,
+      r.watchedBy ? (f: boolean) => hang(`wb${k}`, pad, `watched by ${r.watchedBy}`, true, f) : null,
+      ...gainLines(tags).map((g, j) => (f: boolean) => hang(`gn${k}-${j}`, pad, g, true, f)),
+    ], above)
     // The running rows as top jobs, each with its children (drawn under it while it is open).
     let titleW = 0
     const runTops = (rows: string[]) => {
@@ -1363,7 +1377,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           <Text color="yellow" dimColor>{'  ⏸ '}</Text>
           <Button key={`open-${key}`} plain onPress={() => toggleCard(key)}><Text bold>{clip(title, Math.max(4, width - 4))}</Text></Button>
         </Box>,
-        <Box key={`rwn${i}`} paddingLeft={4}><Text dimColor wrap="truncate-end">{clip(line2, Math.max(4, width - 4))}</Text></Box>,
+        <Box key={`rwn${i}`} paddingLeft={4}>{tie(true)}<Text dimColor wrap="truncate-end">{clip(line2, Math.max(4, width - 4 - TIE.length))}</Text></Box>,
         ...(isOpen ? [inStep ? null : hang(`wr${i}`, '    ', whole, false), c.step || c.count ? hang(`ws${i}`, '    ', c.step || c.count, false) : null, ...details(c, `w${i}`, '    ', '', tags, machineOf(full, title), ar, why)].filter(Boolean) : []),
       ]
     }
@@ -1411,11 +1425,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           <Text dimColor>{d.at ? `  ${d.at}` : ''}</Text>
         </Box>,
         ...(isOpen
-          ? [
-              impact ? (ar.id !== OTHER.id ? second(`dni${i}`, 4, ar, title, true) : hang(`dni${i}`, '    ', title)) : null,
-              ...gainLines(tags).filter(g => !g.endsWith(`: ${impact}`)).map((g, j) => hang(`dg${i}-${j}`, '    ', g)),
-              ...(impact && more[0] === 'no impact reported' ? more.slice(1) : more).map((t, j) => hang(`dd${i}-${j}`, '    ', t, !rec?.impact.length || !rec.impact.includes(t))),
-            ].filter(Boolean)
+          ? tieFirst([
+              impact ? (f: boolean) => (ar.id !== OTHER.id ? second(`dni${i}`, 4, ar, title, true, f) : hang(`dni${i}`, '    ', title, true, f)) : null,
+              ...gainLines(tags).filter(g => !g.endsWith(`: ${impact}`)).map((g, j) => (f: boolean) => hang(`dg${i}-${j}`, '    ', g, true, f)),
+              ...(impact && more[0] === 'no impact reported' ? more.slice(1) : more).map((t, j) => (f: boolean) => hang(`dd${i}-${j}`, '    ', t, !rec?.impact.length || !rec.impact.includes(t), f)),
+            ])
           : []),
       ].filter(Boolean)
     }
@@ -1709,9 +1723,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
               </Button>,
               ...(log.open === id
                 ? [
-                    ...(ev.detail ?? '').split('\n').filter(Boolean).slice(0, 12).map((d, k) => <Text key={`evd-${id}-${k}`} dimColor>{`     ${d}`}</Text>),
-                    ev.detail ? null : <Text key={`evd-${id}-none`} dimColor>{'     no details'}</Text>,
-                    canOpen ? <Button key={`evo-${id}`} plain onPress={() => openLog($, ev.path!, log.dirs)}>{'     ↗ open log'}</Button> : null,
+                    ...(ev.detail ?? '').split('\n').filter(Boolean).slice(0, 12).map((d, k) => <Text key={`evd-${id}-${k}`} dimColor>{`     ${k ? '  ' : TIE}${d}`}</Text>),
+                    ev.detail ? null : <Text key={`evd-${id}-none`} dimColor>{`     ${TIE}no details`}</Text>,
+                    canOpen ? <Button key={`evo-${id}`} plain onPress={() => openLog($, ev.path!, log.dirs)}>{'       ↗ open log'}</Button> : null,
                   ].filter(Boolean)
                 : []),
             ]
@@ -1733,7 +1747,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
             : <Text bold>{c.name}</Text>}
           {c.kind !== 'ok' ? <Text color={COLOR[c.kind]}>{c.kind === 'auth' ? '  needs sign-in' : '  failed'}</Text> : null}
         </Box>,
-        c.account ? <Text key={`c-a-${c.name}`} dimColor>{`    ${c.account}`}</Text> : null,
+        c.account ? <Text key={`c-a-${c.name}`} dimColor>{`    ${TIE}${c.account}`}</Text> : null,
       ].filter(Boolean)
       return (
         <Box flexDirection="column">
@@ -1746,14 +1760,17 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
             {checkBtn(chrome.check, 'c-chrome-chk')}
           </Box>
           {/* A warning keeps its whole text: it says what to do. */}
-          {chrome.warn ? <Box key="c-chrome-w" paddingLeft={4}><Text color="yellow" wrap="wrap">{chrome.warn}</Text></Box> : null}
-          {chrome.tone !== 'dim' ? chrome.others.map((o, i) => (
-            <Box key={`c-chrome-o${i}`}>
-              <Text dimColor wrap="truncate-end">{`    Also connected: ${o}`}</Text>
-              {checkBtn(chrome.otherChecks?.[i], `c-chrome-ochk${i}`)}
-            </Box>
-          )) : null}
-          {chrome.hint && chrome.tone !== 'dim' ? <Text key="c-chrome-h" dimColor wrap="truncate-end">{`    ${chrome.hint}`}</Text> : null}
+          {/* Lines under the Chrome row: the first starts with "⎿ ", the rest line up under its text. */}
+          {tieFirst([
+            chrome.warn ? (f: boolean) => <Box key="c-chrome-w" paddingLeft={4}>{tie(f)}<Text color="yellow" wrap="wrap">{chrome.warn}</Text></Box> : null,
+            ...(chrome.tone !== 'dim' ? chrome.others.map((o, i) => (f: boolean) => (
+              <Box key={`c-chrome-o${i}`}>
+                <Text dimColor wrap="truncate-end">{`    ${f ? TIE : '  '}Also connected: ${o}`}</Text>
+                {checkBtn(chrome.otherChecks?.[i], `c-chrome-ochk${i}`)}
+              </Box>
+            )) : []),
+            chrome.hint && chrome.tone !== 'dim' ? (f: boolean) => <Text key="c-chrome-h" dimColor wrap="truncate-end">{`    ${f ? TIE : '  '}${chrome.hint}`}</Text> : null,
+          ])}
           {conns.list.length === 0 && <Text dimColor>{conns.checking ? '  checking…' : '  No check yet.'}</Text>}
           {ordered.flatMap(connRow)}
           <Box key="c-foot">
@@ -1807,7 +1824,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
                 <Text>{cut(l.text, Math.max(16, width - 22))}</Text>
                 {l.sub && !issue(l) ? <Text dimColor>{`  ${l.sub}`}</Text> : null}
               </Box>,
-              l.sub && issue(l) ? <Text key={`rc-${k}-d`} dimColor>{`  ${cut(l.sub, Math.max(16, width - 8))}`}</Text> : null,
+              l.sub && issue(l) ? <Text key={`rc-${k}-d`} dimColor>{`  ${TIE}${cut(l.sub, Math.max(16, width - 8 - TIE.length))}`}</Text> : null,
             ].filter(Boolean)
           })}
           <Box key="rc-b" marginTop={1}>
@@ -1830,7 +1847,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
             ? <Button key={`ib-o-${it.id}`} plain onPress={() => openWeb($, it.url)}>{cutI(`${it.from} · ${it.subject}`, Math.max(16, width - 8))}</Button>
             : <Text key={`ib-o-${it.id}`}>{cutI(`${it.from} · ${it.subject}`, Math.max(16, width - 8))}</Text>,
           <Box key={`ib-w-${it.id}`}>
-            <Text dimColor>{cutI(`  ${it.why}${it.due ? ` · due ${it.due}` : ''}  `, Math.max(16, width - 20))}</Text>
+            <Text dimColor>{cutI(`  ${TIE}${it.why}${it.due ? ` · due ${it.due}` : ''}  `, Math.max(16, width - 20))}</Text>
             <Button key={`ib-x-${it.id}`} plain onPress={() => markHandled($, homeDir, it.id)}>{'✓ handled'}</Button>
           </Box>,
         ])}

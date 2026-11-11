@@ -161,8 +161,8 @@ test('the List tab: a status line, then TO-DO, RUNNING, WAITING, DONE; two-line 
   const col = 'Board lists past 25 seats'.length
   // A row that can be stopped ends with a dim [x].
   expect(lines[at(/Board lists/)]).toBe(`  ◐ ${fitLabel('Board lists past 25 seats', col)}  ━━━━━─────  50%  10m left [x]`)
-  expect(lines[at(/Board lists/) + 1]).toBe('    1 of 2 steps')
-  expect(lines[at(/Tidy up/) + 1]).toBe('    1 of 2 steps')
+  expect(lines[at(/Board lists/) + 1]).toBe('    ⎿ 1 of 2 steps')
+  expect(lines[at(/Tidy up/) + 1]).toBe('    ⎿ 1 of 2 steps')
   expect(all).not.toMatch(/Boards ·|Whole boards|Tools/)
   const title = (await ui.findAll({ type: 'Text' })).find(t => /^Board lists/.test(t.text ?? '')) as unknown as { props?: { bold?: boolean } }
   expect(title.props?.bold).toBe(true)
@@ -179,7 +179,7 @@ test('the List tab: a status line, then TO-DO, RUNNING, WAITING, DONE; two-line 
   // Opened, a done row adds its title under the area word.
   await ui.press({ key: 'dno-grants-rematch' })
   open = draw((await ui.find({ type: 'Box' })) as never)
-  expect(open).toContain('    Grants · Grant rematch')
+  expect(open).toContain('    ⎿ Grants · Grant rematch')
   // The area word is a step brighter than the dim rest of the line.
   const word = (await ui.findAll({ type: 'Text' })).find(t => t.text === 'Grants') as unknown as { props?: { dimColor?: boolean } }
   expect(!!word.props?.dimColor).toBe(false)
@@ -187,10 +187,10 @@ test('the List tab: a status line, then TO-DO, RUNNING, WAITING, DONE; two-line 
   await ui.press({ key: 'open-hunty-board-seats' })
   await ui.press({ key: 'open-tidy-up' })
   open = draw((await ui.find({ type: 'Box' })) as never)
-  expect(open[open.findIndex(l => /Board lists/.test(l)) + 1]).toBe('    1 of 2 steps')
-  expect(open).toContain('    Boards · Whole boards, not just 25')
-  expect(open).toContain('    quality: 1.65M more board seats counted')
-  expect(open[open.findIndex(l => /Tidy up/.test(l)) + 2]).toBe('    Tools')
+  expect(open[open.findIndex(l => /Board lists/.test(l)) + 1]).toBe('    ⎿ 1 of 2 steps')
+  expect(open).toContain('      Boards · Whole boards, not just 25')
+  expect(open).toContain('      quality: 1.65M more board seats counted')
+  expect(open[open.findIndex(l => /Tidy up/.test(l)) + 2]).toBe('      Tools')
   expect(open.join('\n')).not.toMatch(/area: |job$|Claude agent|so far/m)
   await ui.unmount()
 })
@@ -203,7 +203,7 @@ test('goal.json: a custom file is read and never overwritten', async ($, on) => 
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: props(60) })
   await ui.press({ key: 'open-tidy-up' })
   const lines = draw((await ui.find({ type: 'Box' })) as never)
-  expect(lines[lines.findIndex(l => /^  ◐ Tidy up/.test(l)) + 2]).toBe('    Login')
+  expect(lines[lines.findIndex(l => /^  ◐ Tidy up/.test(l)) + 2]).toBe('      Login')
   expect(files[`${HOME}/${GOAL_REL}`]).toBe(mine)
   await ui.unmount()
 })
@@ -241,7 +241,7 @@ test('goals are per project: goals/<slug>.json heads its own project, with its a
   const files = PROJECTS()
   const mine = files[`${HOME}/${GOALS_DIR_REL}/desktop-nombot.json`]
   const lines = await paneIn($, on, files, `${HOME}/Desktop/NomBot`)
-  expect(lines[lines.findIndex(l => /^  ◐ Tidy up/.test(l)) + 2]).toBe('    Login')
+  expect(lines[lines.findIndex(l => /^  ◐ Tidy up/.test(l)) + 2]).toBe('      Login')
   expect(files[`${HOME}/${GOALS_DIR_REL}/desktop-nombot.json`]).toBe(mine)
 })
 

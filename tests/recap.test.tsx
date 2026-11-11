@@ -116,8 +116,8 @@ test('recap after 4 h: header, counts, errors first, progress moved, expand', as
   // The recap box only: the sections below it have bold titles of their own.
   const items = t.slice(0, t.findIndex(x => /^[▾▸] /.test(x))).filter(x => /^(Service|Arts|Train|Health|ntee|new-job)/.test(x))
   expect(items).toEqual(['Service areas pilot crashed', 'Train batch stuck', 'Arts labels hit the usage limit'])
-  expect(t).toContain('  Traceback')
-  expect(t).toContain('  resumed in 2h10m')
+  expect(t).toContain('  ⎿ Traceback')
+  expect(t).toContain('  ⎿ resumed in 2h10m')
   expect(t.some(x => /Old job/.test(x))).toBe(false)
   await ui.press({ key: 'recap-more' })
   const all = await texts(ui)

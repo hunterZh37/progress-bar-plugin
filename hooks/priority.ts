@@ -229,7 +229,7 @@ export type TodoRow<T> =
 /**
  * The TO-DO section as rows, one line each at `width` columns: per owner a "Mac  2" heading, then items by priority.
  * Marker column: green ▶ on the next item, dim ⏸ on a blocked one. Number column 2 wide. Blocked items that wait on
- * the same job in a row get one dim "waits for <job>" line under the last of them. A blank row between owners.
+ * the same job in a row get one dim "waits for <job>" line under the last of them (2 narrower: the panel puts "⎿ " before it). A blank row between owners.
  * `label` turns a blocker (a running name or title) into the job's title to show.
  */
 export function todoRows<T extends { owner: string; text: string; line: number }>(ranked: RankedTodo<T>[], width: number, label: (b: string) => string = b => b): TodoRow<T>[] {
@@ -244,7 +244,7 @@ export function todoRows<T extends { owner: string; text: string; line: number }
     items.forEach((t, i) => {
       const b = bOf(t)
       out.push({ kind: 'item', owner, item: t, marker: t.next ? '▶' : b ? '⏸' : ' ', num: `${i + 1}.`.padStart(3), title: clip(shownTitle(t.body), room), dim: !!b })
-      if (b && bOf(items[i + 1]) !== b) out.push({ kind: 'waits', owner, text: clip(`waits for ${b}`, room), at: t.line })
+      if (b && bOf(items[i + 1]) !== b) out.push({ kind: 'waits', owner, text: clip(`waits for ${b}`, room - 2), at: t.line })
     })
   })
   return out

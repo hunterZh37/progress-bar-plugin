@@ -14,7 +14,7 @@ import { clock } from '../hooks/done'
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
 import { draw } from './render'
-import { glanceParts, nowLine, verbSplit } from '../hooks/panel'
+import { glanceParts, nowLine, verbSplit, TIE, tieFirst } from '../hooks/panel'
 import { PANE, rowCol, maxReading, noteShows, NOTE_MS, sameName, waitPhrase, waitReason, badge, evId, fitLabel, labelCol, machineTitle, machines, maxMeter, nestRows, runCount, shortTitle, parseSections, runCard, shortAge, timeTail, slide, stripAnsi } from '../hooks/panel'
 import { EVENTS_PY, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from '../hooks/events'
 import { REPOS_REL, parseBranches, parseCommits, webUrl } from '../hooks/github'
@@ -798,7 +798,7 @@ test('the Connectors tab: checks claude mcp list, caches name and status only, n
   expect((await ui.find({ type: 'Button', text: /^Gmail/ }))?.text).toBe('Gmail  ↗')
   expect((await ui.find({ type: 'Text', text: /^db$/ }))?.text).toBe('db')
   expect(await ui.find({ type: 'Button', text: /^db/ })).toBe(undefined)
-  expect((await ui.find({ type: 'Text', text: /me@gmail/ }))?.text).toBe('    me@gmail.test')
+  expect((await ui.find({ type: 'Text', text: /me@gmail/ }))?.text).toBe('    ⎿ me@gmail.test')
   expect((await ui.find({ type: 'Text', text: /needs sign-in/ }))?.text).toBe('  needs sign-in')
   expect((await ui.find({ type: 'Text', text: /^  failed$/ }))?.text).toBe('  failed')
   expect((await ui.find({ type: 'Text', text: /checked \d\d:\d\d/ }))?.text).toMatch(/^  checked \d\d:\d\d  $/)
@@ -1038,7 +1038,19 @@ test('the panel: titles, ids with badges, unlocks, a nested child, waiting on an
   // Line one: mark, bold title, bar, %, the note cut to what is left (less 4 for the [x] on a row that can be stopped).
   // Line two: the step and the time, dim. No area, no why until it opens.
   expect(lines).toContain('  • Big batch        ━━━━━━━━──  75%  waiting on Child … [x]')
-  expect(lines).toContain('    rebuild · 22m')
+  expect(lines).toContain('    ⎿ rebuild · 22m')
+  // The ⎿ ties line two to its row: dim, in its own box that never shrinks, so wrapped text lines up under the text.
+  const ties = (await ui.findAll({ type: 'Text' })).filter(t => t.text === TIE) as unknown as { props?: { dimColor?: boolean } }[]
+  expect(ties.length).toBe(2)
+  expect(ties.every(t => t.props?.dimColor)).toBe(true)
+  type N = { type: string; props?: Record<string, unknown>; children?: (N | string)[] }
+  const tieBoxes = (n: N | string): N[] => (typeof n === 'string' ? [] : [
+    ...(n.type === 'Box' && n.children?.length === 1 && draw(n)[0] === TIE ? [n] : []),
+    ...(n.children ?? []).flatMap(tieBoxes),
+  ])
+  const boxes = tieBoxes((await ui.find({ type: 'Box' })) as never)
+  expect(boxes.length).toBe(2)
+  expect(boxes.every(b => b.props?.flexShrink === 0)).toBe(true)
   expect(lines).toContain('  ◐ Train the model  ┄┄┄┄┄┄┄┄┄┄       12:50 running')
   let texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   expect(texts.filter(t => t === '[x]').length).toBe(1)
@@ -1048,8 +1060,8 @@ test('the panel: titles, ids with badges, unlocks, a nested child, waiting on an
   texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   // Opened: what it waits on, then area and why ("Other" left out), then the lens. No badge, no counts, no actions.
   expect(texts).toContain('waiting on: Child step')
-  expect(lines).toContain('    Answers · better search')
-  expect(lines).toContain('    the weekly report')
+  expect(lines).toContain('    ⎿ Answers · better search')
+  expect(lines).toContain('      the weekly report')
   expect(texts.some(t => /Claude agent|6 of 8|actions|cores|so far|Other ·/.test(t))).toBe(false)
   // The child shows under its open parent, marked ↳, with its own two lines.
   expect(await buttons()).toContain('Child step'.padEnd(col - 4))
@@ -1078,7 +1090,7 @@ test('the panel: titles, ids with badges, unlocks, a nested child, waiting on an
   await ui.press({ key: 'dno-nightly' })
   lines = await pic()
   texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  expect(lines).toContain('    Boards · Nightly import')
+  expect(lines).toContain('    ⎿ Boards · Nightly import')
   // The first impact line is not repeated, it fit on the row.
   expect(texts.filter(t => t === 'Board links rebuilt: 1.29M pairs').length).toBe(1)
   expect(texts).toContain('109K split people merged')
@@ -1347,7 +1359,7 @@ test('to-do rows: one line each, ▶ next, ⏸ blocked, one waits for line per r
     'head',
     '⏸  1.  trends per org',
     '⏸  2.  grant links',
-    '~ waits for Load 2019-20 filin…',
+    '~ waits for Load 2019-20 fil…',
     '▶  3.  a very long title that will …',
   ])
   // Items the file does not number are numbered by their place, so every row starts with "1.", "2.", ...
@@ -1723,6 +1735,14 @@ test('the List tab: a server row has no bar and no stuck mark, a paired agent is
 
 // ---- 0.28.7: ADHD-friendly List tab: status at a glance, NEEDS YOU first, two-line rows, DONE folded ----
 
+test('tieFirst: only the first line under a row takes the ⎿, none when a line already sits above', () => {
+  const mk = (t: string) => (first: boolean) => `${first ? TIE : '  '}${t}`
+  expect(TIE).toBe('⎿ ')
+  expect(tieFirst([null, mk('step'), false, mk('why'), mk('gain')])).toEqual(['⎿ step', '  why', '  gain'])
+  expect(tieFirst([mk('why'), mk('gain')], true)).toEqual(['  why', '  gain'])
+  expect(tieFirst([])).toEqual([])
+})
+
 test('glanceParts, verbSplit and nowLine: the status line, a bold verb, a running row\'s second line', () => {
   expect(glanceParts({ running: 2, waiting: 0, needs: 1, done: 15 })).toEqual([
     { text: '2 running', strong: false }, { text: '1 needs you', strong: true }, { text: '15 done today', strong: false },
@@ -1785,6 +1805,6 @@ test('NEEDS YOU: absent when nothing needs you, no empty heading', async ($, on)
   expect(lines.join('\n')).not.toMatch(/NEEDS YOU|needs you/)
   // Two lines for the running row: bold title with bar and %, then the step and time, dim.
   const at = lines.findIndex(l => /^  ◐ Job/.test(l))
-  expect(lines[at + 1]).toBe('    a step · 3m')
+  expect(lines[at + 1]).toBe('    ⎿ a step · 3m')
   await ui.unmount()
 })

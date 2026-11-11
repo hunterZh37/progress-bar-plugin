@@ -357,7 +357,7 @@ NEEDS YOU  3
 
 ▾ RUNNING  1
   ⚠ Nightly import   ━━━━━━━━──  80%  ⚠ stuck 14m
-    batch 4 · 2h
+    ⎿ batch 4 · 2h
 
 ▸ DONE TODAY  1
 ```
@@ -376,6 +376,7 @@ The status line then reads:
 - **On by default:** the first session writes `~/.claude-progress/.state/panel-on`. With that file the pane opens at session start and the status line prints the summary. `panel off` deletes it, writes `.state/panel-off` so the default never turns it back on, and closes the pane. `panel on` undoes that. With **Open the Status panel** off in `/config`, nothing is written and `/progress-bar` opens it once.
 - **To-do menu:** click a to-do (under TO-DO, or your own under NEEDS YOU) for Done, Up, Down, Start (a ready machine item), Delete or Move back to to-do (a checked-off one). It edits this project's list, on the line that still holds that item's text, so a line added since the panel drew never hits the wrong item. TO-DO lists open items only. Checked-off ones move to DONE under **Checked-off to-dos**, after finished jobs, and count there.
 - **Rows:** clustered by area (see **Goal view**). To-dos one per line under each machine (yours under NEEDS YOU), running jobs a line and a dim step line each, a press opening the details (see **Running cards**), done jobs one line each with their impact and finish time (see **Done rows**).
+- **Tied lines (0.28.13):** every dim line under a row starts with a dim `⎿ `, as Claude Code ties a command's output to it. Only the first line under a row gets it, the next ones line up under its text, and wrapped text indents under the text, not under `⎿`. This covers running and waiting rows, open cards, open DONE rows, `waits for` to-do lines, recap and inbox lines, Log details and Connectors accounts. One-line rows (LOCALHOST, to-dos) have none.
 - **Status line on:** after **▶ Turn on status line**, the answer (`Status line on: ...`) shows for 3 minutes, then clears.
 - **Tabs:** words, `List  Connectors  GitHub  Log  Chat  Topology`. The shown tab is bold cyan, the others dim. Connectors adds `!N` when N need attention (`Connectors !2`), Log adds `!N` for unseen errors, Chat adds the unread count (`Chat 3`). In a pane too narrow for the full names they shorten to `List  Conn  Git  Log  Chat  Topo`. **List** (the default) shows the goal view above. **Connectors** shows your connectors, **GitHub** your repos, **Log** the events log, **Topology** your machines.
 
@@ -385,10 +386,10 @@ DONE starts folded to `▸ DONE TODAY  N`. Open, each finished job is a button, 
 
 ```
   ✓ Board links rebuilt: 1.29M pairs  11:50
-    Boards · Board links rebuild
-    109K split people merged
-    finished 11:50 · ran 1h20m · machine: Mac
-    unlocks: people pages
+    ⎿ Boards · Board links rebuild
+      109K split people merged
+      finished 11:50 · ran 1h20m · machine: Mac
+      unlocks: people pages
 ```
 
 - **Impact:** the job's `impact` lines, or an agent's short report, each wrapped under its indent. The first line is the row itself, and shows again in the card only when the row had to cut it. The card starts with `<Area> · <title>`. `no impact reported` when there is none. Named `gains` follow as `quality: …`.
