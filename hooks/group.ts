@@ -244,7 +244,7 @@ def todo_file(cwd=None):
     """This project's to-do list, from PB_CWD (the session's folder the status line script passes).
     ~/.claude-progress/todos/projects.txt ("<path prefix><TAB><slug or file>", longest prefix wins) maps first,
     a value ending .txt being a file under ~/.claude-progress (todo.txt = the old single list).
-    Else todos/<slug>.txt, the slug from the git root (or the folder) under home: ~/Desktop/NomBot -> desktop-nombot.
+    Else todos/<slug>.txt, the slug from the git root (or the folder) under home: ~/Desktop/MyApp -> desktop-myapp.
     No folder at all: todo.txt."""
     return os.path.join(ROOT, project_of(cwd)[0])
 

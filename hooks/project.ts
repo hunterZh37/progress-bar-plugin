@@ -1,7 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 // Per-project to-dos. A session's list is ~/.claude-progress/todos/<slug>.txt, where the slug comes from the
-// session's git root (or its folder when it is not in a repo), relative to home: ~/Desktop/NomBot -> desktop-nombot.
+// session's git root (or its folder when it is not in a repo), relative to home: ~/Desktop/MyApp -> desktop-myapp.
 // ~/.claude-progress/todos/projects.txt maps folders to a list first: "<path prefix><TAB><slug or file>", longest
 // prefix wins. A value ending in .txt is a file under ~/.claude-progress, so "todo.txt" keeps the old single list.
 // No folder at all (a script run without a session) also means todo.txt.

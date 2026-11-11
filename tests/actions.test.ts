@@ -34,7 +34,7 @@ function world(on: On, files: Record<string, string>, passing: Set<string>, darw
   on('clock.now', () => ({ value: 1800000000000 }))
   on('clock.every', async () => { await new Promise<void>(() => {}); return { value: undefined } })
   on('clock.after', async () => { await new Promise<void>(() => {}); return { value: undefined } })
-  on('session.cwd', () => ({ value: `${HOME}/Desktop/NomBot` }))
+  on('session.cwd', () => ({ value: `${HOME}/Desktop/Orders` }))
   on('process.run', (_, e) => {
     const argv = [...e.argv]
     const stdin = e.init?.stdin
@@ -61,7 +61,7 @@ function world(on: On, files: Record<string, string>, passing: Set<string>, darw
   return ran
 }
 const submit = ($: Engine, text: string) => $.prompt.submit({ text, origin: { kind: 'composer' }, wait: false } as never) as Promise<{ text?: string; drop?: string }>
-const start = ($: Engine) => $.session.start({ cwd: `${HOME}/Desktop/NomBot`, surface: 'terminal', isInteractive: true })
+const start = ($: Engine) => $.session.start({ cwd: `${HOME}/Desktop/Orders`, surface: 'terminal', isInteractive: true })
 
 test('parseActions: list or {actions}, bad rows skipped, control characters cleaned', () => {
   const t = JSON.stringify([{ id: 'a', title: 'T\nx', command: 'ls\u0007', status: 'weird' }, { id: 'a', title: 'dup' }, { title: 'no id' }, 7, { id: 'b', title: 'B', status: 'done', check: 'true', project: 'p' }])
@@ -73,13 +73,13 @@ test('parseActions: list or {actions}, bad rows skipped, control characters clea
 })
 
 test('addAction dedupes open ones, appliesTo matches slug, file or global', () => {
-  const r = addAction([], { title: 'Deploy', command: 'make swap', why: 'ship', check: 'test -e x', project: 'desktop-nombot' }, 5, 'id1')
+  const r = addAction([], { title: 'Deploy', command: 'make swap', why: 'ship', check: 'test -e x', project: 'desktop-orders' }, 5, 'id1')
   expect(r.isNew).toBe(true)
-  expect(r.action).toEqual({ id: 'id1', title: 'Deploy', why: 'ship', priority: 'high', created: 5, status: 'open', command: 'make swap', check: 'test -e x', project: 'desktop-nombot' })
+  expect(r.action).toEqual({ id: 'id1', title: 'Deploy', why: 'ship', priority: 'high', created: 5, status: 'open', command: 'make swap', check: 'test -e x', project: 'desktop-orders' })
   expect(addAction(r.list, { title: 'Deploy', command: 'make swap' }, 6, 'id2').isNew).toBe(false)
-  const proj = { slug: 'desktop-nombot', file: 'todo.txt' }
+  const proj = { slug: 'desktop-orders', file: 'todo.txt' }
   expect(appliesTo(A({ id: 'g', title: 'g' }), proj)).toBe(true)
-  expect(appliesTo(A({ id: 'p', title: 'p', project: 'desktop-nombot' }), proj)).toBe(true)
+  expect(appliesTo(A({ id: 'p', title: 'p', project: 'desktop-orders' }), proj)).toBe(true)
   expect(appliesTo(A({ id: 'f', title: 'f', project: 'todo.txt' }), proj)).toBe(true)
   expect(appliesTo(A({ id: 'o', title: 'o', project: 'code-cyber' }), proj)).toBe(false)
   expect(appliesTo(A({ id: 'o', title: 'o', project: 'code-cyber' }), { slug: 'x', file: 'todos/code-cyber.txt' })).toBe(true)
@@ -205,7 +205,7 @@ test('action_add tool: writes the action, opens the Action needed pane, notifies
   const r = await $.tool.call({ tool: 'mcp__progress-bar__action_add', title: 'Deploy', command: 'echo "a\'b" && make swap', why: 'ship it', check: 'test -e /x' } as never) as unknown as { result?: string }
   expect(String(r.result ?? JSON.stringify(r))).toContain('Action added: Deploy')
   const l = parseActions(files[AF]!)
-  expect(l.map(a => [a.title, a.project, a.status])).toEqual([['Deploy', 'desktop-nombot', 'open']])
+  expect(l.map(a => [a.title, a.project, a.status])).toEqual([['Deploy', 'desktop-orders', 'open']])
   await new Promise(res => setTimeout(res, 50))
   expect(opened).toContain(ACTION_PANE)
   const osa = ran.filter(x => x.argv[0] === 'osascript')
@@ -244,16 +244,16 @@ test('no popup off macOS, the gate still holds', async ($, on) => {
 })
 
 test('panel: a NEEDS YOU line first on the List tab with Copy, I ran it and Skip', async ($, on) => {
-  const files: Record<string, string> = { [SCRIPT]: statusScript(), [`${P}/.state/panel-on`]: 'on\n', [AF]: JSON.stringify([A({ id: 'a1', title: 'Swap in the NomBot build', command: 'cd ~/x && mv .next-build .next && launchctl kickstart -k gui/501/org.iog.nombot', check: 'grep -qx B id' })]) }
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [`${P}/.state/panel-on`]: 'on\n', [AF]: JSON.stringify([A({ id: 'a1', title: 'Swap in the Orders build', command: 'cd ~/x && mv .next-build .next && launchctl kickstart -k gui/501/org.example.orders', check: 'grep -qx B id' })]) }
   const ran = world(on, files, new Set())
   await start($)
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
   const t = (await ui.findAll({ type: 'Text' })).map(x => x.text ?? '')
   // In the Status panel an action is a NEEDS YOU line, its verb bold, first of all.
   expect(t).toContain('NEEDS YOU  1')
-  expect(t.indexOf('NEEDS YOU  1')).toBeLessThan(t.indexOf('$ cd ~/x && mv .next-build .next && launchctl kickstart -k gui/501/org.iog.nombot'))
+  expect(t.indexOf('NEEDS YOU  1')).toBeLessThan(t.indexOf('$ cd ~/x && mv .next-build .next && launchctl kickstart -k gui/501/org.example.orders'))
   expect(t).toContain('Swap')
-  expect(t).toContain(' in the NomBot build')
+  expect(t).toContain(' in the Orders build')
   expect(t.some(x => x.startsWith('$ cd ~/x'))).toBe(true)
   await ui.press({ key: 'act-ran-a1' })
   expect(parseActions(files[AF]!)[0]!.status).toBe('open')

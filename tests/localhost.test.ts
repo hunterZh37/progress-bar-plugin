@@ -131,7 +131,7 @@ test('localRows: Docker and system listeners hidden, the project dev server and 
 test('shellOf and shellPorts: npm run dev names no port, its next-server child listens on :3000', () => {
   const procs = parsePs([
     '11941  2074   502 Tue Nov 10 10:00:00 2026     claude --chrome --resume abc',
-    "18974 11941   502 Tue Nov 10 10:00:01 2026     /bin/zsh -c source /x/snapshot.sh && eval 'cd ~/Desktop/waytomatter && npm run dev > /tmp/w.log 2>&1' < /dev/null",
+    "18974 11941   502 Tue Nov 10 10:00:01 2026     /bin/zsh -c source /x/snapshot.sh && eval 'cd ~/Desktop/shopwebsite && npm run dev > /tmp/w.log 2>&1' < /dev/null",
     '18984 18974   502 Tue Nov 10 10:00:01 2026     npm run dev',
     '19051 18984   502 Tue Nov 10 10:00:02 2026     node /x/node_modules/.bin/next dev',
     '19070 19051   502 Tue Nov 10 10:00:03 2026     next-server (v16.4.3)',
@@ -139,22 +139,22 @@ test('shellOf and shellPorts: npm run dev names no port, its next-server child l
     ' 2074  1291   502 Tue Nov 10 09:00:00 2026     -zsh',
   ].join('\n'))
   const sh = shellOf(19070, procs)
-  expect(sh).toContain('cd ~/Desktop/waytomatter && npm run dev')
+  expect(sh).toContain('cd ~/Desktop/shopwebsite && npm run dev')
   // a server the person started in their own terminal has no Claude shell
   expect(shellOf(30000, procs)).toBe('')
   expect(shellOf(424242, procs)).toBe('')
   const listening = [
-    { pid: 19070, cmd: 'node', port: 3000, cwd: '/Users/a/waytomatter', shell: sh },
+    { pid: 19070, cmd: 'node', port: 3000, cwd: '/Users/a/shopwebsite', shell: sh },
     { pid: 30000, cmd: 'node', port: 8080, cwd: '/Users/a' },
   ]
-  expect(shellPorts("cd ~/Desktop/waytomatter && npm run dev > /tmp/w.log 2>&1", listening)).toEqual([3000])
+  expect(shellPorts("cd ~/Desktop/shopwebsite && npm run dev > /tmp/w.log 2>&1", listening)).toEqual([3000])
   expect(shellPorts('npm test', listening)).toEqual([])
   expect(shellPorts('', listening)).toEqual([])
 })
 
 test('purposeOf: what a server is for, without the leading verbs', () => {
-  expect(purposeOf('Build, swap and health-check NomBot with trends')).toBe('NomBot with trends')
-  expect(purposeOf('Start the WayToMatter dev server')).toBe('WayToMatter dev server')
+  expect(purposeOf('Build, swap and health-check Orders with trends')).toBe('Orders with trends')
+  expect(purposeOf('Start the ShopWebsite dev server')).toBe('ShopWebsite dev server')
   expect(purposeOf('Run vite on 5381')).toBe('Vite on 5381')
   expect(purposeOf('Starter kit preview')).toBe('Starter kit preview')
   expect(purposeOf('Start')).toBe('Start')
@@ -164,21 +164,21 @@ test('localRows: a server shell joins its port row once, a named page keeps its 
   const view = {
     root: '/Users/a/demo',
     at: 0,
-    labels: [{ port: 4000, path: '/', label: 'NomBot app' }],
+    labels: [{ port: 4000, path: '/', label: 'Orders app' }],
     listening: [
       { pid: 1, cmd: 'node', port: 4000, cwd: '/Users/a/demo', http: true },
       { pid: 2, cmd: 'node', port: 3000, cwd: '/Users/a/demo', http: true, mine: true },
     ],
   }
   const rows = localRows([
-    { name: 'shell-build-swap-nombot', server: true, title: 'Build, swap and health-check NomBot with trends', ports: [4000] },
-    { name: 'shell-start-waytomatter', server: true, title: 'Start the WayToMatter dev server', ports: [3000] },
+    { name: 'shell-build-swap-orders', server: true, title: 'Build, swap and health-check Orders with trends', ports: [4000] },
+    { name: 'shell-start-shopwebsite', server: true, title: 'Start the ShopWebsite dev server', ports: [3000] },
     { name: 'shell-start-other', server: true, title: 'Start the other dev server', ports: [] },
     { name: 'shell-curl-check', server: false, title: 'Check health', ports: [3000] },
   ], view)
   expect(rows.map(r => [r.port, r.title, r.shell ?? '', r.up])).toEqual([
-    [3000, 'WayToMatter dev server', 'shell-start-waytomatter', true],
-    [4000, 'NomBot app', 'shell-build-swap-nombot', true],
+    [3000, 'ShopWebsite dev server', 'shell-start-shopwebsite', true],
+    [4000, 'Orders app', 'shell-build-swap-orders', true],
     [0, 'Other dev server', 'shell-start-other', true],
   ])
   // one row per port: the listener on :3000 is not listed again

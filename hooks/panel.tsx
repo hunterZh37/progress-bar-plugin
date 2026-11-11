@@ -348,8 +348,8 @@ export function runCard(row: string): RunCard {
 }
 
 /**
- * Whether a job's raw name says what its title says: the same words, any case, a machine prefix ("Hunty: ") or a
- * leading machine word left out. "Hunty: similar orgs" and "Hunty similar orgs" are the same, so is "mac-label-x" and
+ * Whether a job's raw name says what its title says: the same words, any case, a machine prefix ("Server-1: ") or a
+ * leading machine word left out. "Server-1: nightly import" and "Server-1 nightly import" are the same, so is "mac-label-x" and
  * "Mac: Mac label x".
  */
 export function sameName(name: string, title: string): boolean {
@@ -422,7 +422,7 @@ export function shortTitle(t: string): string {
 const cap = (x: string) => x.charAt(0).toUpperCase() + x.slice(1)
 
 /**
- * Machines for row labels: remote hosts are "<host>: name" row prefixes plus to-do headings ([mac], [hunty], ...).
+ * Machines for row labels: remote hosts are "<host>: name" row prefixes plus to-do headings ([mac], [server-1], ...).
  * The local one is the heading named mac or local, else the first heading that is neither "you" nor a remote host.
  */
 export function machines(rowNames: string[], owners: string[]): { local: string; remote: string[] } {
@@ -434,8 +434,8 @@ export function machines(rowNames: string[], owners: string[]): { local: string;
 }
 
 /**
- * A running job's label with its machine in front: "Hunty: Similar orgs" or "Mac: Health care". The machine comes
- * from the row name ("hunty: x"), else a title starting with a remote host ("Hunty CPU batch"), else the local one.
+ * A running job's label with its machine in front: "Server-1: Nightly import" or "Mac: Docs build". The machine comes
+ * from the row name ("server-1: x"), else a title starting with a remote host ("Server-1 CPU batch"), else the local one.
  * With no remote machine known, it is the plain short title.
  */
 export function machineTitle(name: string, title: string, m: { local: string; remote: string[] }): string {

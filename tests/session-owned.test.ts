@@ -72,13 +72,13 @@ const report = (args: Record<string, unknown>) => ({ tool: 'mcp__progress-bar__p
 
 test('owners: session wins while it is open, then cwd, then shared', () => {
   const me = { key: KEY, project: 'code-shop' }
-  const live = new Map([[sessionKeyOf(OTHER), 'nombot']])
-  const proj = (c: string) => (c.startsWith('/home/u/code/shop') ? 'code-shop' : c.includes('NomBot') ? 'nombot' : 'other')
+  const live = new Map([[sessionKeyOf(OTHER), 'orders']])
+  const proj = (c: string) => (c.startsWith('/home/u/code/shop') ? 'code-shop' : c.includes('Orders') ? 'orders' : 'other')
   expect(routeOf({ session: SID }, me, live, proj)).toBe('mine')
   expect(routeOf({ session: OTHER, cwd: CWD }, me, live, proj)).toBe('skip')
   // A closed session falls back to its folder.
   expect(routeOf({ session: 'closed-session-id', cwd: CWD }, me, live, proj)).toBe('mine')
-  expect(routeOf({ cwd: '/home/u/Desktop/NomBot' }, me, live, proj)).toBe('skip')
+  expect(routeOf({ cwd: '/home/u/Desktop/Orders' }, me, live, proj)).toBe('skip')
   // A project with no open session: shared, so the job still shows somewhere.
   expect(routeOf({ cwd: '/tmp/x' }, me, live, proj)).toBe('shared')
   expect(routeOf({}, me, live, proj)).toBe('shared')
@@ -115,10 +115,10 @@ test('a file with this session shows only here, another open session keeps its o
     [`${P}/mine.json`]: job({ session: SID }),
     [`${P}/theirs.json`]: job({ session: OTHER, cwd: CWD }),
     [`${P}/shop-job.json`]: job({ cwd: `${CWD}/web` }),
-    [`${P}/nombot-job.json`]: job({ cwd: '/home/u/Desktop/NomBot' }),
-    [`${P}/.state/claims-${sessionKeyOf(OTHER)}.txt`]: '#project desktop-nombot\n',
+    [`${P}/orders-job.json`]: job({ cwd: '/home/u/Desktop/Orders' }),
+    [`${P}/.state/claims-${sessionKeyOf(OTHER)}.txt`]: '#project desktop-orders\n',
     [`${CWD}/.git/HEAD`]: 'ref',
-    '/home/u/Desktop/NomBot/.git/HEAD': 'ref',
+    '/home/u/Desktop/Orders/.git/HEAD': 'ref',
   }
   world(on, files)
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
@@ -127,7 +127,7 @@ test('a file with this session shows only here, another open session keeps its o
   expect(mine).toContain('mine')
   expect(mine).toContain('shop-job')
   expect(mine).not.toContain('theirs')
-  expect(mine).not.toContain('nombot-job')
+  expect(mine).not.toContain('orders-job')
   expect(files[`${L}/jobs.txt`] ?? '').toBe('')
   expect(files[`${P}/.state/claims-${KEY}.txt`]).toContain('#project code-shop')
 })
@@ -254,14 +254,14 @@ test('opting out in /config: no status line and no panel', { options: { statusLi
 })
 
 // 0.22.1: never chain a status line that is itself a progress status line (doubled rows, poisoned group-seen files).
-const OLD_LOCAL = `${HOME}/label-logs/statusline.sh`
+const OLD_LOCAL = `${HOME}/batch-logs/statusline.sh`
 const OLD_LOCAL_TEXT = '#!/bin/zsh\nfor x in ~/.claude-progress/.lines/*.txt(N); do awk 1 "$x"; done | python3 ~/.claude-progress/group.py\n'
 
 test('chain: a command or the script it names that prints progress lines is a progress status line', async () => {
   expect(scriptPaths(`bash "~/a b/s.sh" $HOME/x.sh \${HOME}/y.sh jq`, HOME)).toEqual([`${HOME}/a b/s.sh`, `${HOME}/x.sh`, `${HOME}/y.sh`])
   const files: Record<string, string> = { [OLD_LOCAL]: OLD_LOCAL_TEXT, [`${HOME}/plain.sh`]: 'echo hi\n' }
   const readHead = async (p: string) => files[p]
-  expect(await isProgressLine('~/label-logs/statusline.sh', HOME, readHead)).toBe(true)
+  expect(await isProgressLine('~/batch-logs/statusline.sh', HOME, readHead)).toBe(true)
   expect(await isProgressLine('python3 ~/bin/group.py', HOME, readHead)).toBe(true)
   expect(await isProgressLine('$HOME/.claude/progress-bar/statusline.sh', HOME, readHead)).toBe(true)
   expect(await isProgressLine('~/plain.sh', HOME, readHead)).toBe(false)
@@ -270,14 +270,14 @@ test('chain: a command or the script it names that prints progress lines is a pr
 
 test('an old local progress status line in settings is never chained', async ($, on) => {
   const files: Record<string, string> = { [OLD_LOCAL]: OLD_LOCAL_TEXT }
-  world(on, files, { userStatusLine: '~/label-logs/statusline.sh' })
+  world(on, files, { userStatusLine: '~/batch-logs/statusline.sh' })
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
   await settle($ as never)
   expect(prevOf(files[SCRIPT]!)).toBe(undefined)
 })
 
 test('an install that chained a progress status line (0.22.0) drops it on the next start', async ($, on) => {
-  const files: Record<string, string> = { [OLD_LOCAL]: OLD_LOCAL_TEXT, [SCRIPT]: statusScript('~/label-logs/statusline.sh') }
+  const files: Record<string, string> = { [OLD_LOCAL]: OLD_LOCAL_TEXT, [SCRIPT]: statusScript('~/batch-logs/statusline.sh') }
   world(on, files)
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
   await settle($ as never)
@@ -302,11 +302,11 @@ test('the panel never draws blank: a failing status script shows why', async ($,
 })
 
 test('settings.read hook skipped: the reason, logged once, cleared once the script runs', () => {
-  const off = statusOffReason(false, '~/label-logs/statusline.sh')
-  expect(off).toBe("The status line was not switched over (it still runs ~/label-logs/statusline.sh). Another plugin's settings.read hook may run first.")
+  const off = statusOffReason(false, '~/batch-logs/statusline.sh')
+  expect(off).toBe("The status line was not switched over (it still runs ~/batch-logs/statusline.sh). Another plugin's settings.read hook may run first.")
   expect(statusOffReason(false, undefined)).toContain('not switched over.')
   expect(statusOffReason(false, '~/.claude/progress-bar/statusline.sh')).toBe('')
-  expect(statusOffReason(true, '~/label-logs/statusline.sh')).toBe('')
+  expect(statusOffReason(true, '~/batch-logs/statusline.sh')).toBe('')
   expect(statusOffAction(off, false)).toBe('log')
   expect(statusOffAction(off, true)).toBe('none')
   expect(statusOffAction('', true)).toBe('clear')
@@ -314,9 +314,9 @@ test('settings.read hook skipped: the reason, logged once, cleared once the scri
 })
 
 test('the panel offers Turn on status line, which writes the settings file holding the winning status line', async ($, on) => {
-  const off = statusOffReason(false, '~/label-logs/statusline.sh')
+  const off = statusOffReason(false, '~/batch-logs/statusline.sh')
   const files: Record<string, string> = { [OLD_LOCAL]: OLD_LOCAL_TEXT, [`${CWD}/.claude/settings.json`]: '{ "model": "opus" }', [`${HOME}/${STATUS_OFF_REL}`]: `${off}\n` }
-  world(on, files, { projectStatusLine: '~/label-logs/statusline.sh' })
+  world(on, files, { projectStatusLine: '~/batch-logs/statusline.sh' })
   // The pane reads the marker noteStatusLine leaves when the settings.read hook was skipped.
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
   await settle($ as never)
@@ -332,7 +332,7 @@ test('the panel offers Turn on status line, which writes the settings file holdi
 })
 
 test('a waiting agent says what it waits on: its background task, else its last action', { options: { openPanel: false } }, async ($, on) => {
-  const agents = [{ id: 'ag1', description: 'Mac Jev first pass for labels', status: 'running' }]
+  const agents = [{ id: 'ag1', description: 'Mac Map first pass for labels', status: 'running' }]
   const files: Record<string, string> = { [`${P}/mac-label-top-ups-2021-23.json`]: JSON.stringify({ done: 90, total: 100, step: 'batch 9', title: 'Mac label top-ups 2021-23', session: SID }) }
   world(on, files, { agents })
   on('tool.call', () => ({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bg9' } as never }))
@@ -342,17 +342,17 @@ test('a waiting agent says what it waits on: its background task, else its last 
   await settle($ as never)
   const row = () => files[`${L}/agents-${KEY}.txt`]!.split('\n')[0]
   // Its background task, and the running job the task's words name.
-  expect(row()).toBe('▶ Mac Jev first pass for labels waiting · waiting on: Wait for the top-up run to finish (Mac label top-ups 2021-23 90%) · waiting 0m · 0m · 1 tools · Bash')
+  expect(row()).toBe('▶ Mac Map first pass for labels waiting · waiting on: Wait for the top-up run to finish (Mac label top-ups 2021-23 90%) · waiting 0m · 0m · 1 tools · Bash')
   // A stop that no longer lists the task: it is over, so the row falls back to the agent's last action.
   await $.classic.Stop({ stop_hook_active: false, background_tasks: [] } as never)
   await settle($ as never)
-  expect(row()).toBe('▶ Mac Jev first pass for labels waiting · last action 0m ago: Bash, Wait for the top-up run to finish · waiting 0m · 0m · 1 tools · Bash')
+  expect(row()).toBe('▶ Mac Map first pass for labels waiting · last action 0m ago: Bash, Wait for the top-up run to finish · waiting 0m · 0m · 1 tools · Bash')
   // The tasks and times are saved, so a reload keeps them.
   expect(JSON.parse(files[`${P}/.state/seen-${KEY}.json`]!).ag1).toMatchObject({ lastWhat: 'Wait for the top-up run to finish', lastAt: NOW, waitSince: NOW })
 })
 
 test('after a reload: the waiting agent transcript gives its running task, its last call and the job it writes', { options: { openPanel: false } }, async ($, on) => {
-  const agents = [{ id: 'ag2', description: 'Mac Jev first pass for labels', status: 'waiting' }]
+  const agents = [{ id: 'ag2', description: 'Mac Map first pass for labels', status: 'waiting' }]
   const TX = `${HOME}/.claude/projects/${CWD.replace(/[^A-Za-z0-9]/g, '-')}/${SID}`
   const tx = [
     JSON.stringify({ timestamp: new Date(NOW - 25 * 60_000).toISOString(), message: { content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'python3 -c "open(\'~/.claude-progress/mac-label-top-ups-2021-23.json\')"', description: 'One long wait with tighter error pattern, 10 min checks', run_in_background: true } }] } }),
@@ -369,7 +369,7 @@ test('after a reload: the waiting agent transcript gives its running task, its l
   // A Stop with no task list changes nothing.
   await $.classic.Stop({ stop_hook_active: false } as never)
   await settle($ as never)
-  expect(files[`${L}/agents-${KEY}.txt`]!.split('\n')[0]).toBe('▶ Mac Jev first pass for labels waiting · waiting on: One long wait with tighter error pattern, 10 min checks (Mac label top-ups 2021-23 90%) · waiting 25m · 1h00m · 54 tools · Bash')
+  expect(files[`${L}/agents-${KEY}.txt`]!.split('\n')[0]).toBe('▶ Mac Map first pass for labels waiting · waiting on: One long wait with tighter error pattern, 10 min checks (Mac label top-ups 2021-23 90%) · waiting 25m · 1h00m · 54 tools · Bash')
   // Saved at the next poll, so a reload keeps them.
   await settle($ as never)
   expect(JSON.parse(files[`${P}/.state/seen-${KEY}.json`]!).ag2).toMatchObject({ lastWhat: 'One long wait with tighter error pattern, 10 min checks', lastAt: NOW - 25 * 60_000 })
@@ -402,7 +402,7 @@ test('done records: progress_report finished with impact, and a job file that va
 })
 
 test('done records: an agent keeps a short impact from its SubagentHandback report, or its transcript at SubagentStop', { options: { openPanel: false } }, async ($, on) => {
-  const agents = [{ id: 'ag1', description: 'Hunty person matcher fix', status: 'running' }, { id: 'ag2', description: 'Grade the sample', status: 'running' }]
+  const agents = [{ id: 'ag1', description: 'Linux person matcher fix', status: 'running' }, { id: 'ag2', description: 'Grade the sample', status: 'running' }]
   const tx = [
     JSON.stringify({ type: 'user', timestamp: new Date(NOW - 3_600_000).toISOString(), message: { role: 'user', content: 'go' } }),
     JSON.stringify({ type: 'assistant', timestamp: new Date(NOW - 60_000).toISOString(), message: { role: 'assistant', content: [{ type: 'text', text: '## Result\n\n**Graded 200 rows: 96% match the labels.** Two labels were wrong.' }] } }),
@@ -414,11 +414,11 @@ test('done records: an agent keeps a short impact from its SubagentHandback repo
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
   await settle($ as never)
   await $.tool.call({ tool: 'SubagentHandback', agentId: 'ag1', message: 'The person matcher is fixed, applied to the live database and pushed. Commit **12f5c8d** is on `main`.\n\n**What changed**\n- **Migration 095:** dates cut from names.' } as never)
-  expect(rec(files, 'hunty-person-matcher-fix')).toMatchObject({ title: 'Hunty person matcher fix', kind: 'agent', impact: ['The person matcher is fixed, applied to the live database and pushed.', 'Commit 12f5c8d is on main.', 'Migration 095: dates cut from names.'], finished: NOW, session: SID })
+  expect(rec(files, 'linux-person-matcher-fix')).toMatchObject({ title: 'Linux person matcher fix', kind: 'agent', impact: ['The person matcher is fixed, applied to the live database and pushed.', 'Commit 12f5c8d is on main.', 'Migration 095: dates cut from names.'], finished: NOW, session: SID })
   // Its SubagentStop keeps the handback report.
   await $.classic.SubagentStop({ agent_id: 'ag1', agent_transcript_path: '/tx/ag1.jsonl' } as never)
   await settle($ as never)
-  expect(rec(files, 'hunty-person-matcher-fix').impact).toHaveLength(3)
+  expect(rec(files, 'linux-person-matcher-fix').impact).toHaveLength(3)
   // No handback: the last text in its transcript, the first bold sentence.
   await $.classic.SubagentStop({ agent_id: 'ag2', agent_transcript_path: '/tx/ag2.jsonl' } as never)
   await settle($ as never)
@@ -430,21 +430,21 @@ test('a background dev server writes a "serving :port" row with its command, so 
   world(on, files)
   on('tool.call', () => ({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bg7' } as never }))
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
-  await $.tool.call({ tool: 'Bash', command: 'cd web && npm run dev -- -p 3000', description: 'Start WayToMatter dev server', run_in_background: true } as never)
-  expect(JSON.parse(files[`${P}/shell-start-waytomatter-dev-server.json`]!)).toMatchObject({ step: 'serving :3000', command: 'cd web && npm run dev -- -p 3000', taskId: 'bg7' })
+  await $.tool.call({ tool: 'Bash', command: 'cd web && npm run dev -- -p 3000', description: 'Start ShopWebsite dev server', run_in_background: true } as never)
+  expect(JSON.parse(files[`${P}/shell-start-shopwebsite-dev-server.json`]!)).toMatchObject({ step: 'serving :3000', command: 'cd web && npm run dev -- -p 3000', taskId: 'bg7' })
 })
 
 test('an agent whose progress file is named unlike its description shows as one row with that file\'s progress', { options: { openPanel: false } }, async ($, on) => {
   const agents = [{ id: 'ag5', description: 'Hold Hope until org list plays', status: 'running' }]
   const files: Record<string, string> = {
-    [`${P}/waytomatter-hold-hope-until-list.json`]: JSON.stringify({ done: 2, total: 4, step: 'Reading code', title: 'Hope waits for the org list, then talks', startedAt: NOW, session: SID }),
+    [`${P}/shopwebsite-hold-hope-until-list.json`]: JSON.stringify({ done: 2, total: 4, step: 'Reading code', title: 'Hope waits for the org list, then talks', startedAt: NOW, session: SID }),
   }
   world(on, files, { agents })
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
   await settle($ as never)
   const rows = (files[`${L}/agents-${KEY}.txt`] ?? '').split('\n').filter(Boolean)
   expect(rows).toEqual([expect.stringMatching(/^▶ Hold Hope until org list plays .* 50\.0% · 2\/4 · Reading code/)])
-  expect(JSON.parse(files[`${P}/.state/pairs-${KEY}.json`]!)).toEqual({ 'hold-hope-until-org-list-plays': 'waytomatter-hold-hope-until-list' })
+  expect(JSON.parse(files[`${P}/.state/pairs-${KEY}.json`]!)).toEqual({ 'hold-hope-until-org-list-plays': 'shopwebsite-hold-hope-until-list' })
 })
 
 test('a progress file marked stopped leaves RUNNING and is recorded as stopped by you', { options: { openPanel: false } }, async ($, on) => {

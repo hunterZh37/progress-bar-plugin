@@ -243,7 +243,7 @@ export type LocalRow = { key: string; port: number; path: string; url: string; t
 const VERB = String.raw`(?:build|rebuild|start|restart|run|launch|serve|boot|spin up|bring up|swap|deploy|redeploy|health-check|check|open)`
 const LEAD = new RegExp(String.raw`^\s*${VERB}(?:\s*(?:,\s*and|,|and)\s*${VERB})*\s+(?:(?:the|a|an)\s+)?`, 'i')
 
-/** What a server is for, from its shell's description: the leading verbs dropped ("Start the WayToMatter dev server" is "WayToMatter dev server"). */
+/** What a server is for, from its shell's description: the leading verbs dropped ("Start the myapp dev server" is "myapp dev server"). */
 export function purposeOf(title: string): string {
   const t = title.replace(LEAD, '').trim()
   return t ? t.charAt(0).toUpperCase() + t.slice(1) : title

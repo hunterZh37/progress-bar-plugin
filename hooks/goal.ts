@@ -87,7 +87,7 @@ function hits(text: string, kw: string): boolean {
 export type AreaText = { area?: string; title?: string; why?: string; impact?: string; step?: string }
 
 /**
- * A job's area. A named `area` matches an area by id or name (any case, "Boards" finds "Boards & people"); a name that
+ * A job's area. A named `area` matches an area by id or name (any case, "Search" finds "Search & filters"); a name that
  * matches none is an area of its own. Else keywords: each keyword found counts 2 in the title, 1 in the why, impact or
  * step, and the highest score wins (ties go to the area listed first). Nothing found: Other.
  */
@@ -154,7 +154,7 @@ export function lensTags(goal: Goal, gains: Gains | undefined, impact = ''): Len
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
-/** The anchor, one line: "Making the generosity database better · 6 done today · 3 running", the counts that are not zero. */
+/** The anchor, one line: "Make checkout faster · 6 done today · 3 running", the counts that are not zero. */
 export function anchorLine(anchor: string, done: number, running: number): string {
   return [anchor, done ? `${done} done today` : '', running ? `${running} running` : ''].filter(Boolean).join(' · ')
 }
@@ -197,8 +197,8 @@ export function groupByArea<T extends { area: GoalArea }>(goal: Goal, items: T[]
 }
 
 /**
- * A title without the machine in front, for the plain view: "Hunty grants linked to own filer" -> "Grants linked to own
- * filer", "hunty: x" -> "X". `hosts` are the known machine names (lower case). Cut at " · ".
+ * A title without the machine in front, for the plain view: "Server-1 nightly import" -> "Nightly
+ * import", "server-1: x" -> "X". `hosts` are the known machine names (lower case). Cut at " · ".
  */
 export function plainTitle(title: string, hosts: string[]): string {
   let t = title.split(' · ')[0]!.trim()

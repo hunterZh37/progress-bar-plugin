@@ -6,7 +6,7 @@ A [herdr](https://github.com/herdrdev/herdr) plugin that shows your Claude Code 
  CONNECTORS
  ✔ Gmail
  ✔ Google Drive
- ✔ nombot-db
+ ✔ orders-db
  ! Canva
  7 ok · 2 need sign-in
  checked 16:36 · next in 5m

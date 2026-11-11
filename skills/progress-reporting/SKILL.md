@@ -13,11 +13,11 @@ The progress-bar plugin draws a bar for every progress file in `~/.claude-progre
 
 ## Always say which part of the goal gets better, and how
 
-The Status panel marks every job with an area of the project's goal (`~/.claude-progress/goals/<project>.json`, the project slug as for its to-do list; for example "Making the generosity database better" with areas Organizations, Finances, Boards & people, Grants, Places, Causes, Answer quality, Tools). Anyone should be able to read it at a glance. On every job, set:
+The Status panel marks every job with an area of the project's goal (`~/.claude-progress/goals/<project>.json`, the project slug as for its to-do list; for example "Make checkout faster" with areas Search, Payments, Orders, Tools). Anyone should be able to read it at a glance. On every job, set:
 
-- **area**: the goal area it improves, by name (`Boards & people`). Pick from that file's areas; a project with no file has none, so leave it out there. When there are areas, never leave it out: a guess from keywords can mark a job with the wrong area.
+- **area**: the goal area it improves, by name (`Payments`). Pick from that file's areas; a project with no file has none, so leave it out there. When there are areas, never leave it out: a guess from keywords can mark a job with the wrong area.
 - **title**: the improvement itself, in plain words, not the machine or the mechanism (`Every board member counted, not just 25`).
-- **gains**: which of cost, quality, speed the job makes better, each a short plain line with a number when possible: `{"quality": "1.65M more board seats counted", "speed": "labels in 7h instead of 12h", "cost": "$14 of Jev instead of 34h of Claude"}`. Name only the ones that apply.
+- **gains**: which of cost, quality, speed the job makes better, each a short plain line with a number when possible: `{"quality": "12K more orders matched to customers", "speed": "import in 7h instead of 12h", "cost": "$14 of compute instead of $60"}`. Name only the ones that apply.
 - **impact** (before it ends): how the database, or whatever the goal names, is better now, with the key number.
 
 ## Easiest: the progress_report tool
@@ -25,12 +25,12 @@ The Status panel marks every job with an area of the project's goal (`~/.claude-
 Call `progress_report` (from the progress-bar plugin) when the job starts and after each step:
 
 ```
-progress_report(title: "Every board member counted, not just 25", why: "board links and people search see whole boards", area: "Boards & people", gains: {"quality": "1.65M more board seats counted"}, done: 2, total: 5, step: "run tests")
+progress_report(title: "Every order matched to its customer", why: "customer search sees whole order histories", area: "Orders", gains: {"quality": "12K more orders matched"}, done: 2, total: 5, step: "run tests")
 ```
 
 - It writes `~/.claude-progress/<slug of title>.json` with this session's id, folder and `startedAt` filled in, so the bar shows in this session's Status panel on any machine.
 - Pass `slug` to pick the file name, `parent` to nest it under a bigger job.
-- Pass `reads` and `writes` for a job that moves data between machines (`reads: "nombot.board_members_history"`, `writes: "Postgres via work-mac"`). The Status panel's Topology tab shows them on the branch between machines.
+- Pass `reads` and `writes` for a job that moves data between machines (`reads: "orders table"`, `writes: "Postgres on server-1"`). The Status panel's Topology tab shows them on the branch between machines.
 - At the end call it with `finished: true` and `impact`: what the job changed and why it matters, one to three short lines (`Board links rebuilt: 1.29M pairs, 109K split people merged`). That removes the bar and keeps the impact on its DONE row.
 - No tool (a shell script, a job on another machine)? Write the file yourself (below).
 
@@ -50,13 +50,13 @@ Path: `~/.claude-progress/<slug>.json`
 - **step**: a few words on the current step.
 - **startedAt**: optional, milliseconds since the epoch. Without it the file's time is used.
 - **title**: plain words for the improvement the job makes, so a person knows at a glance why it runs. Name the outcome, not the mechanism: `Every board member counted, not just 25` rather than `Board lists past 25 seats`, `Know where more orgs serve` rather than `Service places round 3`. The Status panel shows it in bold above the slug.
-- **area**: the goal area the job improves, by name from `~/.claude-progress/goals/<project>.json` (`Grants`, `Boards & people`). Set it whenever the project's goal has areas.
+- **area**: the goal area the job improves, by name from `~/.claude-progress/goals/<project>.json` (`Search`, `Payments`). Set it whenever the project's goal has areas.
 - **gains**: an object with any of `cost`, `quality`, `speed`, each a short plain line with a number when possible. State which of the three your job improves. They show in the job's opened card, `quality: <line>`.
 - **why**: what the job unlocks for the person (`the weekly report`). Shown dim under its row.
 - **parent**: the slug of the bigger job this is part of. Set it when a subagent or script works for another job that has a progress file. While both run, the child draws inside the parent's card, and the parent reads `waiting on: <child>` instead of stuck.
 - **session**: the Claude Code session id, so the bar shows only in this session. Include it only if you know it (`$CLAUDE_CODE_SESSION_ID` in Bash, when set). A subagent usually does not: leave it out rather than guess, and name the file after the slug of your Agent `description`. The plugin matches that slug to your agent and keeps the file in this session, also after a plugin reload.
 - **impact**: set it just before the job ends. Answer one question: how is the thing this job works on better now? Say what it now has or gets right, with the key number, and who or what benefits, one to three short lines (newlines split them). Example: `1.65M more board seats, so board links and people search see whole boards`. Skip mechanics like commit ids, accounts or file names. The Status panel shows it when the job's DONE row is opened. Without it the row says `no impact reported`.
-- **reads**, **writes**: optional short strings, what the job reads and writes (`nombot.board_members_history`, `Postgres via work-mac`). The Topology tab shows them on the branch between machines and in the job's details. Without `reads` a job on a helper machine is drawn reading from the data host's database. Set `writes` only when the job writes back.
+- **reads**, **writes**: optional short strings, what the job reads and writes (`orders table`, `Postgres on server-1`). The Topology tab shows them on the branch between machines and in the job's details. Without `reads` a job on a helper machine is drawn reading from the data host's database. Set `writes` only when the job writes back.
 - **cwd**: always add it, the absolute folder you work in. The bar then shows in the sessions of that project, even when the session id is missing or that session has closed.
 - **pid**, **cmd**: optional, for a script you start. `pid` is the job's process id (`$$` in Bash, `os.getpid()` in Python), `cmd` a piece of its command line (`crawl.py`). With them the panel's `[x]` can stop (SIGTERM) or pause (SIGSTOP) the job; it signals only a process of yours whose command still holds `cmd` and that started before the job's file.
 - **stopped**: the panel writes `"stopped": true, "stoppedAt": <ms>` when the person stops a job that has no `pid`. A script should read its file before each write, and quit cleanly when `stopped` is true (and keep the field when it merges).

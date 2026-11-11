@@ -63,10 +63,10 @@ test('two copies on one session: once the second starts only it writes, and the 
     return o
   }
   // The old copy knew the agent; the new one does not and would write an empty file.
-  const a = await start(NOW, '▶ NomBot org locations near me')
+  const a = await start(NOW, '▶ Orders org locations near me')
   for (const t of [...ticks]) t()
   await flush()
-  expect(files[out]).toBe('▶ NomBot org locations near me')
+  expect(files[out]).toBe('▶ Orders org locations near me')
   const b = await start(NOW + 1, '')
   expect(JSON.parse(files[`${HOME}/${ownerRel(KEY)}`]!).id).toBe(b.id)
   const seenOut: string[] = []
@@ -101,8 +101,8 @@ test('a copy whose session another copy claimed writes no line files', { options
 test('reload with a running agent: the new copy shows it from saved state, paired with its slug-named file', { options: { openPanel: false } }, async ($, on) => {
   const files: Record<string, string> = {
     // No session, no startedAt: named exactly the slug of the agent's description.
-    [`${P}/nombot-org-locations-near-me.json`]: JSON.stringify({ done: 2, total: 4, step: 'probing orgs', title: 'NomBot org locations near me', cwd: '/elsewhere' }),
-    [`${P}/${agentsRel(KEY)}`]: JSON.stringify({ agents: { ag9: { description: 'NomBot org locations near me', startedAt: NOW - 3_600_000, status: 'running', lastAt: NOW - 60_000 } } }),
+    [`${P}/orders-org-locations-near-me.json`]: JSON.stringify({ done: 2, total: 4, step: 'probing orgs', title: 'Orders org locations near me', cwd: '/elsewhere' }),
+    [`${P}/${agentsRel(KEY)}`]: JSON.stringify({ agents: { ag9: { description: 'Orders org locations near me', startedAt: NOW - 3_600_000, status: 'running', lastAt: NOW - 60_000 } } }),
   }
   // The engine's list in the new copy does not name the agent started before it loaded.
   world(on, files, [])
@@ -110,24 +110,24 @@ test('reload with a running agent: the new copy shows it from saved state, paire
   for (let i = 0; i < 3; i++) {
     await settle($ as never)
     const rows = (files[`${L}/agents-${KEY}.txt`] ?? '').split('\n').filter(Boolean)
-    expect(rows).toEqual([expect.stringMatching(/^▶ NomBot org locations near me .*50\.0% · 2\/4 · probing orgs/)])
-    expect(files[`${L}/jobs-${KEY}.txt`] ?? '').not.toMatch(/nombot/)
+    expect(rows).toEqual([expect.stringMatching(/^▶ Orders org locations near me .*50\.0% · 2\/4 · probing orgs/)])
+    expect(files[`${L}/jobs-${KEY}.txt`] ?? '').not.toMatch(/orders/)
   }
   const saved = JSON.parse(files[`${P}/${agentsRel(KEY)}`]!)
-  expect(saved.agents.ag9).toMatchObject({ description: 'NomBot org locations near me', startedAt: NOW - 3_600_000, file: 'nombot-org-locations-near-me' })
-  expect(saved.files['nombot-org-locations-near-me']).toBe(NOW)
+  expect(saved.agents.ag9).toMatchObject({ description: 'Orders org locations near me', startedAt: NOW - 3_600_000, file: 'orders-org-locations-near-me' })
+  expect(saved.files['orders-org-locations-near-me']).toBe(NOW)
 })
 
 test('reload: a saved pairing with a differently named file holds, and that file routes to this session without `session`', { options: { openPanel: false } }, async ($, on) => {
   const files: Record<string, string> = {
-    [`${P}/waytomatter-hold-hope.json`]: JSON.stringify({ done: 1, total: 4, step: 'reading', title: 'Hope waits for the list' }),
-    [`${P}/${agentsRel(KEY)}`]: JSON.stringify({ agents: { ag5: { description: 'Hold Hope until org list plays', startedAt: NOW - 600_000, status: 'running', lastAt: NOW, file: 'waytomatter-hold-hope' } }, files: { 'waytomatter-hold-hope': NOW } }),
+    [`${P}/shopwebsite-hold-hope.json`]: JSON.stringify({ done: 1, total: 4, step: 'reading', title: 'Hope waits for the list' }),
+    [`${P}/${agentsRel(KEY)}`]: JSON.stringify({ agents: { ag5: { description: 'Hold Hope until org list plays', startedAt: NOW - 600_000, status: 'running', lastAt: NOW, file: 'shopwebsite-hold-hope' } }, files: { 'shopwebsite-hold-hope': NOW } }),
   }
   world(on, files, [{ id: 'ag5', description: 'Hold Hope until org list plays', status: 'running' }])
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
   await settle($ as never)
   expect((files[`${L}/agents-${KEY}.txt`] ?? '').split('\n').filter(Boolean)).toEqual([expect.stringMatching(/^▶ Hold Hope until org list plays .*25\.0% · 1\/4 · reading/)])
-  expect(JSON.parse(files[`${P}/.state/pairs-${KEY}.json`]!)).toEqual({ 'hold-hope-until-org-list-plays': 'waytomatter-hold-hope' })
+  expect(JSON.parse(files[`${P}/.state/pairs-${KEY}.json`]!)).toEqual({ 'hold-hope-until-org-list-plays': 'shopwebsite-hold-hope' })
 })
 
 test('saved agents leave once finished, or silent past the abandoned window', { options: { openPanel: false } }, async ($, on) => {

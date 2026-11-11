@@ -71,10 +71,10 @@ class Group(unittest.TestCase):
         self.write('mac-label-top-ups-2021-23.json', json.dumps({'done': 5, 'total': 9, 'title': 'Mac label top-ups 2021-23'}))
         out = self.run_('▶ mac-label-top-ups-2021-23 ██░░ 53.8% · 5/9 · youth · 8m\n'
                         '▶ Mac label top-ups watcher waiting · 13h19m · 9 tools · Bash\n'
-                        '▶ Hunty: rebuild trends waiting · 9h · 4 tools\n')
+                        '▶ Linux: rebuild trends waiting · 9h · 4 tools\n')
         self.assertEqual(out, ['▾ ▶ RUNNING',
                                '  ◐ mac-label-top-ups-2021-23 ██░░ 53.8% · 5/9 · youth · 8m · watched by: Mac label top-ups watcher',
-                               '▾ ⏸ WAITING', '  Hunty: rebuild trends waiting · 9h · 4 tools'])
+                               '▾ ⏸ WAITING', '  Linux: rebuild trends waiting · 9h · 4 tools'])
         # A watcher whose job is not running, or a waiting row that is not a watcher, stays in WAITING.
         out = self.run_('▶ Deploy watcher waiting · 1m · 2 tools\n', T0 + 1)
         self.assertEqual(out[:2], ['▾ ⏸ WAITING', '  Deploy watcher waiting · 1m · 2 tools'])
@@ -130,29 +130,29 @@ class Group(unittest.TestCase):
 
     def test_helper_healthy_is_a_machine_line_not_a_done_row(self):
         t = 1_800_000_000
-        out = self.run_('▶ hunty ✓ helper healthy · load 0.22 on 12 cores · idle\n▶ build ████░░░░ 40.0% · 2/5\n', now=t)
+        out = self.run_('▶ linux ✓ helper healthy · load 0.22 on 12 cores · idle\n▶ build ████░░░░ 40.0% · 2/5\n', now=t)
         self.assertEqual(out, [
             '▾ ▶ RUNNING',
             '  ◐ build ████░░░░ 40.0% · 2/5 · in progress',
-            'machine hunty ✓ helper healthy · load 0.22 on 12 cores · idle',
+            'machine linux ✓ helper healthy · load 0.22 on 12 cores · idle',
         ])
         # Fed back in (a status line chained twice), the machine line is dropped.
-        self.assertEqual(self.g.ours(['machine hunty ✓ helper healthy · idle', 'Opus']), ['Opus'])
+        self.assertEqual(self.g.ours(['machine linux ✓ helper healthy · idle', 'Opus']), ['Opus'])
         # When it goes away it is not reported as a finished job.
-        self.assertFalse(any('hunty' in l for l in self.run_('', now=t + 60)))
+        self.assertFalse(any('linux' in l for l in self.run_('', now=t + 60)))
 
     def test_helper_idle_reads_busy_while_a_host_job_runs(self):
-        out = self.run_('▶ hunty ✓ helper healthy · load 1.96 on 12 cores · idle\n'
-                        '▶ hunty: hunty-board-cap-extract ████████░░░░ 40.2% · 55000/136911 · parsing\n'
-                        '▶ hunty: board_cap.py · 86.8% CPU · 00:29\n')
-        self.assertIn('machine hunty ✓ helper healthy · load 1.96 on 12 cores · busy: 1 job running', out)
+        out = self.run_('▶ linux ✓ helper healthy · load 1.96 on 12 cores · idle\n'
+                        '▶ linux: linux-board-cap-extract ████████░░░░ 40.2% · 55000/136911 · parsing\n'
+                        '▶ linux: board_cap.py · 86.8% CPU · 00:29\n')
+        self.assertIn('machine linux ✓ helper healthy · load 1.96 on 12 cores · busy: 1 job running', out)
         self.assertFalse(any(l.startswith('▾ ✔ DONE') for l in out))
         # Only busy processes: they count.
-        out = self.run_('▶ hunty ✓ helper healthy · load 1.96 on 12 cores · idle\n▶ hunty: a.py · 86.8% CPU · 00:29\n▶ hunty: b.py · 50.0% CPU · 00:10\n', T0 + 1)
-        self.assertIn('machine hunty ✓ helper healthy · load 1.96 on 12 cores · busy: 2 processes running', out)
+        out = self.run_('▶ linux ✓ helper healthy · load 1.96 on 12 cores · idle\n▶ linux: a.py · 86.8% CPU · 00:29\n▶ linux: b.py · 50.0% CPU · 00:10\n', T0 + 1)
+        self.assertIn('machine linux ✓ helper healthy · load 1.96 on 12 cores · busy: 2 processes running', out)
         # Another host's job does not make it busy.
-        out = self.run_('▶ hunty ✓ helper healthy · load 0.2 on 12 cores · idle\n▶ gpu: train ██░░ 10.0% · 1/9\n', T0 + 2)
-        self.assertIn('machine hunty ✓ helper healthy · load 0.2 on 12 cores · idle', out)
+        out = self.run_('▶ linux ✓ helper healthy · load 0.2 on 12 cores · idle\n▶ gpu: train ██░░ 10.0% · 1/9\n', T0 + 2)
+        self.assertIn('machine linux ✓ helper healthy · load 0.2 on 12 cores · idle', out)
 
     def test_folded_sections(self):
         self.write('.state/folded.txt', 'todo\nrunning\n')
@@ -182,14 +182,14 @@ class Group(unittest.TestCase):
         self.assertNotIn('▾ ✔ DONE', out)
 
     def test_todo_priority_blocked_and_next(self):
-        self.write('todo.txt', '[you]\nreply Sam\n[mac]\nlater thing\n2. second | https://x.org\n1. first (after classify)\n[hunty]\n1. trends (after 2019-20 load)\n2. board links\n')
+        self.write('todo.txt', '[you]\nreply Sam\n[mac]\nlater thing\n2. second | https://x.org\n1. first (after classify)\n[linux]\n1. trends (after 2019-20 load)\n2. board links\n')
         raw = self.g.main(io.StringIO('▶ arts-classify ████░░░░ 40.0% · 2/5\n'), T0)
         plain = [re.sub(r'\033\[[0-9;]*m', '', strip_links(l)) for l in raw]
         self.assertEqual(plain[:4], [
             '▾ ☐ TO-DO',
             '  YOU: reply Sam',
             '  MAC: 1. first (waits for arts-classify) · next 2. second · later thing',
-            '  HUNTY: next 1. trends (after 2019-20 load) · 2. board links'])
+            '  LINUX: next 1. trends (after 2019-20 load) · 2. board links'])
         self.assertIn('\033[2m1. first (waits for arts-classify)\033[0m', raw[2])
 
     def test_todo_blocker_needs_every_key_word(self):
@@ -579,8 +579,8 @@ class Projects(unittest.TestCase):
         os.makedirs(os.path.join(self.root, 'todos'))
         self.g = load(self.root)
         self.g.HOME = self.home
-        os.makedirs(os.path.join(self.home, 'Desktop', 'NomBot', '.git'))
-        os.makedirs(os.path.join(self.home, 'Desktop', 'NomBot', 'web', 'src'))
+        os.makedirs(os.path.join(self.home, 'Desktop', 'Orders', '.git'))
+        os.makedirs(os.path.join(self.home, 'Desktop', 'Orders', 'web', 'src'))
         os.makedirs(os.path.join(self.home, 'work', 'Cyber Portal', '.git'))
         os.makedirs(os.path.join(self.home, 'loose', 'dir'))
         os.environ.pop('PB_CWD', None)
@@ -597,7 +597,7 @@ class Projects(unittest.TestCase):
         return os.path.relpath(self.g.todo_file(cwd), self.root)
 
     def test_git_root_slug_from_any_subfolder(self):
-        self.assertEqual(self.rel(os.path.join(self.home, 'Desktop', 'NomBot', 'web', 'src')), 'todos/desktop-nombot.txt')
+        self.assertEqual(self.rel(os.path.join(self.home, 'Desktop', 'Orders', 'web', 'src')), 'todos/desktop-orders.txt')
         self.assertEqual(self.rel(os.path.join(self.home, 'work', 'Cyber Portal')), 'todos/work-cyber-portal.txt')
 
     def test_no_repo_uses_the_folder_and_no_folder_the_old_list(self):
@@ -605,32 +605,32 @@ class Projects(unittest.TestCase):
         self.assertEqual(self.rel(''), 'todo.txt')
 
     def test_map_longest_prefix_and_legacy_file(self):
-        self.write('todos/projects.txt', '# prefix<TAB>project\n~/Desktop/NomBot\ttodo.txt\n~/.claude-progress\ttodo.txt\n~/Desktop/NomBot/web  web-app\n')
-        self.assertEqual(self.rel(os.path.join(self.home, 'Desktop', 'NomBot')), 'todo.txt')
+        self.write('todos/projects.txt', '# prefix<TAB>project\n~/Desktop/Orders\ttodo.txt\n~/.claude-progress\ttodo.txt\n~/Desktop/Orders/web  web-app\n')
+        self.assertEqual(self.rel(os.path.join(self.home, 'Desktop', 'Orders')), 'todo.txt')
         self.assertEqual(self.rel(self.root), 'todo.txt')
-        self.assertEqual(self.rel(os.path.join(self.home, 'Desktop', 'NomBot', 'web', 'src')), 'todos/web-app.txt')
-        self.assertEqual(self.rel(os.path.join(self.home, 'Desktop', 'NomBotX')), 'todos/desktop-nombotx.txt')
+        self.assertEqual(self.rel(os.path.join(self.home, 'Desktop', 'Orders', 'web', 'src')), 'todos/web-app.txt')
+        self.assertEqual(self.rel(os.path.join(self.home, 'Desktop', 'OrdersX')), 'todos/desktop-ordersx.txt')
 
     def test_each_project_shows_its_own_list(self):
-        self.write('todos/projects.txt', '~/Desktop/NomBot\ttodo.txt\n')
-        self.write('todo.txt', '[mac]\nnombot thing\n')
+        self.write('todos/projects.txt', '~/Desktop/Orders\ttodo.txt\n')
+        self.write('todo.txt', '[mac]\norders thing\n')
         self.write('todos/work-cyber-portal.txt', '[you]\npatch the portal\n')
-        os.environ['PB_CWD'] = os.path.join(self.home, 'Desktop', 'NomBot')
-        self.assertEqual([strip_links(l) for l in self.g.main(io.StringIO(''), T0)], ['▾ ☐ TO-DO', '  MAC: nombot thing'])
+        os.environ['PB_CWD'] = os.path.join(self.home, 'Desktop', 'Orders')
+        self.assertEqual([strip_links(l) for l in self.g.main(io.StringIO(''), T0)], ['▾ ☐ TO-DO', '  MAC: orders thing'])
         os.environ['PB_CWD'] = os.path.join(self.home, 'work', 'Cyber Portal')
         self.assertEqual([strip_links(l) for l in self.g.main(io.StringIO(''), T0)], ['▾ ☐ TO-DO', '  YOU: patch the portal'])
         os.environ['PB_CWD'] = os.path.join(self.home, 'loose', 'dir')
         self.assertEqual(self.g.main(io.StringIO(''), T0), [])
 
     def test_actions_needed_count_by_project_first_in_summary_and_full_view(self):
-        self.write('todos/projects.txt', '~/Desktop/NomBot\ttodo.txt\n')
-        nb = os.path.join(self.home, 'Desktop', 'NomBot')
+        self.write('todos/projects.txt', '~/Desktop/Orders\ttodo.txt\n')
+        nb = os.path.join(self.home, 'Desktop', 'Orders')
         cy = os.path.join(self.home, 'work', 'Cyber Portal')
-        self.assertEqual(self.g.project_of(nb), ('todo.txt', 'desktop-nombot'))
+        self.assertEqual(self.g.project_of(nb), ('todo.txt', 'desktop-orders'))
         self.assertEqual(self.g.project_of(cy), ('todos/work-cyber-portal.txt', 'work-cyber-portal'))
         self.write('actions.json', json.dumps([
             {'id': 'a1', 'title': 'global step', 'status': 'open'},
-            {'id': 'a2', 'title': 'nombot step', 'project': 'desktop-nombot', 'status': 'open'},
+            {'id': 'a2', 'title': 'orders step', 'project': 'desktop-orders', 'status': 'open'},
             {'id': 'a3', 'title': 'cyber step', 'project': 'work-cyber-portal'},
             {'id': 'a4', 'title': 'closed', 'status': 'done'},
             {'id': 'a5', 'title': 'skipped', 'status': 'skipped'},
@@ -656,12 +656,12 @@ class Projects(unittest.TestCase):
     def test_a_job_another_session_sees_never_finishes_here(self):
         os.environ['PB_SID'] = 'aaaa'
         try:
-            self.g.main(io.StringIO('▶ hunty load ████░░░░ 40.0% · 2/5\n'), T0)
+            self.g.main(io.StringIO('▶ linux load ████░░░░ 40.0% · 2/5\n'), T0)
             os.environ['PB_SID'] = 'bbbb'
             self.assertEqual(self.g.main(io.StringIO(''), T0 + 5), [])
             os.environ['PB_SID'] = 'aaaa'
-            self.assertIn('  ✔ hunty load ██████████', [strip_links(l)[:25] for l in self.g.main(io.StringIO(''), T0 + 5)])
-            self.assertIn('  hunty load · finished', [strip_links(l)[:23] for l in self.g.main(io.StringIO(''), T0 + 65)])
+            self.assertIn('  ✔ linux load ██████████', [strip_links(l)[:25] for l in self.g.main(io.StringIO(''), T0 + 5)])
+            self.assertIn('  linux load · finished', [strip_links(l)[:23] for l in self.g.main(io.StringIO(''), T0 + 65)])
             self.assertTrue(os.path.exists(os.path.join(self.root, '.state', 'group-seen-aaaa.json')))
         finally:
             os.environ.pop('PB_SID', None)
@@ -674,17 +674,17 @@ class StatusScript(unittest.TestCase):
         self.lines = os.path.join(self.home, '.claude-progress', '.lines')
         os.makedirs(self.lines)
         os.makedirs(os.path.join(self.home, '.claude-progress', 'todos'))
-        os.makedirs(os.path.join(self.home, 'Desktop', 'NomBot'))
+        os.makedirs(os.path.join(self.home, 'Desktop', 'Orders'))
         os.makedirs(os.path.join(self.home, 'cyber'))
         self.script = os.path.join(self.home, 'statusline.sh')
         with open(self.script, 'w') as f:
             f.write(status_script())
-        for name, text in [('agents-aaaa.txt', '▶ nombot-agent working'), ('agents-bbbb.txt', '▶ cyber-agent working'),
-                           ('linux.txt', '▶ hunty gpu job'), ('jobs.txt', '▶ shared job')]:
+        for name, text in [('agents-aaaa.txt', '▶ orders-agent working'), ('agents-bbbb.txt', '▶ cyber-agent working'),
+                           ('linux.txt', '▶ linux gpu job'), ('jobs.txt', '▶ shared job')]:
             with open(os.path.join(self.lines, name), 'w') as f:
                 f.write(text)
         with open(os.path.join(self.home, '.claude-progress', 'todos', 'projects.txt'), 'w') as f:
-            f.write('~/Desktop/NomBot\ttodo.txt\n')
+            f.write('~/Desktop/Orders\ttodo.txt\n')
         with open(os.path.join(self.home, '.claude-progress', 'todos', 'lines.txt'), 'w') as f:
             f.write('linux.txt\ttodo.txt\njobs.txt  todo.txt\n')
 
@@ -700,16 +700,16 @@ class StatusScript(unittest.TestCase):
         out = subprocess.run(['/bin/sh', self.script], input=json.dumps(stdin), capture_output=True, text=True, env=env).stdout
         return sorted(l for l in out.split('\n') if l.strip())
 
-    def test_nombot_session_sees_its_agents_and_its_shared_files(self):
-        out = self.run_({'session_id': 'aaaa', 'workspace': {'current_dir': os.path.join(self.home, 'Desktop', 'NomBot')}})
-        self.assertEqual(out, ['▶ hunty gpu job', '▶ nombot-agent working', '▶ shared job'])
+    def test_orders_session_sees_its_agents_and_its_shared_files(self):
+        out = self.run_({'session_id': 'aaaa', 'workspace': {'current_dir': os.path.join(self.home, 'Desktop', 'Orders')}})
+        self.assertEqual(out, ['▶ linux gpu job', '▶ orders-agent working', '▶ shared job'])
 
     def test_other_project_session_sees_only_its_own(self):
         out = self.run_({'session_id': 'bbbb', 'cwd': os.path.join(self.home, 'cyber')})
         self.assertEqual(out, ['▶ cyber-agent working'])
 
     def test_scope_all_and_no_session_see_everything(self):
-        every = ['▶ cyber-agent working', '▶ hunty gpu job', '▶ nombot-agent working', '▶ shared job']
+        every = ['▶ cyber-agent working', '▶ linux gpu job', '▶ orders-agent working', '▶ shared job']
         self.assertEqual(self.run_({}), every)
         self.assertEqual(self.run_({'session_id': 'bbbb', 'cwd': os.path.join(self.home, 'cyber')}, scope='all'), every)
 

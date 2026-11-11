@@ -44,9 +44,9 @@ test('reportOf: the SubagentHandback message wins over the last text, with first
 })
 
 test('prettyName, ranFor and pruneList', () => {
-  expect(prettyName('hunty: hunty-board-cap-extract')).toBe('Hunty: Board cap extract')
+  expect(prettyName('linux: linux-board-cap-extract')).toBe('Linux: Board cap extract')
   expect(prettyName('mac-label-top-ups')).toBe('Mac label top ups')
-  expect(prettyName('Hunty person matcher fix')).toBe('Hunty person matcher fix')
+  expect(prettyName('Linux person matcher fix')).toBe('Linux person matcher fix')
   expect([ranFor(0), ranFor(45_000), ranFor(12 * 60_000), ranFor(80 * 60_000)]).toEqual(['', '45s', '12m', '1h20m'])
   const recs = Array.from({ length: DONE_KEEP + 2 }, (_, i) => ({ name: `j${i}`, finished: NOW - i * 60_000 }))
   expect(pruneList(recs, NOW)).toEqual([`j${DONE_KEEP}`, `j${DONE_KEEP + 1}`])
@@ -55,7 +55,7 @@ test('prettyName, ranFor and pruneList', () => {
 
 test('doneDetails: impact or "no impact reported", finish and run time with the machine, then why', () => {
   expect(doneDetails({ impact: ['a', 'b'], started: NOW - 80 * 60_000, finished: NOW, why: 'unlocks: x' }, '', 'Mac').slice(2)).toEqual([expect.stringMatching(/^finished \d\d:\d\d · ran 1h20m · machine: Mac$/), 'unlocks: x'])
-  expect(doneDetails(undefined, '11:50', 'Hunty')).toEqual(['no impact reported', 'finished 11:50 · machine: Hunty'])
+  expect(doneDetails(undefined, '11:50', 'Linux')).toEqual(['no impact reported', 'finished 11:50 · machine: Linux'])
 })
 
 test('doneItems: the grouper rows, then recent records not shown or running, newest first; titles', () => {
@@ -64,12 +64,12 @@ test('doneItems: the grouper rows, then recent records not shown or running, new
     b: { slug: 'b', title: 'B job', impact: [], finished: NOW - 60_000, machine: 'Mac', kind: 'job' as const },
     live: { slug: 'live', title: 'Live', impact: [], finished: NOW - 60_000, machine: 'Mac', kind: 'job' as const },
     old: { slug: 'old', title: 'Old', impact: [], finished: NOW - 13 * 3_600_000, machine: 'Mac', kind: 'job' as const },
-    'hunty-hunty-board-cap-extract': { slug: 'hunty-hunty-board-cap-extract', title: '', impact: [], finished: NOW - 60_000, machine: 'Hunty', kind: 'job' as const },
+    'linux-linux-board-cap-extract': { slug: 'linux-linux-board-cap-extract', title: '', impact: [], finished: NOW - 60_000, machine: 'Linux', kind: 'job' as const },
   }
-  const items = doneItems(['a · finished 11:27', 'hunty: hunty-board-cap-extract · finished 11:50', 'x ████ 100.0% · 7/7'], recs, new Set(['live']), NOW)
-  expect(items.map(i => i.key)).toEqual(['a', 'hunty-hunty-board-cap-extract', 'x', 'b'])
+  const items = doneItems(['a · finished 11:27', 'linux: linux-board-cap-extract · finished 11:50', 'x ████ 100.0% · 7/7'], recs, new Set(['live']), NOW)
+  expect(items.map(i => i.key)).toEqual(['a', 'linux-linux-board-cap-extract', 'x', 'b'])
   expect(items[2]!.finishing).toBe('finishing · 7/7')
-  expect(doneTitle('hunty: hunty-board-cap-extract', recs['hunty-hunty-board-cap-extract'])).toBe('Hunty: Board cap extract')
+  expect(doneTitle('linux: linux-board-cap-extract', recs['linux-linux-board-cap-extract'])).toBe('Linux: Board cap extract')
   expect(doneTitle('a', recs.a, 'meta')).toBe('A job')
   expect(DONE_MAX).toBe(20)
 })

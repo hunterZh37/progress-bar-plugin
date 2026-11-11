@@ -547,7 +547,7 @@ export const ACTION_TOOL = {
   inputSchema: {
     type: 'object',
     properties: {
-      title: { type: 'string', description: 'What to do, in a few words. Example: Swap in the new NomBot build.' },
+      title: { type: 'string', description: 'What to do, in a few words. Example: Swap in the new build.' },
       command: { type: 'string', description: 'The exact command or steps the person runs. Commands only, never tokens or passwords.' },
       why: { type: 'string', description: 'One line on what it unblocks.' },
       check: { type: 'string', description: 'Optional read-only shell test that exits 0 once the step is done. Runs every 30 s with a 5 s timeout.' },

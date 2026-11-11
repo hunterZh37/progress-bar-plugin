@@ -121,7 +121,7 @@ test('the grouper source is stdlib python and safe to embed', async () => {
   expect(GROUP_PY).toContain('links.txt')
   expect(GROUP_PY).toContain('folded.txt')
   expect(GROUP_PY).toContain('todo.txt')
-  expect(GROUP_PY).not.toContain('hunty')
+  expect(GROUP_PY).not.toContain('linux')
 })
 
 test('a watch file counts done/total from the last match, with an ETA', async () => {
@@ -357,8 +357,8 @@ test('job tracks: start, reset, and time left from the rate since first seen', (
 })
 
 test('the id line drops a name the title already says, and the turn-on note clears after a few minutes', () => {
-  expect(sameName('Hunty: similar orgs and NTEE suggestions', 'Hunty: Similar orgs and NTEE suggestions')).toBe(true)
-  expect(sameName('Hunty: similar orgs and NTEE suggestions', 'Hunty similar orgs and NTEE suggestions')).toBe(true)
+  expect(sameName('Linux: similar orgs and NTEE suggestions', 'Linux: Similar orgs and NTEE suggestions')).toBe(true)
+  expect(sameName('Linux: similar orgs and NTEE suggestions', 'Linux similar orgs and NTEE suggestions')).toBe(true)
   expect(sameName('mac-label-top-ups-2021-23', 'Mac: Mac label top-ups 2021-23')).toBe(true)
   expect(sameName('box: train.py', 'Box: Train the model')).toBe(false)
   expect(noteShows({ note: 'Status line on', noteAt: NOW }, NOW + NOTE_MS - 1)).toBe(true)
@@ -388,16 +388,16 @@ test('/progress-bar todo add, list, done and clear write todo.txt', async ($, on
 })
 
 test('per-project to-dos: map by longest prefix, else the git root under home, no folder is todo.txt', async () => {
-  const map = '# prefix<TAB>project\n~/Desktop/NomBot\ttodo.txt\n~/.claude-progress\ttodo.txt\n~/Desktop/NomBot/web  Web App\n'
-  expect(parseProjects(map, HOME)).toEqual([[`${HOME}/Desktop/NomBot`, 'todo.txt'], [`${HOME}/.claude-progress`, 'todo.txt'], [`${HOME}/Desktop/NomBot/web`, 'Web App']])
-  expect(projectSlug(`${HOME}/Desktop/NomBot`, HOME)).toBe('desktop-nombot')
+  const map = '# prefix<TAB>project\n~/Desktop/Orders\ttodo.txt\n~/.claude-progress\ttodo.txt\n~/Desktop/Orders/web  Web App\n'
+  expect(parseProjects(map, HOME)).toEqual([[`${HOME}/Desktop/Orders`, 'todo.txt'], [`${HOME}/.claude-progress`, 'todo.txt'], [`${HOME}/Desktop/Orders/web`, 'Web App']])
+  expect(projectSlug(`${HOME}/Desktop/Orders`, HOME)).toBe('desktop-orders')
   expect(projectSlug(HOME, HOME)).toBe('home')
   expect(projectSlug('/srv/Cyber Portal/', HOME)).toBe('srv-cyber-portal')
   expect(fileOf('Web App')).toBe('todos/web-app.txt')
-  expect(resolveProject(`${HOME}/Desktop/NomBot/api`, `${HOME}/Desktop/NomBot`, map, HOME)).toEqual({ slug: 'desktop-nombot', file: 'todo.txt' })
+  expect(resolveProject(`${HOME}/Desktop/Orders/api`, `${HOME}/Desktop/Orders`, map, HOME)).toEqual({ slug: 'desktop-orders', file: 'todo.txt' })
   expect(resolveProject(`${HOME}/.claude-progress`, '', map, HOME).file).toBe('todo.txt')
-  expect(resolveProject(`${HOME}/Desktop/NomBot/web/src`, `${HOME}/Desktop/NomBot`, map, HOME)).toEqual({ slug: 'web-app', file: 'todos/web-app.txt' })
-  expect(resolveProject(`${HOME}/Desktop/NomBotX`, `${HOME}/Desktop/NomBotX`, map, HOME).file).toBe('todos/desktop-nombotx.txt')
+  expect(resolveProject(`${HOME}/Desktop/Orders/web/src`, `${HOME}/Desktop/Orders`, map, HOME)).toEqual({ slug: 'web-app', file: 'todos/web-app.txt' })
+  expect(resolveProject(`${HOME}/Desktop/OrdersX`, `${HOME}/Desktop/OrdersX`, map, HOME).file).toBe('todos/desktop-ordersx.txt')
   expect(resolveProject(`${HOME}/code/cyber/app`, `${HOME}/code/cyber`, '', HOME)).toEqual({ slug: 'code-cyber', file: 'todos/code-cyber.txt' })
   expect(resolveProject(`${HOME}/scratch`, '', '', HOME).file).toBe('todos/scratch.txt')
   expect(resolveProject('', '', map, HOME)).toEqual({ slug: 'todo.txt', file: 'todo.txt' })
@@ -406,12 +406,12 @@ test('per-project to-dos: map by longest prefix, else the git root under home, n
 test('/progress-bar todo in another project uses its own list, and an unknown one starts empty', async ($, on) => {
   const { written } = world(on, { gitDir: `${HOME}/code/cyber/.git` })
   on('session.cwd', () => ({ value: `${HOME}/code/cyber/app` }))
-  written[`${DIR}/todo.txt`] = '[mac]\nnombot thing\n'
+  written[`${DIR}/todo.txt`] = '[mac]\norders thing\n'
   await $.session.start({ cwd: `${HOME}/code/cyber/app`, surface: 'terminal', isInteractive: true })
   expect((await run($, 'todo')).text).toBe('No to-dos for code-cyber. Add one with /progress-bar todo add [name] <text>')
   await run($, 'todo add [you] patch the portal')
   expect(written[`${DIR}/todos/code-cyber.txt`]).toContain('[you]\npatch the portal\n')
-  expect(written[`${DIR}/todo.txt`]).toBe('[mac]\nnombot thing\n')
+  expect(written[`${DIR}/todo.txt`]).toBe('[mac]\norders thing\n')
   expect((await run($, 'todo')).text).toBe('[you]\n  1. patch the portal')
 })
 
@@ -502,7 +502,7 @@ test('the panel parser: sections, counts, folded headers and trailing lines', as
 
 test('running cards: a kind badge per kind', async () => {
   expect(runCard('◐ healthcare-classify ██░░ 40.0% · 2/5 batches').kind).toEqual({ text: 'labeling' })
-  expect(runCard('◐ hunty:embed ██░░ 40.0% · 2/5').kind).toEqual({ text: 'on hunty' })
+  expect(runCard('◐ linux:embed ██░░ 40.0% · 2/5').kind).toEqual({ text: 'on linux' })
   expect(runCard('◐ gpu-box:train ██░░ 10.0%').kind).toEqual({ text: 'on gpu-box' })
   expect(runCard('◐ Build docs working · 3m · 12 tools · Edit').kind).toEqual({ text: 'Claude agent' })
   expect(runCard('◐ nightly-import ██░░ 40.0% · 2/5').kind).toEqual({ text: 'job' })
@@ -532,7 +532,7 @@ test('one-line card time: a real time left, else an estimate from an item count,
   expect(timeTail(runCard('◐ Build docs working ██░░ 37.5% · 30/80 · 12m · 9 tools'))).toBe('~20m left')
   // Few steps take uneven time: no estimate (6 of 8 steps after 13h52m once said ~4h37m while the last step was nearly done).
   expect(timeTail(runCard('◐ Build docs working ██░░ 37.5% · 3/8 · 12m · 9 tools'))).toBe('12m so far')
-  expect(timeTail(runCard('◐ Hunty: similar orgs ███░ 75.0% · 6/8 · codes: 15163 of 15,180 · 13h52m · 77 tools'))).toBe('13h52m so far')
+  expect(timeTail(runCard('◐ Linux: similar orgs ███░ 75.0% · 6/8 · codes: 15163 of 15,180 · 13h52m · 77 tools'))).toBe('13h52m so far')
   // No steps done yet, all done, or no counts: time so far, never a bare "12m".
   expect(timeTail(runCard('◐ Build docs working · 0/8 · 12m · 9 tools'))).toBe('12m so far')
   expect(timeTail(runCard('◐ Build docs working ████ 100.0% · 8/8 · 12m · 9 tools'))).toBe('12m so far')
@@ -1061,8 +1061,8 @@ test('events.py is stdlib python, safe to embed, and setup installs it beside gr
   expect(EVENTS_PY.startsWith('#!/usr/bin/env python3')).toBe(true)
   expect(EVENTS_PY).toContain('log-dirs.txt')
   expect(EVENTS_PY).not.toContain('${')
-  expect(EVENTS_PY).not.toContain('hunty')
-  expect(EVENTS_PY).not.toContain('label-logs')
+  expect(EVENTS_PY).not.toContain('linux')
+  expect(EVENTS_PY).not.toContain('batch-logs')
   expect(GROUP_PY).toContain("'events.py'")
 })
 
@@ -1081,7 +1081,7 @@ const TITLED_FULL = [
   '  ◐ child-step ██░░ 50.0% · 1/2 · y',
   '  ◐ box: train.py · 540% CPU · 12:50',
   '  ◐ other ██░░ 50.0% · 1/2 · a step · waiting on: Child job',
-  'machine hunty ✓ helper healthy · load 1.96 on 12 cores · busy: 1 job running',
+  'machine linux ✓ helper healthy · load 1.96 on 12 cores · busy: 1 job running',
   '▾ ✔ DONE',
   '  finisher ████████████████████ 100.0% · 7/7 · tests pass · 6m · 38 tools',
   '  nightly · finished 10:12',
@@ -1114,7 +1114,7 @@ test('the panel: titles, ids with badges, unlocks, a nested child, waiting on an
   let lines = await pic()
   // Status at a glance: no goal name, nothing needs you (the stuck parent waits on its busy child).
   expect(lines[2]).toBe('3 running · 3 done today')
-  expect(lines.join('\n')).not.toMatch(/NEEDS YOU|generosity|⚠ stuck/)
+  expect(lines.join('\n')).not.toMatch(/NEEDS YOU|orderstats|⚠ stuck/)
   // Line one: mark, bold title, bar, %, the note cut to what is left (less 4 for the [x] on a row that can be stopped).
   // Line two: the step and the time, dim. No area, no why until it opens.
   expect(lines).toContain('  • Big batch        ━━━━━━━━──  75%  waiting on Child … [x]')
@@ -1153,7 +1153,7 @@ test('the panel: titles, ids with badges, unlocks, a nested child, waiting on an
   // The open details never repeat the % or the time left.
   expect(texts.filter(t => /%/.test(t)).every(t => /^\s*\d+%$/.test(t))).toBe(true)
   // The machine status line stays off the List tab (the Topology tab has it), and is never a DONE row.
-  expect(texts.some(t => /hunty ✓|load 1.96/.test(t))).toBe(false)
+  expect(texts.some(t => /linux ✓|load 1.96/.test(t))).toBe(false)
   // DONE starts folded to one line with its count.
   expect((await ui.find({ type: 'Button', key: 'h-done' }))?.text).toBe('▸ DONE TODAY  3')
   const done = async () => (await ui.findAll({ type: 'Button' })).filter(b => /^dno-/.test(b.key ?? '')).map(b => b.text ?? '')
@@ -1230,7 +1230,7 @@ test('the Log tab: !N unseen errors, counts, filters, detail, open log only insi
 test('short titles and the label column', async () => {
   expect(shortTitle('Big batch · six parts')).toBe('Big batch')
   expect(shortTitle('Health care: classify orgs')).toBe('Health care')
-  expect(shortTitle('hunty: embed · 148K orgs')).toBe('hunty: embed')
+  expect(shortTitle('linux: embed · 148K orgs')).toBe('linux: embed')
   expect(shortTitle('gpu-box: train: epoch 3')).toBe('gpu-box: train')
   expect(labelCol(52)).toBe(14)
   expect(labelCol(80)).toBe(34)
@@ -1247,7 +1247,7 @@ test('short titles and the label column', async () => {
 })
 
 test('remote nesting: a "<host>: name" job goes under the one running "<host>-" job', async () => {
-  expect(nestRows(['hunty-rebuild', 'hunty: embed.py', 'other'], {})).toEqual([{ i: 0, kids: [1] }, { i: 2, kids: [] }])
+  expect(nestRows(['linux-rebuild', 'linux: embed.py', 'other'], {})).toEqual([{ i: 0, kids: [1] }, { i: 2, kids: [] }])
   expect(nestRows(['gpu-box-train', 'gpu-box: train.py'], {})).toEqual([{ i: 0, kids: [1] }])
   // Two owners: ambiguous, so it keeps its own card. Its own parent wins over the host rule.
   expect(nestRows(['box-a', 'box-b', 'box: x'], {})).toEqual([{ i: 0, kids: [] }, { i: 1, kids: [] }, { i: 2, kids: [] }])
@@ -1257,14 +1257,14 @@ test('remote nesting: a "<host>: name" job goes under the one running "<host>-" 
 })
 
 test('running jobs: two aligned lines each, a press opens the details', async ($, on) => {
-  const full = ['▾ ▶ RUNNING', '  ◐ hunty-rebuild ██░░ 40.0% · 2/5 · 1h left', '  ◐ hunty: embed.py · 540% CPU · 3:10', '  ◓ a-much-longer-job-name-than-fits ███░ 75.0% · 3/4 · 5m left'].join('\n')
+  const full = ['▾ ▶ RUNNING', '  ◐ linux-rebuild ██░░ 40.0% · 2/5 · 1h left', '  ◐ linux: embed.py · 540% CPU · 3:10', '  ◓ a-much-longer-job-name-than-fits ███░ 75.0% · 3/4 · 5m left'].join('\n')
   const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n' }
   panelWorld(on, files, full)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
   const lines = async () => (await ui.findAll({ type: 'Button' })).filter(b => /^open-/.test(b.key ?? '')).map(b => b.text ?? '')
-  // The remote job nests under hunty-rebuild, hidden while it is closed. Labels share one width, so bars line up.
-  // Plain titles leave the machine out ("hunty-rebuild" reads "Rebuild"). The nested one is a sub-job.
+  // The remote job nests under linux-rebuild, hidden while it is closed. Labels share one width, so bars line up.
+  // Plain titles leave the machine out ("linux-rebuild" reads "Rebuild"). The nested one is a sub-job.
   expect((await ui.find({ type: 'Text', text: /running$/ }))?.text).toBe('2 running')
   expect((await ui.find({ type: 'Button', key: 'h-running' }))?.text).toBe('▾ RUNNING  2 (+1 sub-job)')
   expect(await lines()).toEqual(['Rebuild'.padEnd(rowCol(52)), fitLabel('A much longer job name than fits', rowCol(52))])
@@ -1275,7 +1275,7 @@ test('running jobs: two aligned lines each, a press opens the details', async ($
   expect(texts).toContain('  1h left')
   // With no step, line two shows the count.
   expect(texts).toContain('2 of 5 steps')
-  await ui.press({ key: 'open-hunty-rebuild' })
+  await ui.press({ key: 'open-linux-rebuild' })
   expect(await lines()).toEqual(['Rebuild'.padEnd(rowCol(52)), 'Embed.py'.padEnd(rowCol(52, 4)), fitLabel('A much longer job name than fits', rowCol(52))])
   texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   expect(texts.filter(t => /2 of 5/.test(t))).toEqual(['2 of 5 steps'])
@@ -1286,17 +1286,17 @@ test('running jobs: two aligned lines each, a press opens the details', async ($
 })
 
 test('waiting rows: no bar, one line "⏸ <title> · waiting on <what>", a press opens the details', async ($, on) => {
-  const row = 'Hunty Schedule O places grant rematch ████████░░ 75.0% · 6/8 · graded 50/50 x4, waiting on 2021-22 grant adds before load · 1h08m · 88 tools'
+  const row = 'Linux Schedule O places grant rematch ████████░░ 75.0% · 6/8 · graded 50/50 x4, waiting on 2021-22 grant adds before load · 1h08m · 88 tools'
   expect(waitReason(runCard(row), row)).toBe('2021-22 grant adds before load')
   expect(waitReason(runCard('deploy waits for build · 1m'))).toBe('build')
   expect(waitReason(runCard('arts-verify · waiting on: Arts labels'))).toBe('Arts labels')
   expect(waitReason(runCard('import pending'))).toBe('')
   const full = ['▾ ⏸ WAITING', `  ${row}`, '  Mac: rebuild trends waiting · 3h · 4 tools'].join('\n')
-  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [`${DIR}/goal.json`]: GOAL_SAMPLE, [TODO_FILE]: '[mac]\nx a\n[hunty]\nx b\n' }
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [`${DIR}/goal.json`]: GOAL_SAMPLE, [TODO_FILE]: '[mac]\nx a\n[linux]\nx b\n' }
   panelWorld(on, files, full)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 60 } })
-  const key = 'open-hunty-schedule-o-places-grant-rematch'
+  const key = 'open-linux-schedule-o-places-grant-rematch'
   expect((await ui.find({ type: 'Button', key }))?.text).toBe('Schedule O places grant rematch')
   let texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   expect(texts.filter(t => t === '  ⏸ ').length).toBe(2)
@@ -1310,7 +1310,7 @@ test('waiting rows: no bar, one line "⏸ <title> · waiting on <what>", a press
   texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   // The area, why and machine show only in the open card. Never "so far".
   expect(texts).toContain('Places')
-  expect(texts).toContain('machine: Hunty')
+  expect(texts).toContain('machine: Linux')
   expect(texts.some(t => /so far/.test(t))).toBe(false)
   expect(texts.some(t => /Claude agent|6 of 8/.test(t))).toBe(false)
   expect(texts).toContain('graded 50/50 x4, waiting on 2021-22 grant adds before load')
@@ -1342,11 +1342,11 @@ test('the RUNNING count: top-level lines, nested ones noted', async () => {
 })
 
 test('running rows name their machine', () => {
-  const m = machines(['hunty: embed', 'big-batch'], ['you', 'mac', 'hunty'])
-  expect(m).toEqual({ local: 'Mac', remote: ['hunty'] })
-  expect(machineTitle('hunty: embed', 'Similar orgs · 148K', m)).toBe('Hunty: Similar orgs')
-  expect(machineTitle('hunty: embed', 'hunty: embed', m)).toBe('Hunty: Embed')
-  expect(machineTitle('big-batch', 'Hunty CPU batch: checks', m)).toBe('Hunty: CPU batch')
+  const m = machines(['linux: embed', 'big-batch'], ['you', 'mac', 'linux'])
+  expect(m).toEqual({ local: 'Mac', remote: ['linux'] })
+  expect(machineTitle('linux: embed', 'Similar orgs · 148K', m)).toBe('Linux: Similar orgs')
+  expect(machineTitle('linux: embed', 'linux: embed', m)).toBe('Linux: Embed')
+  expect(machineTitle('big-batch', 'Linux CPU batch: checks', m)).toBe('Linux: CPU batch')
   expect(machineTitle('hc', 'Health care: classify', m)).toBe('Mac: Health care')
   expect(machineTitle('x', 'Big batch', machines([], []))).toBe('Big batch')
 })
@@ -1360,7 +1360,7 @@ test('connectors open their web page as the connected account', () => {
 })
 
 // Priority to-dos and auto-next (hooks/priority.ts).
-const PTODO = '[you]\nreply Sam\n[mac]\nloose one\n2. dependabot | https://gh.io/x\n1. Arts: verify (after classify)\nx 3. shipped\n[hunty]\n1. trends (after 2019-20 load)\n2. board links (after 2019-20 load)\n'
+const PTODO = '[you]\nreply Sam\n[mac]\nloose one\n2. dependabot | https://gh.io/x\n1. Arts: verify (after classify)\nx 3. shipped\n[linux]\n1. trends (after 2019-20 load)\n2. board links (after 2019-20 load)\n'
 
 test('priority: an item splits into number, body, after and link', async () => {
   expect(parseItem('2. Grant links (after 2019-20 load) | https://x.org')).toEqual({ num: 2, body: 'Grant links (after 2019-20 load)', after: '2019-20 load', url: 'https://x.org' })
@@ -1380,7 +1380,7 @@ test('priority: blocked while a running name or title holds every key word', asy
   ])
   expect(r.find(i => i.heading === 'you')!.next).toBe(false)
   expect(nextReady(PTODO, 'mac', [])!.body).toBe('Arts: verify (after classify)')
-  expect(nextReady(PTODO, 'hunty', ['Load 2019-20 filings'])).toBe(null)
+  expect(nextReady(PTODO, 'linux', ['Load 2019-20 filings'])).toBe(null)
   expect(nextReady(PTODO, 'you', [])).toBe(null)
 })
 
@@ -1399,15 +1399,15 @@ test('priority: move up and down renumber the heading, matched by text', async (
   expect(up).toContain('x 3. shipped')
   expect(up).toContain('[you]\nreply Sam\n')
   const down = moveItem(PTODO, '1. trends (after 2019-20 load)', 'down')!
-  expect(down.endsWith('[hunty]\n1. board links (after 2019-20 load)\n2. trends (after 2019-20 load)\n')).toBe(true)
+  expect(down.endsWith('[linux]\n1. board links (after 2019-20 load)\n2. trends (after 2019-20 load)\n')).toBe(true)
   expect(moveItem(PTODO, '1. Arts: verify (after classify)', 'up')).toBe(null)
   expect(moveItem(PTODO, 'nothing like it', 'up')).toBe(null)
 })
 
 test('auto-next: machine, mode, caps, prompt and done events', async () => {
-  const heads = ['you', 'mac', 'hunty']
-  expect(jobMachine('hunty: embed', '', heads)).toBe('hunty')
-  expect(jobMachine('cpu-batch', 'Hunty CPU batch', heads)).toBe('hunty')
+  const heads = ['you', 'mac', 'linux']
+  expect(jobMachine('linux: embed', '', heads)).toBe('linux')
+  expect(jobMachine('cpu-batch', 'Linux CPU batch', heads)).toBe('linux')
   expect(jobMachine('Load 2019-20 filings', '', heads)).toBe('mac')
   expect(parseMode('on\n')).toBe('on')
   expect(parseMode('weird')).toBe('ask')
@@ -1419,7 +1419,7 @@ test('auto-next: machine, mode, caps, prompt and done events', async () => {
   expect(doneEvents(ev, 200)).toEqual([{ ts: 300, source: 'b', title: 'B' }])
   expect(rowName('⚠ stuck 16m Load 2019-20 filings █████░ 66.7% · 6/9')).toBe('Load 2019-20 filings')
   expect(isRunningRow('▶ build ████░░░░ 40.0% · 2/5')).toBe(true)
-  expect(isRunningRow('▶ hunty ✓ helper healthy · load 0.98')).toBe(false)
+  expect(isRunningRow('▶ linux ✓ helper healthy · load 0.98')).toBe(false)
   expect(isRunningRow('✔ docs ████████ 100.0% · 5/5')).toBe(false)
 })
 
@@ -1432,9 +1432,9 @@ test('a just-finished job reads as a check with "just finished", not a job named
 
 test('to-do rows: one line each, ▶ next, ⏸ blocked, one waits for line per run, no (after X) shown', async () => {
   const todos = [
-    { owner: 'hunty', text: '1. trends per org (after 2019-20 load)', done: false, line: 1 },
-    { owner: 'hunty', text: '2. grant links (after 2019-20 load)', done: false, line: 2 },
-    { owner: 'hunty', text: '3. a very long title that will not fit in the pane at all', done: false, line: 3 },
+    { owner: 'linux', text: '1. trends per org (after 2019-20 load)', done: false, line: 1 },
+    { owner: 'linux', text: '2. grant links (after 2019-20 load)', done: false, line: 2 },
+    { owner: 'linux', text: '3. a very long title that will not fit in the pane at all', done: false, line: 3 },
   ]
   const rows = todoRows(rankTodos(todos, ['load-2019-20']), 40, b => (b === 'load-2019-20' ? 'Load 2019-20 filings · board history' : b))
   expect(rows.map(r => (r.kind === 'item' ? `${r.marker} ${r.num}  ${r.title}` : r.kind === 'waits' ? `~ ${r.text}` : r.kind))).toEqual([
@@ -1453,7 +1453,7 @@ test('to-do rows: one line each, ▶ next, ⏸ blocked, one waits for line per r
     ' 1. Add the Azure redirect',
     ' 2. Verify the Google app',
   ])
-  expect(shortJob('Hunty: Similar orgs · step')).toBe('Hunty: Similar orgs')
+  expect(shortJob('Linux: Similar orgs · step')).toBe('Linux: Similar orgs')
   expect(shortJob('Arts classify: batch 3')).toBe('Arts classify')
   expect(clip('abcdef', 4)).toBe('abc…')
 })
@@ -1484,7 +1484,7 @@ test('why an agent waits: its tasks, a job it watches, its step, then its last a
   expect(snapOf(undefined, NOW)).toBe(null)
   const jobs = [{ name: 'mac-label-top-ups-2021-23', title: 'Mac label top-ups 2021-23', pct: 99.6, parent: '' }, { name: 'arts-verify', title: '', pct: null, parent: 'release-prep' }]
   expect(watchedJob('Mac label top-ups watcher', jobs)?.name).toBe('mac-label-top-ups-2021-23')
-  expect(watchedJob('Mac Jev first pass for labels', jobs)).toBe(null)
+  expect(watchedJob('Mac Map first pass for labels', jobs)).toBe(null)
   expect(jobText(jobs[0]!)).toBe('Mac label top-ups 2021-23 (99%)')
   const base = { desc: 'Release prep', status: 'waiting', tasks: [], kids: [], jobs, step: '', lastTool: 'Bash', lastWhat: 'check log', lastAt: NOW - 4 * 60_000, waitSince: NOW - 12 * 60_000 }
   expect(waitSegs({ ...base, tasks: [sh, mon], kids: ['Grade the sample'] }, NOW)).toEqual(['waiting on: Wait for the top-up run to finish (Mac label top-ups 2021-23 99%), monitor: deploy goes green (arts-verify), agent: Grade the sample', 'waiting 12m'])
@@ -1503,22 +1503,22 @@ test('why an agent waits: its tasks, a job it watches, its step, then its last a
 })
 
 test('a waiting row says why with how long, and the open row says it in full', async ($, on) => {
-  const jev = 'Mac Jev first pass for labels waiting · last action 4m ago: Bash, check log · waiting 12m · 59m · 54 tools · Bash'
-  const c = runCard(jev)
-  expect([c.name, c.note, c.waited, c.step, c.elapsed]).toEqual(['Mac Jev first pass for labels', 'last action 4m ago: Bash, check log', '12m', '', '59m'])
-  expect(waitPhrase(c, jev)).toBe('last action 4m ago: Bash, check log')
-  expect(waitPhrase(runCard('Mac Jev waiting · waiting on: Wait for the run · waiting 3m · 9m · 4 tools'))).toBe('waiting on Wait for the run')
+  const map = 'Mac Map first pass for labels waiting · last action 4m ago: Bash, check log · waiting 12m · 59m · 54 tools · Bash'
+  const c = runCard(map)
+  expect([c.name, c.note, c.waited, c.step, c.elapsed]).toEqual(['Mac Map first pass for labels', 'last action 4m ago: Bash, check log', '12m', '', '59m'])
+  expect(waitPhrase(c, map)).toBe('last action 4m ago: Bash, check log')
+  expect(waitPhrase(runCard('Mac Map waiting · waiting on: Wait for the run · waiting 3m · 9m · 4 tools'))).toBe('waiting on Wait for the run')
   expect(waitPhrase(runCard('scraper waiting · rate limited, resumes 14:05 · 3m'))).toBe('paused by a rate limit: rate limited, resumes 14:05')
   expect(waitPhrase(runCard('import pending · batch 3'))).toBe('last step: batch 3')
   expect(waitPhrase(runCard('helper waiting · not started yet · 0m · 0 tools'))).toBe('not started yet')
   expect(waitPhrase(runCard('import pending'))).toBe('')
   const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [TODO_FILE]: '[mac]\nx a\n' }
-  panelWorld(on, files, ['▾ ⏸ WAITING', `  ${jev}`].join('\n'))
+  panelWorld(on, files, ['▾ ⏸ WAITING', `  ${map}`].join('\n'))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 60 } })
   let texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   expect(texts).toContain('last action 4m ago: Bash, check log · for 12m')
-  await ui.press({ key: 'open-mac-jev-first-pass-for-labels' })
+  await ui.press({ key: 'open-mac-map-first-pass-for-labels' })
   texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   expect(texts).toContain('last action 4m ago: Bash, check log · for 12m')
   await ui.unmount()
@@ -1549,17 +1549,17 @@ test('a transcript tells a waiting agent: background tasks still running, its la
   expect(sc.files).toEqual(['mac-label-top-ups-2021-23'])
   // The real case: the agent's name shares no key words with the job, but its transcript writes the job's file.
   const jobs = [{ name: 'mac-label-top-ups-2021-23', title: 'Mac label top-ups 2021-23', pct: 90.2, parent: '' }]
-  const w = { desc: 'Mac Jev first pass for labels', status: 'waiting', tasks: [], kids: [], jobs, step: '', lastTool: 'Bash', lastWhat: '', lastAt: 0, waitSince: NOW - 25 * 60_000, files: sc.files }
+  const w = { desc: 'Mac Map first pass for labels', status: 'waiting', tasks: [], kids: [], jobs, step: '', lastTool: 'Bash', lastWhat: '', lastAt: 0, waitSince: NOW - 25 * 60_000, files: sc.files }
   expect(waitSegs(w, NOW)).toEqual(['waiting on: Mac label top-ups 2021-23 (90%)', 'waiting 25m'])
   expect(waitSegs({ ...w, tasks: sc.running.map(x => ({ ...x, kind: 'shell' as const, at: 0 })) }, NOW)[0]).toBe('waiting on: One long wait with tighter error pattern, 10 min checks (Mac label top-ups 2021-23 90%)')
 })
 
 test('closestFile pairs an agent with a slightly different progress file name', () => {
-  const files = ['hunty-link-ein-reported-grants', 'hunty-link-held-036b-grants', 'hunty-board-links-busy-members']
-  expect(closestFile('Hunty links EIN-reported grants', files)).toBe('hunty-link-ein-reported-grants')
-  expect(closestFile('Hunty links held $0.36B grants', files)).toBe('hunty-link-held-036b-grants')
-  expect(closestFile('Hunty board links for busy members', files)).toBe('hunty-board-links-busy-members')
-  expect(closestFile('Mac Jev labeling pilot', files)).toBe(null)
+  const files = ['linux-link-ein-reported-grants', 'linux-link-held-036b-grants', 'linux-board-links-busy-members']
+  expect(closestFile('Linux links EIN-reported grants', files)).toBe('linux-link-ein-reported-grants')
+  expect(closestFile('Linux links held $0.36B grants', files)).toBe('linux-link-held-036b-grants')
+  expect(closestFile('Linux board links for busy members', files)).toBe('linux-board-links-busy-members')
+  expect(closestFile('Mac Map labeling pilot', files)).toBe(null)
 })
 
 test('finishedTaskIds finds background shells the transcript reports as finished', () => {
@@ -1760,14 +1760,14 @@ test('serverOf: dev and app server commands are servers, with the port when the 
   for (const [cmd, port] of servers) expect([cmd, serverOf(cmd)]).toEqual([cmd, port])
   for (const cmd of ['python load.py', 'npm test', 'npm run build', 'vite build', 'pytest -q', 'next build', 'node scripts/migrate.js', 'git log --oneline | head']) expect([cmd, serverOf(cmd)]).toEqual([cmd, null])
   // A description that says it starts a server counts too.
-  expect(serverOf('./go.sh', 'Start WayToMatter dev server')).toBe('')
+  expect(serverOf('./go.sh', 'Start ShopWebsite dev server')).toBe('')
   expect(serverOf('./go.sh', 'Run the API server')).toBe('')
   expect(serverOf('./go.sh', 'Load the server logs')).toBe(null)
 })
 
 test('pairFile: an agent pairs with the one fresh file of its session created since it started that shares its words', () => {
   const agent = { description: 'Hold Hope until org list plays', startedAt: NOW - 5 * 60_000 }
-  const hope: PairCandidate = { name: 'waytomatter-hold-hope-until-list', title: 'Hope waits for the org list, then talks', session: 'S1', born: NOW - 4 * 60_000 }
+  const hope: PairCandidate = { name: 'shopwebsite-hold-hope-until-list', title: 'Hope waits for the org list, then talks', session: 'S1', born: NOW - 4 * 60_000 }
   // The file name is not the slug of the description, and closestFile misses it.
   expect(closestFile(agent.description, [hope.name])).toBe(null)
   expect(pairFile(agent, [hope], 'S1')).toBe(hope.name)
@@ -1838,15 +1838,15 @@ test('shellTree: the shell Claude started for the recorded command and its child
 test('the List tab: a server row has no bar and no stuck mark, a paired agent is one row, a paused job says paused', async ($, on) => {
   const full = [
     '▾ ▶ RUNNING',
-    '  ⚠ stuck 28m shell-start-waytomatter-dev-server working · serving :3000 · 28m',
+    '  ⚠ stuck 28m shell-start-shopwebsite-dev-server working · serving :3000 · 28m',
     '  ◐ Hold Hope until org list plays ██░░ 50.0% · 2/4 · Reading code · 5m · 12 tools',
     '  ◐ crawl ██░░ 50.0% · 1/2 · fetching · 3m',
   ].join('\n')
   const files: Record<string, string> = {
     [SCRIPT]: statusScript(), [FLAG]: 'on\n',
-    [`${DIR}/shell-start-waytomatter-dev-server.json`]: JSON.stringify({ step: 'serving :3000', title: 'Start WayToMatter dev server', command: 'npm run dev -- -p 3000', taskId: 'b1' }),
-    [`${DIR}/waytomatter-hold-hope-until-list.json`]: JSON.stringify({ done: 2, total: 4, title: 'Hope waits for the org list, then talks', area: 'WayToMatter' }),
-    [`${DIR}/.state/pairs-abc.json`]: JSON.stringify({ 'hold-hope-until-org-list-plays': 'waytomatter-hold-hope-until-list' }),
+    [`${DIR}/shell-start-shopwebsite-dev-server.json`]: JSON.stringify({ step: 'serving :3000', title: 'Start ShopWebsite dev server', command: 'npm run dev -- -p 3000', taskId: 'b1' }),
+    [`${DIR}/shopwebsite-hold-hope-until-list.json`]: JSON.stringify({ done: 2, total: 4, title: 'Hope waits for the org list, then talks', area: 'ShopWebsite' }),
+    [`${DIR}/.state/pairs-abc.json`]: JSON.stringify({ 'hold-hope-until-org-list-plays': 'shopwebsite-hold-hope-until-list' }),
     [`${DIR}/crawl.json`]: JSON.stringify({ done: 1, total: 2, title: 'Crawl sites', pid: 4242 }),
     [`${DIR}/.state/paused.json`]: JSON.stringify({ crawl: NOW }),
   }
@@ -1854,17 +1854,17 @@ test('the List tab: a server row has no bar and no stuck mark, a paired agent is
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 80 } })
   let texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  // The server: no SERVERS label and no RUNNING row; one LOCALHOST row "localhost:3000  WayToMatter dev server  up 28m [x]", no stuck.
+  // The server: no SERVERS label and no RUNNING row; one LOCALHOST row "localhost:3000  ShopWebsite dev server  up 28m [x]", no stuck.
   expect(texts).not.toContain('  SERVERS')
   expect(texts.some(t => /serving/.test(t))).toBe(false)
   expect(texts).toContain('localhost:3000')
   // no lsof in this test world, so the port reads down
-  expect(texts).toContain('  down · WayToMatter dev server')
+  expect(texts).toContain('  down · ShopWebsite dev server')
   expect(texts).toContain('  up 28m')
   expect(texts.filter(t => t === 'localhost:3000').length).toBe(1)
-  await ui.press({ key: 'xb-shell-start-waytomatter-dev-server' })
+  await ui.press({ key: 'xb-shell-start-shopwebsite-dev-server' })
   expect((await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')).toContain('Stop')
-  await ui.press({ key: 'xb-shell-start-waytomatter-dev-server' })
+  await ui.press({ key: 'xb-shell-start-shopwebsite-dev-server' })
   expect(texts.some(t => /stuck/.test(t))).toBe(false)
   // The agent shows the paired file's title and area once; no bare "Other" row for it.
   const titles = (await ui.findAll({ type: 'Button' })).filter(b => /^open-/.test(b.key ?? '')).map(b => (b.text ?? '').trim())
@@ -1872,7 +1872,7 @@ test('the List tab: a server row has no bar and no stuck mark, a paired agent is
   // A server is never a NEEDS YOU line.
   expect(texts.some(t => /NEEDS YOU/.test(t))).toBe(false)
   await ui.press({ key: 'open-hold-hope-until-org-list-plays' })
-  expect((await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')).toContain('WayToMatter')
+  expect((await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')).toContain('ShopWebsite')
   // The paused job says so; its [x] offers Resume, Stop, Cancel; the agent's only Stop, Cancel.
   expect(texts).toContain('  paused')
   await ui.press({ key: 'xb-crawl' })

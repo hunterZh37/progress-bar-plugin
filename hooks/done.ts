@@ -92,7 +92,7 @@ export function reportOf(transcript: string): { text: string; first: number; las
   return { text: hand || said, first, last }
 }
 
-/** A row name as a title when no record or progress file gives one: "hunty: hunty-board-cap-extract" -> "Hunty: Board cap extract". */
+/** A row name as a title when no record or progress file gives one: "server-1: server-1-nightly-import" -> "Server-1: Nightly import". */
 export function prettyName(name: string): string {
   const m = /^([A-Za-z0-9_.-]+):\s*(.+)$/.exec(name.trim())
   const host = m ? m[1]! : ''

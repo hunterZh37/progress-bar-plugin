@@ -21,7 +21,7 @@ Not for questions, choices or nice-to-haves. Use it only when the work is blocke
 
 Call the `action_add` tool (`mcp__progress-bar__action_add`):
 
-- `title`: what to do, a few plain words. "Swap in the new NomBot build".
+- `title`: what to do, a few plain words. "Swap in the new build".
 - `command`: the exact command or steps to run. Commands only. Never a token, password or other secret value.
 - `why`: one line on what it unblocks.
 - `check`: a **read-only** shell test that exits 0 once the step is done. It runs every 30 s (5 s timeout), so the action clears by itself when the person runs the command in a terminal. Examples: `grep -qx abc123 /abs/path/BUILD_ID`, `test -e /abs/path`, `gh repo view owner/repo >/dev/null 2>&1; test $? -ne 0`. Use absolute paths. Never put anything that changes state in a check. Add a check whenever you can.

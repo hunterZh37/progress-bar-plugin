@@ -179,7 +179,7 @@ const words = (s: string) => new Set(slug(s).replace(/(\d)-(?=\d)/g, '$1').split
 
 /**
  * The progress file an agent most likely writes when none is named exactly after its description: the agent may
- * pick a slightly different name ("hunty-link-held-036b-grants" for "Hunty links held $0.36B grants"). Picks the name
+ * pick a slightly different name ("server-1-orders-backfill-2024" for "Server-1 orders backfill 2024"). Picks the name
  * sharing the most words (at least 60% of the words in either, and at least 2), else null.
  */
 export function closestFile(desc: string, names: string[]): string | null {
