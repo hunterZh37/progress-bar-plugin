@@ -1,5 +1,5 @@
-// The usage meter's own reading. Every 30 minutes one session on the machine asks Claude for the login's 7-day and
-// 5-hour use: a tiny Haiku call whose stream carries a rate_limit_event, run on the default login with no API key, no
+// The usage meter's own reading. Off by default: it runs only when the person turns on usageMeter in /config. Then
+// every 30 minutes one session on the machine asks Claude for the login's 7-day and 5-hour use: a tiny Haiku call whose stream carries a rate_limit_event, run on the default login with no API key, no
 // tools, no MCP, no settings and no saved session. The result goes to .state/max-usage.json, the file the panel reads.
 // Any failure (offline, not logged in, an API key in use) keeps the old reading and says nothing.
 import type { EngineInterface } from 'claude-code'
@@ -114,9 +114,16 @@ export function engineIo($: EngineInterface): ProbeIo {
 }
 
 let probing = false
+let meterOn = false
+
+/** Turns the usage meter on or off (the usageMeter option, off by default). Off: no probe runs and the meter hides. */
+export function setUsageMeter(on: boolean) { meterOn = on }
+/** True when the usageMeter option is on. */
+export const usageMeterOn = () => meterOn
 
 /** Takes a fresh reading when it is due. One session machine-wide: the lock folder's time is the last start. */
 export async function probeUsage($: EngineInterface, h: string): Promise<boolean> {
+  if (!meterOn) return false
   const login = h ? await sessionLogin($, h) : { key: '', dir: '' }
   return probeWith(engineIo($), h, login)
 }

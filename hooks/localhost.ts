@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
 import type { Listening, LocalLabel, LocalView } from '../types'
-import { isClaude as isClaudeCmd, norm, parsePs } from './control'
+import { isClaude as isClaudeCmd, norm, parsePs, psList } from './control'
 import type { Proc } from './control'
 
 // The project's localhost servers, always listed under the Status panel's job list.
@@ -194,7 +194,7 @@ export async function readLocal($: EngineInterface, root: string, cwd = '', home
   let shells: Record<number, string> = {}
   if (pids.length) {
     try {
-      const procs = parsePs((await $.process.run(['ps', '-x', '-ww', '-o', 'pid=,ppid=,uid=,lstart=,command='], { timeoutMs: 5000 })).stdout)
+      const procs = parsePs((await psList($)).stdout)
       for (const pid of pids) { const sh = shellOf(pid, procs); if (sh) shells[pid] = sh }
     } catch { shells = {} }
   }

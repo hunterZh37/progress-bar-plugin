@@ -33,44 +33,59 @@ function world(on: On, files: Record<string, string>, full: string) {
   on('ui.panes', () => ({ value: [] as never }))
 }
 
-const G = DEFAULT_GOAL
+// A person's own goal file, with areas and tags.
+const SAMPLE = {
+  anchor: 'Make the orders database better',
+  areas: [
+    { id: 'organizations', name: 'Organizations', tag: 'Orgs', keywords: ['organization', 'duplicate', 'dedupe', 'merge', 'merged', 'ein', 'eins'] },
+    { id: 'finances', name: 'Finances', tag: 'Finances', keywords: ['finance', 'financial', 'return', 'returns', 'revenue', 'amended', 'filing'] },
+    { id: 'boards', name: 'Boards & people', tag: 'Boards', keywords: ['board', 'boards', 'people', 'person', 'member', 'seat', 'seats'] },
+    { id: 'grants', name: 'Grants', tag: 'Grants', keywords: ['grant', 'grants', 'funder', 'recipient'] },
+    { id: 'places', name: 'Places', tag: 'Places', keywords: ['place', 'places', 'where', 'serve', 'serves', 'location'] },
+    { id: 'causes', name: 'Causes', tag: 'Causes', keywords: ['cause', 'causes', 'label', 'labels', 'classifier', 'lightgbm'] },
+    { id: 'answers', name: 'Answer quality', tag: 'Answers', keywords: ['answer', 'answers', 'eval', 'evals', 'search'] },
+    { id: 'tools', name: 'Tools', tag: 'Tools', keywords: ['plugin', 'panel', 'setup', 'tools', 'install', 'machine'] },
+  ],
+}
+const G = parseGoal(JSON.stringify(SAMPLE))
 const area = (t: Parameters<typeof areaOf>[1]) => areaOf(G, t).name
 
-test('goal.json: defaults for a missing or bad file, custom areas kept, lenses merged over the defaults', () => {
+test('goal.json: a neutral default for a missing or bad file, custom areas kept, lenses merged over the defaults', () => {
   expect(parseGoal('nope')).toBe(DEFAULT_GOAL)
   expect(parseGoal('[]')).toBe(DEFAULT_GOAL)
-  expect(G.anchor).toBe('Making the generosity database better')
-  expect(G.areas.map(a => a.name)).toEqual(['Organizations', 'Finances', 'Boards & people', 'Grants', 'Places', 'Causes', 'Answer quality', 'Tools'])
+  expect(DEFAULT_GOAL.anchor).toBe('This project')
+  expect(DEFAULT_GOAL.areas).toEqual([])
+  expect(G.anchor).toBe('Make the orders database better')
+  expect(G.areas.map(a => a.tag)).toEqual(['Orgs', 'Finances', 'Boards', 'Grants', 'Places', 'Causes', 'Answers', 'Tools'])
   expect(G.lenses.map(l => l.id)).toEqual(['cost', 'quality', 'speed'])
   const g = parseGoal(JSON.stringify({ anchor: 'Ship the app', areas: [{ name: 'Login', icon: '🔑', keywords: ['Auth'] }, { icon: 'x' }], lenses: [{ id: 'speed', icon: '⏩' }] }))
   expect(g.anchor).toBe('Ship the app')
   // An icon from an older file is read and ignored, the tag defaults to the name's first word.
   expect(g.areas).toEqual([{ id: 'login', name: 'Login', tag: 'Login', keywords: ['auth'] }])
   expect(g.lenses.find(l => l.id === 'speed')).toEqual(G.lenses[2])
-  expect(G.areas.map(a => a.tag)).toEqual(['Orgs', 'Finances', 'Boards', 'Grants', 'Places', 'Causes', 'Answers', 'Tools'])
-  // A default area written by 0.26 with icons and no tags gets its default tag.
-  expect(parseGoal(JSON.stringify({ areas: [{ id: 'organizations', name: 'Organizations', icon: '🏢' }] })).areas[0]!.tag).toBe('Orgs')
+  expect(parseGoal(JSON.stringify({ areas: [{ id: 'search', name: 'Search & filters' }] })).areas[0]!.tag).toBe('Search')
   expect(g.lenses.find(l => l.id === 'cost')).toBe(G.lenses[0])
-  // No areas: the default ones.
-  expect(parseGoal('{"anchor":"A"}').areas).toBe(G.areas)
+  // No areas: the fallback's (none by default).
+  expect(parseGoal('{"anchor":"A"}').areas).toEqual([])
+  expect(parseGoal('{"anchor":"A"}', G).areas).toBe(G.areas)
 })
 
 test('area inference: a named area wins, else keywords (title counts double), else Other', () => {
   // Today's real jobs and to-dos.
-  expect(area({ title: 'Hunty grants linked to own filer', why: '$6.3B of Schedule I grants point back at the funder' })).toBe('Grants')
+  expect(area({ title: 'Linux grants linked to own filer', why: '$6.3B of Schedule I grants point back at the funder' })).toBe('Grants')
   expect(area({ title: 'Mac label top-ups 2021-23', why: 'Cause labels for orgs added by the 2021-23 IRS load' })).toBe('Causes')
-  expect(area({ title: 'Personal-mac LightGBM label classifier', why: 'Decide more labels without Claude where Jev is weak' })).toBe('Causes')
-  expect(area({ title: 'Hunty board lists past 25 seats', why: 'Recover unpaid board members cut by the 25-person limit' })).toBe('Boards & people')
-  expect(area({ title: 'Hunty person matcher fix' })).toBe('Boards & people')
-  expect(area({ title: 'Personal-mac tools setup', why: 'Get personal-mac ready to run data jobs' })).toBe('Tools')
+  expect(area({ title: 'Laptop LightGBM label classifier', why: 'Decide more labels without Claude where the API is weak' })).toBe('Causes')
+  expect(area({ title: 'Linux board lists past 25 seats', why: 'Recover unpaid board members cut by the 25-person limit' })).toBe('Boards & people')
+  expect(area({ title: 'Linux person matcher fix' })).toBe('Boards & people')
+  expect(area({ title: 'Laptop tools setup', why: 'Get laptop ready to run data jobs' })).toBe('Tools')
   expect(area({ title: 'Count each org once, merge orgs filed under two EINs' })).toBe('Organizations')
   expect(area({ title: 'One return per org and year, amended returns replace originals' })).toBe('Finances')
   expect(area({ title: "Know where more orgs serve, places beyond today's 77K" })).toBe('Places')
-  expect(area({ title: 'Check NomBot answers stay right on the bigger database, eval rerun' })).toBe('Answer quality')
+  expect(area({ title: 'Check the app answers stay right on the bigger database, eval rerun' })).toBe('Answer quality')
   // Keywords are whole words: "ein" is not found inside "being".
   expect(area({ title: 'being careful' })).toBe('Other')
-  // Whole words or plurals only: "personal-mac" is not a person.
-  expect(area({ title: 'Save a claude setup-token on personal-mac' })).toBe('Tools')
+  // Whole words or plurals only: "laptop" is not a person.
+  expect(area({ title: 'Save a claude setup-token on laptop' })).toBe('Tools')
   expect(areaOf(G, { title: 'nothing to see' })).toBe(OTHER)
   // A named area beats the keywords: by name, id or a name's start, any case.
   expect(area({ area: 'Tools', title: 'Grants for boards' })).toBe('Tools')
@@ -93,9 +108,9 @@ test('grouping by area: the goal\'s order, job-named areas next, Other last, emp
   expect(anchorSummary(4, 3, 0)).toBe('4 improvements done today · 3 in progress')
   expect(anchorSummary(1, 0, 2)).toBe('1 improvement done today · 2 queued')
   expect(anchorSummary(0, 0, 0)).toBe('Nothing moving yet today')
-  expect(plainTitle('Hunty grants linked to own filer · all', ['hunty'])).toBe('Grants linked to own filer')
-  expect(plainTitle('hunty: embed.py', ['hunty'])).toBe('Embed.py')
-  expect(plainTitle('Health care labels', ['hunty'])).toBe('Health care labels')
+  expect(plainTitle('Linux grants linked to own filer · all', ['linux'])).toBe('Grants linked to own filer')
+  expect(plainTitle('linux: embed.py', ['linux'])).toBe('Embed.py')
+  expect(plainTitle('Health care labels', ['linux'])).toBe('Health care labels')
 })
 
 test('lenses: named gains in order, else one inferred from the impact, a count per lens for today', () => {
@@ -103,7 +118,7 @@ test('lenses: named gains in order, else one inferred from the impact, a count p
   expect(pickGains('quality')).toBe(undefined)
   const named = lensTags(G, { speed: 'labels in 7h instead of 12h', quality: '1.65M more board seats counted' })
   expect(named.map(t => [t.id, t.name, t.inferred])).toEqual([['quality', 'quality', false], ['speed', 'speed', false]])
-  expect(inferLens(G, '$14 of Jev instead of 34h of Claude')).toBe('cost')
+  expect(inferLens(G, '$14 of API instead of 34h of Claude')).toBe('cost')
   expect(inferLens(G, 'Labels now finish 3 hours sooner')).toBe('speed')
   expect(inferLens(G, 'labels in 7h instead of 12h')).toBe('speed')
   expect(inferLens(G, '1.65M more board seats, so people search sees whole boards')).toBe('quality')
@@ -123,31 +138,32 @@ test('area and gains travel from progress_report to the done record', () => {
 
 const FULL = [
   '▾ ▶ RUNNING',
-  '  ◐ hunty-board-seats ██░░ 50.0% · 1/2 · 10m left',
+  '  ◐ linux-board-seats ██░░ 50.0% · 1/2 · 10m left',
   '  ◐ tidy-up ██░░ 50.0% · 1/2',
   '▾ ✔ DONE',
   '  grants-rematch · finished 10:12',
 ].join('\n')
 
-test('the List tab: a status line, then TO-DO, RUNNING, WAITING, DONE; two-line rows; DONE folded; no emoji; goal.json written once', async ($, on) => {
+test('the List tab: a status line, then TO-DO, RUNNING, WAITING, DONE; two-line rows; DONE folded; no emoji; goal.json read, never written', async ($, on) => {
+  const goalText = JSON.stringify(SAMPLE)
   const files: Record<string, string> = {
-    [SCRIPT]: statusScript(), [FLAG]: 'on\n',
-    [`${DIR}/todo.txt`]: '[hunty]\n1. Know where more orgs serve (after hunty-board-seats)\n',
-    [`${DIR}/hunty-board-seats.json`]: JSON.stringify({ done: 1, total: 2, title: 'Hunty board lists past 25 seats', why: 'Whole boards, not just 25', gains: { quality: '1.65M more board seats counted' } }),
+    [SCRIPT]: statusScript(), [FLAG]: 'on\n', [`${HOME}/${GOAL_REL}`]: goalText,
+    [`${DIR}/todo.txt`]: '[linux]\n1. Know where more orgs serve (after linux-board-seats)\n',
+    [`${DIR}/linux-board-seats.json`]: JSON.stringify({ done: 1, total: 2, title: 'Linux board lists past 25 seats', why: 'Whole boards, not just 25', gains: { quality: '1.65M more board seats counted' } }),
     [`${DIR}/tidy-up.json`]: JSON.stringify({ done: 1, total: 2, title: 'Tidy up', area: 'Tools' }),
-    [`${DIR}/.state/done/grants-rematch.json`]: JSON.stringify({ slug: 'grants-rematch', title: 'Hunty grant rematch', impact: ['42K more grants linked to the orgs that got them'], finished: NOW - 60_000, machine: 'hunty', kind: 'job' }),
+    [`${DIR}/.state/done/grants-rematch.json`]: JSON.stringify({ slug: 'grants-rematch', title: 'Linux grant rematch', impact: ['42K more grants linked to the orgs that got them'], finished: NOW - 60_000, machine: 'linux', kind: 'job' }),
   }
   world(on, files, FULL)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: props(72) })
-  // The defaults are written once.
-  expect(JSON.parse(files[`${HOME}/${GOAL_REL}`]!)).toEqual(DEFAULT_GOAL)
+  // The person's goal.json is read as it is.
+  expect(files[`${HOME}/${GOAL_REL}`]).toBe(goalText)
   const lines = draw((await ui.find({ type: 'Box' })) as never)
   const at = (re: RegExp) => lines.findIndex(l => re.test(l))
   // Level 1: status at a glance, right under the tabs, one blank line after it. No goal name, nothing needs you.
-  expect(lines[2]).toBe('2 running · 1 done today · Chrome: not connected')
+  expect(lines[2]).toBe('2 running · 1 done today')
   expect(lines[3]).toBe('')
-  expect(lines.join('\n')).not.toMatch(/generosity|NEEDS YOU/)
+  expect(lines.join('\n')).not.toMatch(/orders database|NEEDS YOU/)
   // No emoji anywhere: nothing from U+1F000 up, and none of the old badge glyphs. No lens line, no chips, no machines.
   const all = lines.join('\n')
   expect(all).not.toMatch(/[\u{1F000}-\u{1FFFF}⛔⚙⏱⚡☀✉]/u)
@@ -185,7 +201,7 @@ test('the List tab: a status line, then TO-DO, RUNNING, WAITING, DONE; two-line 
   const word = (await ui.findAll({ type: 'Text' })).find(t => t.text === 'Grants') as unknown as { props?: { dimColor?: boolean } }
   expect(!!word.props?.dimColor).toBe(false)
   // An opened running row adds the area and why, and the gains it named. No badge.
-  await ui.press({ key: 'open-hunty-board-seats' })
+  await ui.press({ key: 'open-linux-board-seats' })
   await ui.press({ key: 'open-tidy-up' })
   open = draw((await ui.find({ type: 'Box' })) as never)
   expect(open[open.findIndex(l => /Board lists/.test(l)) + 1]).toBe('    ⎿ 1 of 2 steps')
@@ -211,9 +227,9 @@ test('goal.json: a custom file is read and never overwritten', async ($, on) => 
 
 const PROJECTS = (): Record<string, string> => ({
   [SCRIPT]: statusScript(), [FLAG]: 'on\n',
-  [`${HOME}/${GOAL_REL}`]: JSON.stringify(DEFAULT_GOAL),
-  [`${HOME}/${GOALS_DIR_REL}/desktop-nombot.json`]: JSON.stringify({ anchor: 'Making the generosity database better', areas: [{ id: 'login', name: 'Login', tag: 'Login', keywords: ['tidy'] }] }),
-  [`${HOME}/Desktop/NomBot/.git`]: '', [`${HOME}/Desktop/agentic-scheduling/.git`]: '',
+  [`${HOME}/${GOAL_REL}`]: JSON.stringify(SAMPLE),
+  [`${HOME}/${GOALS_DIR_REL}/desktop-myapp.json`]: JSON.stringify({ anchor: 'Make the orders database better', areas: [{ id: 'login', name: 'Login', tag: 'Login', keywords: ['tidy'] }] }),
+  [`${HOME}/Desktop/MyApp/.git`]: '', [`${HOME}/Desktop/agentic-scheduling/.git`]: '',
   [`${DIR}/tidy-up.json`]: JSON.stringify({ done: 1, total: 2, title: 'Tidy up' }),
 })
 
@@ -231,27 +247,35 @@ async function paneIn($: Engine, on: On, files: Record<string, string>, cwd: str
 test('goals are per project: a project with no goals/<slug>.json shows its folder name, never another project goal', async ($, on) => {
   const files = PROJECTS()
   const lines = await paneIn($, on, files, `${HOME}/Desktop/agentic-scheduling/src`)
-  expect(lines[2]).toBe('2 running · 1 done today · Chrome: not connected')
-  expect(lines.join('\n')).not.toMatch(/generosity/)
+  expect(lines[2]).toBe('2 running · 1 done today')
+  expect(lines.join('\n')).not.toMatch(/orders database/)
   // No area known: the opened card names none (no "Other").
   expect(lines.join('\n')).not.toMatch(/Other|Login/)
-  expect(Object.keys(files).filter(f => /goals?[/.]/.test(f)).sort()).toEqual([`${HOME}/${GOAL_REL}`, `${HOME}/${GOALS_DIR_REL}/desktop-nombot.json`])
+  expect(Object.keys(files).filter(f => /goals?[/.]/.test(f)).sort()).toEqual([`${HOME}/${GOAL_REL}`, `${HOME}/${GOALS_DIR_REL}/desktop-myapp.json`])
 })
 
 test('goals are per project: goals/<slug>.json heads its own project, with its areas, and is never overwritten', async ($, on) => {
   const files = PROJECTS()
-  const mine = files[`${HOME}/${GOALS_DIR_REL}/desktop-nombot.json`]
-  const lines = await paneIn($, on, files, `${HOME}/Desktop/NomBot`)
+  const mine = files[`${HOME}/${GOALS_DIR_REL}/desktop-myapp.json`]
+  const lines = await paneIn($, on, files, `${HOME}/Desktop/MyApp`)
   expect(lines[lines.findIndex(l => /^  ◐ Tidy up/.test(l)) + 2]).toBe('      Login')
-  expect(files[`${HOME}/${GOALS_DIR_REL}/desktop-nombot.json`]).toBe(mine)
+  expect(files[`${HOME}/${GOALS_DIR_REL}/desktop-myapp.json`]).toBe(mine)
 })
 
 test('projectGoal and folderName: a project with no file is its folder, no areas', () => {
   expect(folderName('/Users/a/Desktop/agentic-scheduling/')).toBe('agentic-scheduling')
   expect(projectGoal('x')).toEqual({ anchor: 'x', areas: [], lenses: DEFAULT_GOAL.lenses })
+  expect(projectGoal('')).toEqual(DEFAULT_GOAL)
   expect(projectGoal('').anchor).toBe('This project')
   expect(areaOf(projectGoal('x'), { title: 'Fix the board seats' })).toBe(OTHER)
   expect(parseGoal('{"anchor":"A"}', projectGoal('x')).areas).toEqual([])
+})
+
+test('readGoal: no project and no goal.json is the neutral default, and nothing is written', async ($, on) => {
+  const files: Record<string, string> = {}
+  world(on, files, FULL)
+  expect(await readGoal($ as never, HOME)).toBe(DEFAULT_GOAL)
+  expect(files).toEqual({})
 })
 
 test('readGoal: a slug that is not plain (a projects.txt path) reads no file outside goals/', async ($, on) => {
@@ -265,7 +289,7 @@ test('readGoal: a slug that is not plain (a projects.txt path) reads no file out
 const LONG = (): Record<string, string> => {
   const out: Record<string, string> = {
     [SCRIPT]: statusScript(), [FLAG]: 'on\n',
-    [`${DIR}/hunty-board-seats.json`]: JSON.stringify({ done: 1, total: 2, title: 'Hunty board lists past 25 seats and a very long title that goes on', why: 'Whole boards, not just the first 25 members, so people search and board links see everyone' }),
+    [`${DIR}/linux-board-seats.json`]: JSON.stringify({ done: 1, total: 2, title: 'Linux board lists past 25 seats and a very long title that goes on', why: 'Whole boards, not just the first 25 members, so people search and board links see everyone' }),
   }
   for (let i = 0; i < 7; i++) {
     out[`${DIR}/.state/done/job-${i}.json`] = JSON.stringify({ slug: `job-${i}`, title: `Finished job number ${i} with a fairly long plain title`, impact: [`Impact ${i}: 1.65M more board seats (about 270K a year), so big boards show everyone in people search`], finished: NOW - (i + 1) * 60_000, machine: 'Mac', kind: 'job' })

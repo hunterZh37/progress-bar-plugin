@@ -5,13 +5,13 @@ export type { TopoConfig, TopoHealth, TopoMachine, TopoService }
 
 // The Topology tab: the machines, what runs on each and what data moves between them, smallest first. Closed, each
 // machine is one row with its link to the data host. A press opens it, a press on one of its jobs opens that job.
-// Machines, IPs and services come from ~/.claude-progress/topology.json (written once with the defaults below).
+// Machines, IPs and services come from ~/.claude-progress/topology.json, made by hand. Without it: this machine alone.
 // Each running row is placed on a machine the same way the List tab labels it: a "<host>: " row prefix or a title
-// that starts with a machine name or alias ("Hunty board lists", "Personal-mac tools setup"), else this machine.
+// that starts with a machine name or alias ("Server-1 nightly import", "Laptop tools setup"), else this machine.
 // Flows: a job on a helper machine reads from the data host, and writes back only when its progress file has `writes`.
-// The link between the two says what moves. Services (Jev API, Claude, GitHub) show under the open machine that uses them
+// The link between the two says what moves. Services (Orders API, Claude, GitHub) show under the open machine that uses them
 // while a running job matches their pattern.
-// Health: this machine is online. A machine with a `status` file (a .lines/*.txt heartbeat such as linux.txt) is
+// Health: this machine is online. A machine with a `status` file (a .lines/*.txt heartbeat such as server-1.txt) is
 // online while that file is fresh and says ✓, else offline. Others are unknown: the plugin runs no network checks.
 
 export const TOPOLOGY_REL = '.claude-progress/topology.json'
@@ -28,28 +28,25 @@ export type Seg = { text: string; color?: 'green' | 'red' | 'cyan'; dim?: boolea
 /** One row of the tab. `press`: the open-card key a press on it flips. */
 export type TopoLine = { segs: Seg[]; press?: string }
 
-export const DEFAULT_TOPOLOGY: TopoConfig = {
-  dbRole: 'helper',
-  machines: [
-    { id: 'work-mac', ip: '100.78.76.82', role: 'data', aliases: ['mac', 'local'], about: ['Postgres nombot ~68 GB, repos, keys', 'NomBot live, label jobs, every DB write'] },
-    { id: 'hunty', ip: '100.66.167.126', role: 'compute', aliases: ['linux'], about: ['12 cores + GPU, local model', 'DB read-only as helper'], status: 'linux.txt' },
-    { id: 'personal-mac', ip: '100.119.223.11', role: 'compute', aliases: ['personal'], about: ['M2 Pro 32 GB, Claude on personal Max', 'DB read-only, no repo copy'] },
-  ],
-  services: [
-    { name: 'Jev API', match: '\\bjev\\b|label', from: 'work-mac' },
-    { name: 'Claude', match: '\\bclaude\\b' },
-    { name: 'GitHub', match: 'github|git push|\\bpr\\b' },
-  ],
+/**
+ * The topology with no topology.json: this machine alone, named by its short host name, with no IPs and no services.
+ * Add other machines, their IPs and the services they use in ~/.claude-progress/topology.json.
+ */
+export function defaultTopology(host = ''): TopoConfig {
+  const id = host.trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '') || 'local'
+  return { dbRole: 'helper', machines: [{ id, role: 'data', ...(id === 'local' ? {} : { aliases: ['local'] }) }], services: [] }
 }
+
+export const DEFAULT_TOPOLOGY: TopoConfig = defaultTopology()
 
 const str = (x: unknown) => (typeof x === 'string' && x.trim() ? x.trim() : undefined)
 const strs = (x: unknown) => (Array.isArray(x) ? x.map(str).filter((s): s is string => !!s) : undefined)
 
-/** topology.json as a config. Missing or bad parts fall back to the defaults. */
-export function parseTopology(text: string): TopoConfig {
+/** topology.json as a config. Missing or bad parts fall back to `base` (this machine alone). */
+export function parseTopology(text: string, base: TopoConfig = DEFAULT_TOPOLOGY): TopoConfig {
   let raw: Record<string, unknown>
-  try { raw = JSON.parse(text) as Record<string, unknown> } catch { return DEFAULT_TOPOLOGY }
-  if (!raw || typeof raw !== 'object') return DEFAULT_TOPOLOGY
+  try { raw = JSON.parse(text) as Record<string, unknown> } catch { return base }
+  if (!raw || typeof raw !== 'object') return base
   const machines = (Array.isArray(raw.machines) ? raw.machines : []).flatMap((m): TopoMachine[] => {
     const r = (m ?? {}) as Record<string, unknown>
     const id = str(r.id)
@@ -66,9 +63,9 @@ export function parseTopology(text: string): TopoConfig {
   })
   return {
     self: str(raw.self)?.toLowerCase(),
-    dbRole: str(raw.dbRole) ?? DEFAULT_TOPOLOGY.dbRole,
-    machines: machines.length ? machines : DEFAULT_TOPOLOGY.machines,
-    services: Array.isArray(raw.services) ? services : DEFAULT_TOPOLOGY.services,
+    dbRole: str(raw.dbRole) ?? base.dbRole,
+    machines: machines.length ? machines : base.machines,
+    services: Array.isArray(raw.services) ? services : base.services,
   }
 }
 
@@ -86,8 +83,8 @@ const LEAD = /^([A-Za-z0-9_.-]+)(?::|\s|$)/
 const PREFIX = /^([A-Za-z0-9_.-]+):\s/
 
 /**
- * The machine a job runs on: a title that starts with a known machine ("Hunty board lists"), a "<host>: " row prefix
- * (a configured machine, else the host itself), a name that starts with one ("mac-label-x"), else `self`.
+ * The machine a job runs on: a title that starts with a known machine ("Server-1 nightly import"), a "<host>: " row prefix
+ * (a configured machine, else the host itself), a name that starts with one ("server-1-import"), else `self`.
  */
 export function jobHost(c: TopoConfig, name: string, title: string, self: string, extra: string[] = []): string {
   const lead = LEAD.exec(title.split(' · ')[0]!)?.[1] ?? ''
@@ -96,11 +93,11 @@ export function jobHost(c: TopoConfig, name: string, title: string, self: string
   const pre = PREFIX.exec(name)?.[1]
   if (pre) return resolveMachine(c, pre) || pre.toLowerCase()
   const nameLead = LEAD.exec(name)?.[1] ?? ''
-  // A slug name's first word counts too: "mac-label-top-ups" is on mac (work-mac), "hunty-interlocks" on hunty.
+  // A slug name's first word counts too: "server-1-import" is on server-1, "laptop-sync" on laptop.
   return resolveMachine(c, nameLead) || resolveMachine(c, nameLead.split('-')[0]!) || self
 }
 
-/** A job's title without its machine word: "Hunty board lists past 25 seats" on hunty is "Board lists past 25 seats". */
+/** A job's title without its machine word: "Server-1 nightly import" on server-1 is "Nightly import". */
 export function bareTitle(c: TopoConfig, title: string, host: string): string {
   const t = title.split(' · ')[0]!.trim()
   const lead = LEAD.exec(t)?.[1] ?? ''
@@ -110,7 +107,7 @@ export function bareTitle(c: TopoConfig, title: string, host: string): string {
   return rest ? rest.charAt(0).toUpperCase() + rest.slice(1) : t
 }
 
-/** A heartbeat file ("▶ hunty ✓ helper healthy · load 0.37 on 12 cores") as health. Stale or missing is offline. */
+/** A heartbeat file ("▶ server-1 ✓ helper healthy · load 0.37 on 12 cores") as health. Stale or missing is offline. */
 export function parseHealth(text: string | null, mtimeMs: number, now: number): TopoHealth {
   if (text === null) return { state: 'offline', note: 'no heartbeat file' }
   if (now - mtimeMs > HEARTBEAT_MS) return { state: 'offline', note: `heartbeat ${Math.round((now - mtimeMs) / 60_000)}m old` }
@@ -257,7 +254,7 @@ export function branchOf(flows: Flow[], data: string, helper: string, offline: b
 /**
  * The whole tab as rows. First a tree: the data host on top as the root, each helper a leaf below it, spread evenly
  * across the width, with what moves written on its branch (▼ reads, ▲ writes). Names are buttons. Services in use
- * show as a dim "→ Jev API" above the root (beside it in the narrow tree). Under 60 columns the tree is drawn down the left (├─ └─).
+ * show as a dim "→ Orders API" above the root (beside it in the narrow tree). Under 60 columns the tree is drawn down the left (├─ └─).
  * Below the tree, each open machine lists its jobs (percent and what each moves), the services it calls and its
  * queued count. An open job shows its reads, writes, step, why and what it waits on.
  */
@@ -367,13 +364,23 @@ export function renderTopology(inp: TopoInput, width: number, open: ReadonlySet<
   return out
 }
 
-/** Reads topology.json (writing the defaults once when it is missing) and each machine's heartbeat file. */
+let hostCache: string | null = null
+/** This machine's short host name, lower case, or '' when it cannot be read. */
+async function hostName($: EngineInterface): Promise<string> {
+  if (hostCache !== null) return hostCache
+  try { hostCache = (await $.process.run(['hostname', '-s'], { timeoutMs: 3000 })).stdout.trim().toLowerCase() } catch { hostCache = '' }
+  return hostCache
+}
+
+/**
+ * Reads topology.json and each machine's heartbeat file. With no topology.json the tab shows this machine alone and
+ * nothing is written: the file is the person's own, made by hand, and never overwritten.
+ */
 export async function readTopology($: EngineInterface, h: string): Promise<{ cfg: TopoConfig; health: Record<string, TopoHealth> }> {
   const file = `${h}/${TOPOLOGY_REL}`
-  let cfg = DEFAULT_TOPOLOGY
-  try { cfg = parseTopology(String(await $.fs.read(file))) } catch {
-    try { await $.fs.write(file, `${JSON.stringify(DEFAULT_TOPOLOGY, null, 2)}\n`) } catch { /* read-only home: defaults still draw */ }
-  }
+  const base = defaultTopology(await hostName($))
+  let cfg = base
+  try { cfg = parseTopology(String(await $.fs.read(file)), base) } catch { cfg = base }
   const health: Record<string, TopoHealth> = {}
   const watched = cfg.machines.filter(m => m.status)
   if (watched.length) {

@@ -12,7 +12,8 @@ import { claim, every, newOwner, owns, stop } from './owner'
 import { CHROME_PREFIX, parseChromeCommand, readChrome, recordChromeCall, recordChromeCommand, resultText } from './chrome'
 import { SNIPPET, installedPrev, writeLib } from './setup'
 import { resolveHome } from './home'
-import { USAGE_CHECK, probeUsage, sessionLogin } from './usage'
+import { USAGE_CHECK, probeUsage, sessionLogin, setUsageMeter } from './usage'
+import { setHideEmails } from './privacy'
 import { macClicks, parseMacClicks } from './mac'
 import { checkpointCommand, noteStatusLine, panelCommand, registerPanel, startPanel } from './panel'
 import { FILE_FRESH_MS, FRESH_MS, closestFile, pairFile, type PairCandidate, eta, pickMeta, expandHome, rateLeft, trackJob, lines, parseProgress, parseWatch, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
@@ -835,6 +836,11 @@ export const register: Register = (on, options) => {
   // Zero setup: on by default, off from /config (progress-bar.statusLine, progress-bar.openPanel).
   const autoStatusLine = options?.statusLine !== false
   const autoPanel = options?.openPanel !== false
+  // Off unless turned on in /config: the meter costs a small Claude call every 30 minutes.
+  const usageMeter = options?.usageMeter === true
+  setUsageMeter(usageMeter)
+  // Off by default: account emails show masked in the panel and the Chrome part.
+  setHideEmails(options?.hideEmails === true)
 
   // The status line points at the plugin's script, unless a settings file already does. A status line the person
   // had is chained inside the script (its prev= line), so it still prints below the bars.
@@ -1008,8 +1014,10 @@ export const register: Register = (on, options) => {
     void tickActions($, home).catch(() => undefined)
     tick(CHECK_EVERY, () => tickActions($, home))
     // Usage meter: a fresh reading when the saved one is over 30 min old, one session per machine.
-    void probeUsage($, home).catch(() => undefined)
-    tick(USAGE_CHECK, () => probeUsage($, home))
+    if (usageMeter) {
+      void probeUsage($, home).catch(() => undefined)
+      tick(USAGE_CHECK, () => probeUsage($, home))
+    }
     return next(e)
   })
 

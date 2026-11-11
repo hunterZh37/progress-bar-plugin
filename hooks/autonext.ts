@@ -6,7 +6,7 @@
 // .state/autonext-claims/, so two sessions (or a reload) never act twice. The session whose own agent finished
 // claims at once, others wait 20 s first, so the prompt lands in the session that ran the job when it can.
 // It acts on the finished job's machine, plus any machine with an item that was waiting for that job.
-// A machine at its cap (.state/caps, default mac=3, hunty=2) of running rows waits, and is tried again each check.
+// A machine at its cap (.state/caps, default local=3) of running rows waits, and is tried again each check.
 // Mode (.state/autonext, set by /progress-bar autonext): on submits the prompt with $.prompt.submit, ask shows a
 // toast and puts the prompt in the prompt box as a suggestion (Tab takes it), off does nothing.
 

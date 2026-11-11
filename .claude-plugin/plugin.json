@@ -1,11 +1,22 @@
 {
   "name": "progress-bar",
-  "version": "0.29.1",
+  "version": "0.30.0",
   "description": "Live progress bars in the status line and a docked Status panel for subagents and long jobs that write ~/.claude-progress/<slug>.json",
   "license": "MIT",
   "author": {
-    "name": "hunterZh37"
+    "name": "hunterZh37",
+    "url": "https://github.com/hunterZh37"
   },
+  "homepage": "https://github.com/hunterZh37/progress-bar-plugin",
+  "repository": "https://github.com/hunterZh37/progress-bar-plugin",
+  "keywords": [
+    "progress",
+    "status-line",
+    "subagents",
+    "panel",
+    "jobs",
+    "productivity"
+  ],
   "icon": "./.claude-plugin/icon.png",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -20,6 +31,18 @@
       "title": "Open the Status panel",
       "description": "Open the Status panel beside the chat at session start, until /progress-bar panel off.",
       "default": true
+    },
+    "usageMeter": {
+      "type": "boolean",
+      "title": "Usage meter",
+      "description": "Show your plan usage (7-day percent) in the Status panel. To read it, one session per machine runs a tiny Claude Haiku call (claude -p) every 30 minutes on your login, which counts toward your usage.",
+      "default": false
+    },
+    "hideEmails": {
+      "type": "boolean",
+      "title": "Hide account emails",
+      "description": "Mask account emails in the status line, the Status panel and the Chrome line, for screen sharing.",
+      "default": false
     }
   }
 }

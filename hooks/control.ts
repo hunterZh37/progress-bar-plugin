@@ -89,8 +89,20 @@ export function shellTree(command: string, procs: Proc[], uid: number, self: num
   return [...out]
 }
 
+/** Every process with its start time. macOS ps takes -x; procps on Linux rejects it, so -e is tried next. */
+export async function psList($: EngineInterface): Promise<{ stdout: string }> {
+  const cols = 'pid=,ppid=,uid=,lstart=,command='
+  for (const argv of [['ps', '-x', '-ww', '-o', cols], ['ps', '-e', '-ww', '-o', cols]]) {
+    try {
+      const r = await $.process.run(argv, { timeoutMs: 5000 })
+      if (r.exitCode === 0 && r.stdout.trim()) return r
+    } catch { /* try the next form */ }
+  }
+  return { stdout: '' }
+}
+
 async function procs($: EngineInterface): Promise<{ list: Proc[]; uid: number; self: number[] }> {
-  const ps = await $.process.run(['ps', '-x', '-ww', '-o', 'pid=,ppid=,uid=,lstart=,command='], { timeoutMs: 5000 })
+  const ps = await psList($)
   const id = await $.process.run(['id', '-u'], { timeoutMs: 3000 })
   const me = await $.process.run(['/bin/sh', '-c', 'echo $PPID'], { timeoutMs: 3000 })
   const self = [Number(me.stdout.trim())].filter(n => n > 1)

@@ -100,7 +100,7 @@ export async function inboxCommand($: EngineInterface, h: string, arg: string): 
   return [`${b.items.length} need you`, ...b.items.map(i => `  ${i.from} · ${i.subject}${i.why ? `  (${i.why})` : ''}`)].join('\n')
 }
 
-export const INBOX_CHECK_SH = String.raw`#!/bin/zsh
+export const INBOX_CHECK_SH = String.raw`#!/bin/sh
 # progress-bar inbox checker (example). Written by /progress-bar inbox setup. Safe to edit or delete.
 # A headless, read-only Claude (haiku) reads your Gmail inbox through the claude.ai Gmail connector and
 # writes ~/.claude-progress/inbox.json with the threads that need your action.
@@ -113,18 +113,19 @@ HANDLED="$ROOT/.state/inbox-handled.txt"
 LOG="$ROOT/.state/inbox-check.log"
 LOCK="$ROOT/.state/inbox-check.lock"
 ACCOUNT="$INBOX_ACCOUNT"
-[[ -z $ACCOUNT ]] && { echo "Set INBOX_ACCOUNT to your Gmail address." >&2; exit 2 }
+[ -z "$ACCOUNT" ] && { echo "Set INBOX_ACCOUNT to your Gmail address." >&2; exit 2; }
 mkdir -p "$ROOT/.state"
-log() { print -r -- "$(date '+%F %T') $*" >> $LOG }
-[[ -f $LOG && $(wc -c < $LOG) -gt 200000 ]] && { tail -n 400 $LOG > $LOG.tmp && mv $LOG.tmp $LOG }
+log() { printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$LOG"; }
+if [ -f "$LOG" ] && [ "$(wc -c < "$LOG")" -gt 200000 ]; then tail -n 400 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"; fi
 
-h=$(date +%H); [[ $FORCE != 1 ]] && (( 10#$h >= 23 || 10#$h < 6 )) && exit 0
+h=$(date +%H | sed 's/^0//')
+if [ "$FORCE" != 1 ] && { [ "$h" -ge 23 ] || [ "$h" -lt 6 ]; }; then exit 0; fi
 
-if ! mkdir $LOCK 2>/dev/null; then
-  if [[ -n $(find $LOCK -maxdepth 0 -mmin +15 2>/dev/null) ]]; then rm -rf $LOCK; mkdir $LOCK || exit 0
+if ! mkdir "$LOCK" 2>/dev/null; then
+  if [ -n "$(find "$LOCK" -maxdepth 0 -mmin +15 2>/dev/null)" ]; then rm -rf "$LOCK"; mkdir "$LOCK" || exit 0
   else log "skip: previous run still going"; exit 0; fi
 fi
-trap 'rm -rf $LOCK' EXIT
+trap 'rm -rf "$LOCK"' EXIT
 
 G=mcp__claude_ai_Gmail__
 READ_TOOLS="$G""search_threads,$G""get_thread,$G""get_message"
@@ -151,11 +152,11 @@ When unsure, leave it out. Output only the structured result."
 log "run start"
 RAW=$(cd "$ROOT" && claude -p --model haiku --no-session-persistence --tools "" \
   --allowedTools "$READ_TOOLS" --disallowedTools "$DENY" \
-  --output-format json --json-schema "$SCHEMA" "$PROMPT" 2>>$LOG)
+  --output-format json --json-schema "$SCHEMA" "$PROMPT" 2>>"$LOG")
 rc=$?
-if [[ $rc -ne 0 || -z $RAW ]]; then log "claude failed rc=$rc"; exit 1; fi
+if [ "$rc" -ne 0 ] || [ -z "$RAW" ]; then log "claude failed rc=$rc"; exit 1; fi
 
-print -r -- "$RAW" | python3 -c '
+printf '%s\n' "$RAW" | python3 -c '
 import json, os, re, sys, time
 raw = json.load(sys.stdin)
 if raw.get("is_error"): sys.exit("claude error")
@@ -182,5 +183,5 @@ tmp = sys.argv[3] + ".tmp"
 json.dump({"checked": int(time.time()), "items": items}, open(tmp, "w"), indent=1)
 os.replace(tmp, sys.argv[3])
 print("ok " + str(len(items)) + " items")
-' "$HANDLED" "$ACCOUNT" "$OUT" >> $LOG 2>&1 || log "validation failed, kept the old inbox.json"
+' "$HANDLED" "$ACCOUNT" "$OUT" >> "$LOG" 2>&1 || log "validation failed, kept the old inbox.json"
 `

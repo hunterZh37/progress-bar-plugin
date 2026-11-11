@@ -24,7 +24,8 @@ import { sessionKeyOf } from './route'
 import { DEFAULT_TOPOLOGY, queuesOf, readTopology, renderTopology, resolveMachine } from './topology'
 import type { TopoJob } from './topology'
 import { turnOnStatusLine } from './setup'
-import { parseSaved, sessionLogin, usageFileRel } from './usage'
+import { parseSaved, sessionLogin, usageFileRel, usageMeterOn } from './usage'
+import { shownEmails } from './privacy'
 import type { UsageReading } from './usage'
 import { FEW_STEPS, FILE_FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, serverOf, slug } from './render'
 import type { LocalView } from '../types'
@@ -85,7 +86,8 @@ const menuAtom = atom({ plugin: 'progress-bar', key: 'menuFor' } as const, -1)
 // The same state connectors.ts writes; the scan wants each atom declared in the file that reads it.
 const connsAtom = atom({ plugin: 'progress-bar', key: 'conns' } as const, { at: 0, checking: false, login: '', list: [] })
 // The same state chrome.ts writes: which Chrome browser and Google account Claude in Chrome drives.
-const chromeAtom = atom({ plugin: 'progress-bar', key: 'chrome' } as const, { line: 'Chrome: not connected', tone: 'dim', warn: '', usedAt: 0, others: [] })
+// Its line is '' until Claude in Chrome has been used on this machine: then nothing about Chrome shows.
+const chromeAtom = atom({ plugin: 'progress-bar', key: 'chrome' } as const, { line: '', tone: 'dim', warn: '', usedAt: 0, others: [] })
 // The same state localhost.ts writes: what listens on this machine, for the LOCALHOST list.
 const localAtom = atom({ plugin: 'progress-bar', key: 'local' } as const, { listening: [], root: '', at: 0, labels: [], labelsPath: '' } as LocalView)
 const tabAtom = atom({ plugin: 'progress-bar', key: 'tab' } as const, 'list')
@@ -485,7 +487,7 @@ export function glanceParts(n: { running: number; waiting: number; needs: number
   return parts.length ? parts : [{ text: 'Nothing running', strong: false }]
 }
 
-/** The Chrome part at the end of the status line, cut to `room` columns. The account is cut first ("hunter@inst…"),
+/** The Chrome part at the end of the status line, cut to `room` columns. The account is cut first ("jane@exam…"),
  * then dropped, then where it runs ("this Mac"), then the browser name is cut. Under 9 columns it is left out. */
 export function fitChrome(line: string, room: number): string {
   if (line.length <= room) return line
@@ -1095,7 +1097,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const login = await sessionLogin($, homeDir)
     const maxFile = `${homeDir}/${usageFileRel(login.key)}`
     let maxSaved: UsageReading | null = null
-    try { maxSaved = parseSaved(String(await $.fs.read(maxFile))) } catch { maxSaved = null }
+    if (usageMeterOn()) { try { maxSaved = parseSaved(String(await $.fs.read(maxFile))) } catch { maxSaved = null } }
     const lines = await read($, linesAtom)
     const folded = new Set(await read($, foldedAtom))
     const todos = await read($, todosAtom)
@@ -1479,7 +1481,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const liveUsed = (sections.find(x => x.key === 'running')?.rows ?? []).map(runCard)
       .reduce<number | null>((a, c) => (c.maxUsed === null ? a : Math.max(a ?? 0, c.maxUsed)), null)
     const reading = maxReading(liveUsed, maxSaved, nowMs)
-    if (reading.save && liveUsed !== null) void $.fs.write(maxFile, JSON.stringify({ pct: liveUsed, at: nowMs, ...(maxSaved?.plan ? { plan: maxSaved.plan } : {}) })).catch(() => undefined)
+    if (usageMeterOn() && reading.save && liveUsed !== null) void $.fs.write(maxFile, JSON.stringify({ pct: liveUsed, at: nowMs, ...(maxSaved?.plan ? { plan: maxSaved.plan } : {}) })).catch(() => undefined)
     // The tab labels in words, then the usage meter: on the tab row's right end when it fits, else right-aligned on
     // its own line. The shown tab is bold cyan, the others dim. Short names when the full ones do not fit the pane.
     const labelsAt = (narrow: boolean) => [
@@ -1494,7 +1496,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const tabText = (k: string, label: string) => <Text bold={tab === k} color={tab === k ? 'cyan' : undefined} dimColor={tab !== k}>{label}</Text>
     const meter = (() => {
       const used = reading.used
-      if (used === null) return null
+      if (used === null || !usageMeterOn()) return null
       const m = maxMeter(used, METER_CELLS)
       const text = meterText(maxSaved?.plan, used, reading.asOf)
       return {
@@ -1767,18 +1769,18 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
             : <Text bold>{c.name}</Text>}
           {c.kind !== 'ok' ? <Text color={COLOR[c.kind]}>{c.kind === 'auth' ? '  needs sign-in' : '  failed'}</Text> : null}
         </Box>,
-        c.account ? <Text key={`c-a-${c.name}`} dimColor>{`    ${TIE}${c.account}`}</Text> : null,
+        c.account ? <Text key={`c-a-${c.name}`} dimColor>{`    ${TIE}${shownEmails(c.account)}`}</Text> : null,
       ].filter(Boolean)
       return (
         <Box flexDirection="column">
           {tabBar}
           <Text bold color="cyan">{`CONNECTORS  ${connSummary(conns.list)}`}</Text>
-          {conns.login ? <Text dimColor>{`  Claude: ${conns.login}`}</Text> : null}
-          <Box key="c-chrome">
+          {conns.login ? <Text dimColor>{`  Claude: ${shownEmails(conns.login)}`}</Text> : null}
+          {chrome.line ? <Box key="c-chrome">
             <Text color={chrome.tone === 'warn' ? 'yellow' : undefined} dimColor={chrome.tone !== 'warn'} wrap="truncate-end">{`  ${chrome.line}`}</Text>
             {chrome.usedAt && chrome.tone !== 'dim' ? <Text dimColor>{`  used ${hhmm(chrome.usedAt)}`}</Text> : null}
             {checkBtn(chrome.check, 'c-chrome-chk')}
-          </Box>
+          </Box> : null}
           {/* A warning keeps its whole text: it says what to do. */}
           {/* Lines under the Chrome row: the first starts with "⎿ ", the rest line up under its text. */}
           {tieFirst([

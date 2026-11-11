@@ -3,6 +3,7 @@ import type { EngineInterface } from 'claude-code'
 
 import type { ChromeCheck, ChromeView } from '../types'
 import { isDarwin } from './mac'
+import { shownEmails } from './privacy'
 
 // Which Chrome browser Claude in Chrome drives, under which Google account, and whether it is on this Mac.
 // Nothing is asked of Chrome: the plugin reads the results of the session's own mcp__claude-in-chrome__* calls.
@@ -37,12 +38,16 @@ export type ChromeAccounts = Record<string, ChromeAccount>
 
 export const EMPTY_STATE: ChromeState = { browsers: [], inUse: '', connected: null, lastUseAt: 0, tabs: {} }
 export const EMPTY_VIEW: ChromeView = { line: 'Chrome: not connected', tone: 'dim', warn: '', usedAt: 0, others: [] }
+/** The view before Claude in Chrome was ever used on this machine: no Chrome line at all. */
+export const UNUSED_VIEW: ChromeView = { line: '', tone: 'dim', warn: '', usedAt: 0, others: [] }
+/** Written the first time a Chrome tool or /chrome is seen. From then on "Chrome: not connected" shows when idle. */
+export const CHROME_USED_REL = '.claude-progress/.state/chrome-used'
 // The Check account button: a pressed check hides its button this long (shared by all sessions).
 export const CHROME_CHECKS_REL = '.claude-progress/.state/chrome-checks.json'
 export const CHECK_PENDING_MS = 2 * 60_000
 export const ACCOUNT_URL = 'https://myaccount.google.com/'
 
-export const chromeAtom = atom({ plugin: 'progress-bar', key: 'chrome' } as const, EMPTY_VIEW)
+export const chromeAtom = atom({ plugin: 'progress-bar', key: 'chrome' } as const, UNUSED_VIEW)
 
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/
 const EMAILS = new RegExp(EMAIL.source, 'g')
@@ -102,7 +107,7 @@ export function parseBrowsers(text: string): ChromeBrowser[] | null {
   return null
 }
 
-/** The signed-in email on a Google account page's text ("Hunter Zhang\nhunter@protocolvr.com"). '' when none. */
+/** The signed-in email on a Google account page's text ("Jane Doe\njane@example.com"). '' when none. */
 export function accountPageEmail(text: string): string {
   for (const m of text.matchAll(EMAILS)) if (!NOT_ACCOUNT.test(m[0])) return m[0].toLowerCase()
   return ''
@@ -111,7 +116,7 @@ export function accountPageEmail(text: string): string {
 const NAME_LINE = /^[\p{L}][\p{L}\p{M}' .-]{0,58}[\p{L}.]$/u
 const NOT_NAME = /^(?:google(?: account)?|home|account|personal info|welcome|hi|sign in|signed in|manage your google account)$/i
 
-/** The account's name on a Google account page: the line just above the email ("Hunter Zhang\nhunter@x.org"). */
+/** The account's name on a Google account page: the line just above the email ("Jane Doe\njane@example.org"). */
 export function accountPageName(text: string, email: string): string {
   if (!email) return ''
   const lines = text.split('\n').map(l => l.trim())
@@ -282,7 +287,7 @@ export function mergeAccount(acc: ChromeAccounts, deviceId: string, email: strin
   return { ...acc, [deviceId]: keep ? { email, seenAt: now, from, name: keep } : { email, seenAt: now, from } }
 }
 
-/** "Hunter Zhang (hunter@x.org)" when the name is known, else the email. '' when neither. */
+/** "Jane Doe (jane@example.org)" when the name is known, else the email. '' when neither. */
 export function accountLabel(a: ChromeAccount | undefined, email = ''): string {
   const e = a?.email || email
   if (!e) return ''
@@ -380,6 +385,7 @@ export async function recordChromeCall($: EngineInterface, h: string, key: strin
   const prev = parseState(await readText($, file))
   const { state, email, from, name } = applyCall(prev, tool, input, resultText(result), now)
   await $.fs.write(file, JSON.stringify(state))
+  await markUsed($, h)
   const device = state.inUse || (state.browsers.length === 1 ? state.browsers[0]!.deviceId : '')
   if (email && from && device) {
     const af = `${h}/${CHROME_ACCOUNTS_REL}`
@@ -394,6 +400,21 @@ export async function recordChromeCommand($: EngineInterface, h: string, key: st
   if (!h || !key) return
   const file = `${h}/${chromeStateRel(key)}`
   await $.fs.write(file, JSON.stringify(applySwitch(parseState(await readText($, file)), cmd, await $.clock.now())))
+  await markUsed($, h)
+}
+
+let usedSeen = false
+/** Notes once that Claude in Chrome has been used here, so its line shows from now on. */
+async function markUsed($: EngineInterface, h: string) {
+  if (usedSeen) return
+  try { await $.fs.write(`${h}/${CHROME_USED_REL}`, '1\n'); usedSeen = true } catch { /* next call */ }
+}
+
+/** Whether Claude in Chrome was ever used on this machine: the flag, any Chrome state or a known account. */
+async function everUsed($: EngineInterface, h: string, state: ChromeState, acc: ChromeAccounts): Promise<boolean> {
+  if (usedSeen || state.lastUseAt || state.browsers.length || Object.keys(acc).length) return true
+  try { usedSeen = await $.fs.exists(`${h}/${CHROME_USED_REL}`) } catch { usedSeen = false }
+  return usedSeen
 }
 
 // How far each transcript was read: only its new bytes are read again, and nothing when its size is the same.
@@ -423,7 +444,7 @@ let localAt = 0
 let localEmails: string[] | null = null
 let onMac = false
 /** Tests: read Local State again on the next poll. */
-export function forgetLocalState() { localAt = 0; localEmails = null; onMac = false; txRead.clear() }
+export function forgetLocalState() { localAt = 0; localEmails = null; onMac = false; txRead.clear(); usedSeen = false }
 
 /**
  * The panel's poll: the session's Chrome state into the atom. Chrome's Local State is read at most every 5 minutes,
@@ -449,7 +470,9 @@ export async function readChrome($: EngineInterface, h: string, key: string, pro
     try { expected = str((JSON.parse(await readText($, `${h}/.claude-progress/goals/${projectSlug}.json`)) as { chromeAccount?: unknown })?.chromeAccount) } catch { expected = '' }
   }
   const checks = parseChecks(await readText($, `${h}/${CHROME_CHECKS_REL}`), now)
-  const view: ChromeView = { ...chromeView(state, acc, local, EMAIL.test(expected) ? expected : '', onMac ? 'this Mac' : 'this computer', checks), hint: local ? '' : LOCAL_ACCOUNTS_HINT }
+  const used = await everUsed($, h, state, acc)
+  const v = used ? chromeView(state, acc, local, EMAIL.test(expected) ? expected : '', onMac ? 'this Mac' : 'this computer', checks) : UNUSED_VIEW
+  const view: ChromeView = { ...v, line: shownEmails(v.line), warn: shownEmails(v.warn), others: v.others.map(shownEmails), hint: local || !used ? '' : LOCAL_ACCOUNTS_HINT }
   if (JSON.stringify(await read($, chromeAtom)) !== JSON.stringify(view)) await update($, chromeAtom, () => view)
 }
 

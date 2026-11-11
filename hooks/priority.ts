@@ -139,9 +139,9 @@ export const parseMode = (s: string): Mode => {
   return t === 'on' || t === 'off' ? t : 'ask'
 }
 
-export const DEFAULT_CAPS: Record<string, number> = { mac: 3, hunty: 2 }
+export const DEFAULT_CAPS: Record<string, number> = { local: 3 }
 
-/** .state/caps: "mac=3" lines (or "mac: 3"). Defaults: mac 3, hunty 2. Other machines have no cap. */
+/** .state/caps: "server-1=2" lines (or "server-1: 2"). Default: local 3. Other machines have no cap until listed. */
 export function parseCaps(s: string): Record<string, number> {
   const out = { ...DEFAULT_CAPS }
   for (const l of s.split('\n')) {

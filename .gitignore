@@ -1,3 +1,5 @@
 .DS_Store
 *.log
 .claude-plugin/types/
+policy-limits.json*
+remote-settings.json*

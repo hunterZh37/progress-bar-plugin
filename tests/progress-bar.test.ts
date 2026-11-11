@@ -9,7 +9,7 @@ import { closestFile, pairFile, serverOf } from '../hooks/render'
 import type { PairCandidate } from '../hooks/render'
 import { controlKind, controlOptions, parsePs, pidCheck, shellTree } from '../hooks/control'
 import { finishedTaskIds } from '../hooks/report'
-import { loginKey, usageFileRel } from '../hooks/usage'
+import { loginKey, usageFileRel, usageMeterOn } from '../hooks/usage'
 import { clock } from '../hooks/done'
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
@@ -26,6 +26,20 @@ import { FEW_STEPS, RATE_MIN_MS, eta, expandHome, line, rateLeft, stepRate, trac
 const NOW = 1_800_000_000_000
 const HOME = '/home/u'
 const DIR = `${HOME}/.claude-progress`
+// A person's own goal.json with areas: the default goal has none.
+const GOAL_SAMPLE = JSON.stringify({
+  anchor: 'Make the orders database better',
+  areas: [
+    { id: 'organizations', name: 'Organizations', tag: 'Orgs', keywords: ['organization', 'duplicate', 'merge', 'ein'] },
+    { id: 'finances', name: 'Finances', tag: 'Finances', keywords: ['finance', 'return', 'returns', 'revenue', 'trend', 'trends'] },
+    { id: 'boards', name: 'Boards & people', tag: 'Boards', keywords: ['board', 'boards', 'people', 'person', 'seat', 'seats'] },
+    { id: 'grants', name: 'Grants', tag: 'Grants', keywords: ['grant', 'grants', 'funder', 'schedule i', 'recipient'] },
+    { id: 'places', name: 'Places', tag: 'Places', keywords: ['place', 'places', 'where', 'serve', 'location', 'county', 'city'] },
+    { id: 'causes', name: 'Causes', tag: 'Causes', keywords: ['cause', 'causes', 'label', 'labels', 'classify'] },
+    { id: 'answers', name: 'Answer quality', tag: 'Answers', keywords: ['answer', 'answers', 'eval', 'evals', 'search', 'chat'] },
+    { id: 'tools', name: 'Tools', tag: 'Tools', keywords: ['plugin', 'panel', 'setup', 'tools', 'install', 'machine'] },
+  ],
+})
 
 test('slug follows the rule', async () => {
   expect(slug('Fix the Login bug!')).toBe('fix-the-login-bug')
@@ -616,7 +630,7 @@ test('the panel draws sections and rows, and a header press writes folded.txt', 
   await ui.unmount()
 })
 
-test('the panel draws an indeterminate bar without a %, and one compact usage meter at the top right', async ($, on) => {
+test('the panel draws an indeterminate bar without a %, and one compact usage meter at the top right', { options: { usageMeter: true } }, async ($, on) => {
   const full = ['▾ ▶ RUNNING', '  ◐ Build docs working · 3m · 12 tools · Edit', '  ◓ orgs-judge ███░░░░░░░ 30.0% · 3/10 · 7d 62%', '  ◑ orgs-verify ██░░ 20.0% · Max 7-day used 55%'].join('\n')
   const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n' }
   panelWorld(on, files, full)
@@ -645,6 +659,22 @@ test('the panel draws an indeterminate bar without a %, and one compact usage me
   expect(wt.indexOf('Max ')).toBeGreaterThan(wt.indexOf('Topology'))
   expect(wt[wt.indexOf('Max ') - 1]).toBe(' '.repeat(70 - 45 - 16))
   await wide.unmount()
+})
+
+test('usage meter off by default: no meter even with a job reporting usage or a saved reading, and no probe runs', async ($, on) => {
+  const full = ['▾ ▶ RUNNING', '  ◓ orgs-judge ███░░░░░░░ 30.0% · 3/10 · 7d 62%'].join('\n')
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [`${HOME}/${usageFileRel('')}`]: JSON.stringify({ pct: 40, at: NOW, plan: 'Max' }) }
+  const { ran: runs } = panelWorld(on, files, full)
+  const ran = () => runs.map(r => r.argv.join(' '))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  expect(usageMeterOn()).toEqual(false)
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 70 } })
+  const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(texts).not.toContain('Max ')
+  expect(texts.filter(t => /━.* 7d/.test(t) || / 7d$/.test(t))).toEqual([])
+  await ui.unmount()
+  expect(ran().filter(c => /claude -p|PB_USAGE_PROBE/.test(c))).toEqual([])
+  expect(JSON.parse(files[`${HOME}/${usageFileRel('')}`]!).pct).toBe(40)
 })
 
 test('/progress-bar panel on and off: the flag file, and setup first', { options: { openPanel: false, statusLine: false } }, async ($, on) => {
@@ -1060,13 +1090,14 @@ const TITLED_FULL = [
 test('the panel: titles, ids with badges, unlocks, a nested child, waiting on and one-line DONE rows', async ($, on) => {
   const files: Record<string, string> = {
     [SCRIPT]: statusScript(), [FLAG]: 'on\n',
+    [`${DIR}/goal.json`]: GOAL_SAMPLE,
     [`${DIR}/titles.txt`]: '# id\ttitle\twhy\tparent\nnightly\tNightly import · all files\nbox: train.py\tTrain the model\tbetter search\n',
     [`${DIR}/big-batch.json`]: '{"done":6,"total":8,"title":"Big batch · six parts","why":"unlocks: the weekly report"}',
     [`${DIR}/child-step.json`]: '{"done":1,"total":2,"parent":"big-batch","title":"Child step"}',
     [`${DIR}/finisher.json`]: '{"done":7,"total":7,"title":"Finisher · last part"}',
     // A done record with an impact for the grouper's finished row, and one older record only the records know.
     [`${DIR}/.state/done/nightly.json`]: JSON.stringify({ slug: 'nightly', title: 'Nightly import · all files', why: 'the morning dashboard', impact: ['Board links rebuilt: 1.29M pairs', '109K split people merged'], started: NOW - 80 * 60_000, finished: NOW - 60_000, machine: 'Mac', kind: 'job' }),
-    [`${DIR}/.state/done/hunty-person-matcher-fix.json`]: JSON.stringify({ slug: 'hunty-person-matcher-fix', title: 'Hunty person matcher fix', impact: [], started: NOW - 3 * 3_600_000, finished: NOW - 2 * 3_600_000, machine: 'Mac', kind: 'agent' }),
+    [`${DIR}/.state/done/box-person-matcher-fix.json`]: JSON.stringify({ slug: 'box-person-matcher-fix', title: 'Box person matcher fix', impact: [], started: NOW - 3 * 3_600_000, finished: NOW - 2 * 3_600_000, machine: 'Mac', kind: 'agent' }),
     [`${DIR}/.state/done/last-week.json`]: JSON.stringify({ slug: 'last-week', title: 'Old job', impact: ['x'], finished: NOW - 2 * 86_400_000, machine: 'Mac', kind: 'job' }),
   }
   panelWorld(on, files, TITLED_FULL)
@@ -1082,7 +1113,7 @@ test('the panel: titles, ids with badges, unlocks, a nested child, waiting on an
   expect(await buttons()).toEqual(['Train the model', 'Big batch'.padEnd(col), 'Other'.padEnd(col)])
   let lines = await pic()
   // Status at a glance: no goal name, nothing needs you (the stuck parent waits on its busy child).
-  expect(lines[2]).toBe('3 running · 3 done today · Chrome: not connected')
+  expect(lines[2]).toBe('3 running · 3 done today')
   expect(lines.join('\n')).not.toMatch(/NEEDS YOU|generosity|⚠ stuck/)
   // Line one: mark, bold title, bar, %, the note cut to what is left (less 4 for the [x] on a row that can be stopped).
   // Line two: the step and the time, dim. No area, no why until it opens.
@@ -1146,7 +1177,7 @@ test('the panel: titles, ids with badges, unlocks, a nested child, waiting on an
   expect(texts).toContain(`finished ${clock(NOW - 60_000)} · ran 1h19m · machine: Mac`)
   expect(texts).toContain('unlocks: the morning dashboard')
   // No impact: the title is the row, and the card says so.
-  await ui.press({ key: 'dno-hunty-person-matcher-fix' })
+  await ui.press({ key: 'dno-box-person-matcher-fix' })
   texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   expect(texts).toContain('no impact reported')
   expect(texts).toContain(`finished ${clock(NOW - 2 * 3_600_000)} · ran 1h00m · machine: Mac`)
@@ -1261,7 +1292,7 @@ test('waiting rows: no bar, one line "⏸ <title> · waiting on <what>", a press
   expect(waitReason(runCard('arts-verify · waiting on: Arts labels'))).toBe('Arts labels')
   expect(waitReason(runCard('import pending'))).toBe('')
   const full = ['▾ ⏸ WAITING', `  ${row}`, '  Mac: rebuild trends waiting · 3h · 4 tools'].join('\n')
-  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [TODO_FILE]: '[mac]\nx a\n[hunty]\nx b\n' }
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [`${DIR}/goal.json`]: GOAL_SAMPLE, [TODO_FILE]: '[mac]\nx a\n[hunty]\nx b\n' }
   panelWorld(on, files, full)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 60 } })
@@ -1380,7 +1411,9 @@ test('auto-next: machine, mode, caps, prompt and done events', async () => {
   expect(jobMachine('Load 2019-20 filings', '', heads)).toBe('mac')
   expect(parseMode('on\n')).toBe('on')
   expect(parseMode('weird')).toBe('ask')
-  expect(parseCaps('mac=4\nbox: 1\n')).toEqual({ mac: 4, hunty: 2, box: 1 })
+  expect(parseCaps('mac=4\nbox: 1\n')).toEqual({ local: 3, mac: 4, box: 1 })
+  expect(parseCaps('')).toEqual({ local: 3 })
+  expect(parseCaps('local=1\n')).toEqual({ local: 1 })
   expect(nextPrompt('dependabot', 'https://gh.io/x')).toBe('Next up from the to-do list: dependabot (https://gh.io/x). Start it with a progress bar, and mark it done on the to-do list (/progress-bar todo done) once it runs.')
   const ev = ['{"ts": 100, "level": "success", "source": "a", "title": "A job done"}', '{"ts": 300, "level": "success", "source": "b", "title": "B done"}', '{"ts": 300, "level": "warning", "source": "c", "title": "C done"}', 'bad'].join('\n')
   expect(doneEvents(ev, 200)).toEqual([{ ts: 300, source: 'b', title: 'B' }])
@@ -1549,7 +1582,7 @@ test('Claude in Chrome: a /chrome switch and this Mac\'s accounts file update th
   const B2 = '951dff16-ed25-45bc-87af-8710e52e685f'
   const files: Record<string, string> = {
     [SCRIPT]: statusScript(), [FLAG]: 'on\n', [`${HOME}/${CONN_CACHE_REL}`]: `Gmail\tok\n#checked\t${Math.floor(NOW / 1000)}\n`,
-    [`${HOME}/.claude-progress/.state/chrome-accounts.json`]: JSON.stringify({ [B1]: { email: 'hunter@protocolvr.com', seenAt: NOW, from: 'account' } }),
+    [`${HOME}/.claude-progress/.state/chrome-accounts.json`]: JSON.stringify({ [B1]: { email: 'jane@example.net', seenAt: NOW, from: 'account' } }),
   }
   panelWorld(on, files, DONE_FULL, argv => (argv[0] === 'uname' ? 'Darwin\n' : undefined))
   on('tool.call', () => ({ result: [{ type: 'text', text: `[{"deviceId":"${B1}","name":"Browser 1","inUse":true},{"deviceId":"${B2}","name":"Browser 2"}]` }] }) as never)
@@ -1561,16 +1594,16 @@ test('Claude in Chrome: a /chrome switch and this Mac\'s accounts file update th
   await ui.press({ key: 'tab-connectors' })
   // No Local State and no accounts file: no location, and the dim hint
   let text = await allText(ui)
-  expect(text).toContain('Chrome: Browser 1 · hunter@protocolvr.com')
+  expect(text).toContain('Chrome: Browser 1 · jane@example.net')
   expect(text).toContain("Add this Mac's Google accounts to ~/.claude-progress/chrome-local-accounts.txt to get wrong-browser warnings.")
   // the accounts file names this Mac's accounts: Browser 1 is another computer's
-  files[`${HOME}/.claude-progress/chrome-local-accounts.txt`] = '# this Mac\nhunter@instituteongenerosity.org\n'
+  files[`${HOME}/.claude-progress/chrome-local-accounts.txt`] = '# this Mac\njane@longexampleorganization.org\n'
   await $.tool.call({ tool: 'mcp__claude-in-chrome__list_connected_browsers' } as never)
   await ui.press({ key: 'tab-list' })
   await ui.press({ key: 'tab-connectors' })
   text = await allText(ui)
-  expect(text).toContain('Chrome: Browser 1 · hunter@protocolvr.com · other computer')
-  expect(text).toContain("Chrome is controlling hunter@protocolvr.com, which isn't signed in on this Mac. Run /chrome to switch.")
+  expect(text).toContain('Chrome: Browser 1 · jane@example.net · other computer')
+  expect(text).toContain("Chrome is controlling jane@example.net, which isn't signed in on this Mac. Run /chrome to switch.")
   expect(text).not.toContain('chrome-local-accounts.txt')
   // /chrome picks Browser 2: its output row as it is stored
   await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: '<local-command-stdout>Now using browser "Browser 2" for Chrome actions.</local-command-stdout>' }] }, door: 'command', origin: { kind: 'composer' }, uuid: 'u1' } as never)
@@ -1587,32 +1620,35 @@ test('Claude in Chrome: the browser in use and its account show in Connectors, a
   const B2 = '951dff16-ed25-45bc-87af-8710e52e685f'
   const files: Record<string, string> = {
     [SCRIPT]: statusScript(), [FLAG]: 'on\n', [`${HOME}/${CONN_CACHE_REL}`]: `Gmail\tok\n#checked\t${Math.floor(NOW / 1000)}\n`,
-    [`${HOME}/Library/Application Support/Google/Chrome/Local State`]: JSON.stringify({ os_crypt: { encrypted_key: 'SECRET' }, profile: { info_cache: { Default: { name: 'Hunter', user_name: 'hunter@iog.org' } } } }),
+    [`${HOME}/Library/Application Support/Google/Chrome/Local State`]: JSON.stringify({ os_crypt: { encrypted_key: 'SECRET' }, profile: { info_cache: { Default: { name: 'Jane', user_name: 'jane@example.org' } } } }),
   }
   panelWorld(on, files, DONE_FULL)
   const results: Record<string, string> = {
     list_connected_browsers: `[{"deviceId":"${B2}","name":"Browser 2","osPlatform":"macOS","connectedAt":1,"isLocal":true,"inUse":true}]`,
-    get_page_text: 'Google Account\nHunter Zhang\nhunter@protocolvr.com',
+    get_page_text: 'Google Account\nJane Doe\njane@example.net',
   }
   on('tool.call', (_, e) => ({ result: [{ type: 'text', text: results[String(e.tool).split('__').pop()!] ?? 'Navigated.' }] }) as never)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
-  // Never used: dim "not connected", nothing on List.
+  // Never used: no Chrome line at all, on Connectors or List.
   await ui.press({ key: 'tab-connectors' })
-  expect(await allText(ui)).toContain('Chrome: not connected')
+  expect(await allText(ui)).not.toContain('Chrome')
+  await ui.press({ key: 'tab-list' })
+  expect(await allText(ui)).not.toContain('Chrome')
+  await ui.press({ key: 'tab-connectors' })
   await $.tool.call({ tool: 'mcp__claude-in-chrome__list_connected_browsers' } as never)
   await $.tool.call({ tool: 'mcp__claude-in-chrome__navigate', tabId: 5, url: 'https://myaccount.google.com/' } as never)
   await $.tool.call({ tool: 'mcp__claude-in-chrome__get_page_text', tabId: 5 } as never)
-  expect(JSON.parse(files[`${HOME}/.claude-progress/.state/chrome-accounts.json`]!)[B2].email).toBe('hunter@protocolvr.com')
+  expect(JSON.parse(files[`${HOME}/.claude-progress/.state/chrome-accounts.json`]!)[B2].email).toBe('jane@example.net')
   await ui.press({ key: 'tab-list' })
   await ui.press({ key: 'tab-connectors' })
   const text = await allText(ui)
-  expect(text).toContain('Chrome: Browser 2 · Hunter Zhang (hunter@protocolvr.com) · other computer')
+  expect(text).toContain('Chrome: Browser 2 · Jane Doe (jane@example.net) · other computer')
   expect(text).not.toContain('[Check account]')
-  expect(text).toContain("Chrome is controlling hunter@protocolvr.com, which isn't signed in on this Mac. Run /chrome to switch.")
+  expect(text).toContain("Chrome is controlling jane@example.net, which isn't signed in on this Mac. Run /chrome to switch.")
   expect(text).not.toContain('SECRET')
   await ui.press({ key: 'tab-list' })
-  expect(await allText(ui)).toContain("Chrome is controlling hunter@protocolvr.com, which isn't signed in on this Mac.")
+  expect(await allText(ui)).toContain("Chrome is controlling jane@example.net, which isn't signed in on this Mac.")
   await ui.unmount()
 })
 
@@ -1647,15 +1683,39 @@ test('Claude in Chrome: Check account submits a prompt to read the account page 
 })
 
 test('fitChrome: the Chrome part is cut first by the account, then where, then the browser name', () => {
-  const l = 'Chrome: IOG · hunter@instituteongenerosity.org · this Mac'
+  const l = 'Chrome: Dev · jane@longexampleorganization.org · this Mac'
   expect(fitChrome(l, 80)).toBe(l)
-  expect(fitChrome(l, 40)).toBe('Chrome: IOG · hunter@institu… · this Mac')
-  expect(fitChrome(l, 26)).toBe('Chrome: IOG · this Mac')
-  expect(fitChrome(l, 15)).toBe('Chrome: IOG')
-  expect(fitChrome(l, 10)).toBe('Chrome: I…')
+  expect(fitChrome(l, 40)).toBe('Chrome: Dev · jane@longexamp… · this Mac')
+  expect(fitChrome(l, 26)).toBe('Chrome: Dev · this Mac')
+  expect(fitChrome(l, 15)).toBe('Chrome: Dev')
+  expect(fitChrome(l, 10)).toBe('Chrome: D…')
   expect(fitChrome(l, 5)).toBe('')
   expect(fitChrome('Chrome: Browser 2 · account unknown', 30)).toBe('Chrome: Browser 2 · account u…')
   expect(fitChrome('Chrome: not connected', 15)).toBe('Chrome: not co…')
+})
+
+test('hideEmails: the Chrome part and the Claude login show emails masked', { options: { hideEmails: true } }, async ($, on) => {
+  forgetLocalState()
+  const B1 = 'cbb87c8d-e32f-4099-99d2-80fda22e8e05'
+  const files: Record<string, string> = {
+    [SCRIPT]: statusScript(), [FLAG]: 'on\n',
+    [`${HOME}/.claude-progress/.state/chrome-accounts.json`]: JSON.stringify({ [B1]: { email: 'jane@example.org', seenAt: NOW, from: 'account', name: 'Jane Doe' } }),
+    [`${HOME}/.claude-progress/chrome-local-accounts.txt`]: 'jane@example.org\n',
+  }
+  panelWorld(on, files, DONE_FULL, argv => (argv[0] === 'uname' ? 'Darwin\n' : undefined))
+  on('tool.call', () => ({ result: [{ type: 'text', text: `[{"deviceId":"${B1}","name":"Work","inUse":true}]` }] }) as never)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__claude-in-chrome__list_connected_browsers' } as never)
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 100 } })
+  const lines = draw((await ui.find({ type: 'Box' })) as never)
+  expect(lines[2]).toBe('1 running · 1 done today · Chrome: Work · Jane Doe (j•••@example.org) · this Mac')
+  await ui.press({ key: 'tab-connectors' })
+  const text = await allText(ui)
+  expect(text).toContain('j•••@example.org')
+  expect(text).not.toContain('jane@example.org')
+  // The saved account keeps the real email: only what is drawn is masked.
+  expect(JSON.parse(files[`${HOME}/.claude-progress/.state/chrome-accounts.json`]!)[B1].email).toBe('jane@example.org')
+  await ui.unmount()
 })
 
 test('Claude in Chrome: the List tab shows Chrome on the status line after the counts, cut before the counts, no line of its own', async ($, on) => {
@@ -1663,28 +1723,28 @@ test('Claude in Chrome: the List tab shows Chrome on the status line after the c
   const B1 = 'cbb87c8d-e32f-4099-99d2-80fda22e8e05'
   const files: Record<string, string> = {
     [SCRIPT]: statusScript(), [FLAG]: 'on\n',
-    [`${HOME}/.claude-progress/.state/chrome-accounts.json`]: JSON.stringify({ [B1]: { email: 'hunter@instituteongenerosity.org', seenAt: NOW, from: 'account' } }),
-    [`${HOME}/.claude-progress/chrome-local-accounts.txt`]: 'hunter@instituteongenerosity.org\n',
+    [`${HOME}/.claude-progress/.state/chrome-accounts.json`]: JSON.stringify({ [B1]: { email: 'jane@longexampleorganization.org', seenAt: NOW, from: 'account' } }),
+    [`${HOME}/.claude-progress/chrome-local-accounts.txt`]: 'jane@longexampleorganization.org\n',
   }
   panelWorld(on, files, DONE_FULL, argv => (argv[0] === 'uname' ? 'Darwin\n' : undefined))
-  on('tool.call', () => ({ result: [{ type: 'text', text: `[{"deviceId":"${B1}","name":"IOG","inUse":true}]` }] }) as never)
+  on('tool.call', () => ({ result: [{ type: 'text', text: `[{"deviceId":"${B1}","name":"Dev","inUse":true}]` }] }) as never)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.tool.call({ tool: 'mcp__claude-in-chrome__list_connected_browsers' } as never)
   let ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 90 } })
   let lines = draw((await ui.find({ type: 'Box' })) as never)
-  expect(lines[2]).toBe('1 running · 1 done today · Chrome: IOG · hunter@instituteongenerosity.org · this Mac')
+  expect(lines[2]).toBe('1 running · 1 done today · Chrome: Dev · jane@longexampleorganization.org · this Mac')
   expect(lines.filter(l => l.includes('Chrome:')).length).toBe(1)
-  const dim = (await ui.find({ type: 'Text', text: /^Chrome: IOG/ })) as unknown as { props?: { dimColor?: boolean } }
+  const dim = (await ui.find({ type: 'Text', text: /^Chrome: Dev/ })) as unknown as { props?: { dimColor?: boolean } }
   expect(dim.props?.dimColor).toBe(true)
   await ui.unmount()
   // Narrow: the counts stay whole, the account is cut first.
   ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 64 } })
   lines = draw((await ui.find({ type: 'Box' })) as never)
-  expect(lines[2]).toBe('1 running · 1 done today · Chrome: IOG · hunter@inst… · this Mac')
+  expect(lines[2]).toBe('1 running · 1 done today · Chrome: Dev · jane@longex… · this Mac')
   await ui.unmount()
   ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 40 } })
   lines = draw((await ui.find({ type: 'Box' })) as never)
-  expect(lines[2]).toBe('1 running · 1 done today · Chrome: IOG')
+  expect(lines[2]).toBe('1 running · 1 done today · Chrome: Dev')
   await ui.unmount()
 })
 
@@ -1864,7 +1924,7 @@ test('NEEDS YOU: first under the status line, a bold verb per line, problems and
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 60 } })
   const lines = draw((await ui.find({ type: 'Box' })) as never)
-  expect(lines[2]).toBe('2 running · 3 needs you · Chrome: not connected')
+  expect(lines[2]).toBe('2 running · 3 needs you')
   const strong = (await ui.find({ type: 'Text', text: /needs you$/ })) as unknown as { props?: { bold?: boolean; color?: string } }
   expect([strong.props?.bold, strong.props?.color]).toEqual([true, 'yellow'])
   // The block comes right after the status line, before any section, one line each, verb first.
@@ -1891,7 +1951,7 @@ test('NEEDS YOU: absent when nothing needs you, no empty heading', async ($, on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
   const lines = draw((await ui.find({ type: 'Box' })) as never)
-  expect(lines[2]).toBe('1 running · Chrome: not connected')
+  expect(lines[2]).toBe('1 running')
   expect(lines[4]).toBe('▾ TO-DO  1')
   expect(lines.join('\n')).not.toMatch(/NEEDS YOU|needs you/)
   // Two lines for the running row: bold title with bar and %, then the step and time, dim.

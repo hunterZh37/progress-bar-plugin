@@ -3,13 +3,13 @@ import type { EngineInterface } from 'claude-code'
 import { slug } from './render'
 import type { Gains, Goal, GoalArea, GoalLens } from '../types'
 
-// The goal view of the List tab: one anchor goal ("Making the generosity database better"), the areas of it a job
-// improves (Organizations, Finances, ...) and the lenses of "better" (lower cost, better quality, faster speed).
-// Each project has its own: ~/.claude-progress/goals/<slug>.json, the slug as for its to-do list (desktop-nombot):
+// The goal view of the List tab: one anchor goal ("Make checkout faster"), the areas of it a job improves
+// (Payments, Search, ...) and the lenses of "better" (lower cost, better quality, faster speed).
+// Each project has its own: ~/.claude-progress/goals/<slug>.json, the slug as for its to-do list (desktop-myapp):
 // {anchor, areas:[{id,name,tag,keywords}], lenses:[{id,name,keywords}]}. An `icon` from older files is read and ignored:
 // the panel shows words, never emoji. A project with no file shows its folder name and no areas; nothing is written.
-// ~/.claude-progress/goal.json is the old one-goal-for-everything file: only a session with no folder still reads it
-// (and writes the defaults there once when it is missing), so one project's goal no longer heads every project.
+// ~/.claude-progress/goal.json is the old one-goal-for-everything file: only a session with no folder still reads it,
+// so one project's goal no longer heads every project. It is never written.
 // A job names its area with `area` and what it made better with `gains` ({cost, quality, speed}) in its progress file
 // or progress_report. With no `area`, the area comes from keywords in its title, why and impact, else Other.
 // With no `gains`, a finished job's lens comes from its impact wording (cost words, then speed words, else quality),
@@ -18,24 +18,15 @@ import type { Gains, Goal, GoalArea, GoalLens } from '../types'
 export const GOAL_REL = '.claude-progress/goal.json'
 export const GOALS_DIR_REL = '.claude-progress/goals'
 
-export const DEFAULT_GOAL: Goal = {
-  anchor: 'Making the generosity database better',
-  areas: [
-    { id: 'organizations', name: 'Organizations', tag: 'Orgs', keywords: ['organization', 'duplicate', 'dedupe', 'merge', 'merged', 'ein', 'eins', 'ntee', 'pub78', 'who exists', 'org once', 'nonprofit list'] },
-    { id: 'finances', name: 'Finances', tag: 'Finances', keywords: ['finance', 'financial', 'return', 'returns', '990', 'revenue', 'expense', 'assets', 'trend', 'trends', 'flag', 'flags', 'flagged', 'amended', 'filing', 'filings'] },
-    { id: 'boards', name: 'Boards & people', tag: 'Boards', keywords: ['board', 'boards', 'people', 'person', 'officer', 'member', 'seat', 'seats', 'director', 'trustee', 'compensation', 'interlock'] },
-    { id: 'grants', name: 'Grants', tag: 'Grants', keywords: ['grant', 'grants', 'funder', 'funders', 'funds', 'schedule i', 'recipient', 'grantee'] },
-    { id: 'places', name: 'Places', tag: 'Places', keywords: ['place', 'places', 'where', 'serve', 'serves', 'location', 'county', 'city', 'geo', 'address', 'map', 'service area'] },
-    { id: 'causes', name: 'Causes', tag: 'Causes', keywords: ['cause', 'causes', 'label', 'labels', 'labeling', 'classify', 'classifier', 'health care', 'healthcare', 'arts', 'sdg', 'jev', 'lightgbm', 'workforce', 'environment'] },
-    { id: 'answers', name: 'Answer quality', tag: 'Answers', keywords: ['nombot', 'answer', 'answers', 'eval', 'evals', 'search', 'chat'] },
-    { id: 'tools', name: 'Tools', tag: 'Tools', keywords: ['plugin', 'panel', 'status line', 'topology', 'infra', 'setup', 'tools', 'install', 'venv', 'helper', 'machine'] },
-  ],
-  lenses: [
-    { id: 'cost', name: 'cost', keywords: ['$', 'cost', 'costs', 'cheaper', 'cheap', 'save', 'saved', 'saves', 'spend', 'free', 'budget'] },
-    { id: 'quality', name: 'quality', keywords: [] },
-    { id: 'speed', name: 'speed', keywords: ['faster', 'quicker', 'sooner', 'speed', 'hours', 'hour', 'minutes', 'mins', 'seconds'] },
-  ],
-}
+/** The lenses of "better", the same for every goal. A goal file can rename them or change their keywords. */
+const LENSES: GoalLens[] = [
+  { id: 'cost', name: 'cost', keywords: ['$', 'cost', 'costs', 'cheaper', 'cheap', 'save', 'saved', 'saves', 'spend', 'free', 'budget'] },
+  { id: 'quality', name: 'quality', keywords: [] },
+  { id: 'speed', name: 'speed', keywords: ['faster', 'quicker', 'sooner', 'speed', 'hours', 'hour', 'minutes', 'mins', 'seconds'] },
+]
+
+/** The goal with no goal file: a neutral anchor, no areas (every job is Other), the usual lenses. Never written. */
+export const DEFAULT_GOAL: Goal = { anchor: 'This project', areas: [], lenses: LENSES }
 
 /** Where a job's area did not match any: its own name, else Other. */
 export const OTHER: GoalArea = { id: 'other', name: 'Other', tag: 'Other', keywords: [] }
@@ -44,11 +35,11 @@ export const LENS_IDS = ['cost', 'quality', 'speed'] as const
 const str = (x: unknown) => (typeof x === 'string' && x.trim() ? x.trim() : '')
 const words = (x: unknown) => (Array.isArray(x) ? x.map(str).filter(Boolean).map(w => w.toLowerCase()) : [])
 
-/** An area's short tag when goal.json names none: the first word of its name, at most 14 letters ("Boards & people" -> "Boards"). */
+/** An area's short tag when goal.json names none: the first word of its name, at most 14 letters ("Search & filters" -> "Search"). */
 export const tagOf = (name: string) => (name.split(/[^A-Za-z0-9]+/).find(Boolean) ?? name).slice(0, 14)
 
 /** A project with no goal file: its folder name as the anchor, no areas (every job is Other), the usual lenses. */
-export const projectGoal = (name: string): Goal => ({ anchor: name || 'This project', areas: [], lenses: DEFAULT_GOAL.lenses })
+export const projectGoal = (name: string): Goal => ({ anchor: name || DEFAULT_GOAL.anchor, areas: [], lenses: LENSES })
 
 /** A goal file as a goal. A missing or bad part falls back to `fallback`'s (the defaults unless given). */
 export function parseGoal(text: string, fallback: Goal = DEFAULT_GOAL): Goal {
@@ -59,9 +50,9 @@ export function parseGoal(text: string, fallback: Goal = DEFAULT_GOAL): Goal {
     const r = (a ?? {}) as Record<string, unknown>
     const name = str(r.name)
     const id = slug(str(r.id) || name)
-    return id && name ? [{ id, name, tag: str(r.tag) || DEFAULT_GOAL.areas.find(d => d.id === id)?.tag || tagOf(name), keywords: words(r.keywords) }] : []
+    return id && name ? [{ id, name, tag: str(r.tag) || tagOf(name), keywords: words(r.keywords) }] : []
   })
-  const lenses = DEFAULT_GOAL.lenses.map((d): GoalLens => {
+  const lenses = LENSES.map((d): GoalLens => {
     const r = ((Array.isArray(raw.lenses) ? raw.lenses : []) as Record<string, unknown>[]).find(x => x && str(x.id).toLowerCase() === d.id)
     return r ? { id: d.id, name: str(r.name) || d.name, keywords: Array.isArray(r.keywords) ? words(r.keywords) : d.keywords } : d
   })
@@ -73,7 +64,7 @@ export const folderName = (root: string) => root.replace(/\/+$/, '').split('/').
 
 /**
  * The session's goal. In a project (`slug`), goals/<slug>.json, else the folder name and no areas; never written.
- * With no project (a script run without a session), the old goal.json, writing the defaults first when it is missing.
+ * With no project (a script run without a session), the old goal.json when it is there, else the neutral default.
  */
 export async function readGoal($: EngineInterface, h: string, project?: { slug: string; root: string }): Promise<Goal> {
   if (project?.slug && project.slug !== 'todo.txt') {
@@ -83,9 +74,7 @@ export async function readGoal($: EngineInterface, h: string, project?: { slug: 
     try { return parseGoal(String(await $.fs.read(`${h}/${GOALS_DIR_REL}/${project.slug}.json`)), fallback) } catch { return fallback }
   }
   const path = `${h}/${GOAL_REL}`
-  try { return parseGoal(String(await $.fs.read(path))) } catch { /* missing */ }
-  if (!(await $.fs.exists(path).catch(() => true))) await $.fs.write(path, `${JSON.stringify(DEFAULT_GOAL, null, 2)}\n`).catch(() => undefined)
-  return DEFAULT_GOAL
+  try { return parseGoal(String(await $.fs.read(path))) } catch { return DEFAULT_GOAL }
 }
 
 /** Whether `kw` is a word in `text` (both lower case), or its plural ("person" finds "persons", not "personal"). A keyword that starts with a sign ("$") matches anywhere. */

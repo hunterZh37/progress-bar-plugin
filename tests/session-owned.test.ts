@@ -89,7 +89,7 @@ test('owners: session wins while it is open, then cwd, then shared', () => {
 test('task list: done of total, the in-progress item as title, none when all done', () => {
   expect(taskProgress([])).toBe(null)
   expect(taskProgress([{ content: 'a', status: 'completed' }])).toBe(null)
-  expect(taskProgress([{ content: 'Write tests', status: 'completed' }, { content: 'Ship', status: 'in_progress', activeForm: 'Shipping' }, { content: 'Tell Hunter', status: 'pending' }]))
+  expect(taskProgress([{ content: 'Write tests', status: 'completed' }, { content: 'Ship', status: 'in_progress', activeForm: 'Shipping' }, { content: 'Tell Jane', status: 'pending' }]))
     .toEqual({ done: 1, total: 3, title: 'Ship', step: 'Shipping' })
   expect(taskSlug(CWD, SID)).toBe(`shop-tasks-${KEY.slice(0, 4)}`)
   expect(shellSlug('Load the 2026 batch', 'python load.py')).toBe('shell-load-the-2026-batch')

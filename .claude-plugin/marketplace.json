@@ -1,14 +1,17 @@
 {
   "name": "progress-bar",
   "owner": {
-    "name": "hunterZh37"
+    "name": "hunterZh37",
+    "url": "https://github.com/hunterZh37"
   },
   "description": "Live progress bars in the Claude Code status line",
   "plugins": [
     {
       "name": "progress-bar",
       "source": "./",
-      "description": "Live progress bars in the status line for subagents and long jobs"
+      "description": "Live progress bars in the status line for subagents and long jobs",
+      "category": "productivity",
+      "homepage": "https://github.com/hunterZh37/progress-bar-plugin"
     }
   ]
 }
