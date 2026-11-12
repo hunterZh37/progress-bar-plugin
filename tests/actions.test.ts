@@ -85,6 +85,13 @@ test('addAction dedupes open ones, appliesTo matches slug, file or global', () =
   expect(appliesTo(A({ id: 'o', title: 'o', project: 'code-cyber' }), { slug: 'x', file: 'todos/code-cyber.txt' })).toBe(true)
 })
 
+test('an action tagged with another folder that shares the list (an alias) shows; one from another list does not', () => {
+  const proj = { slug: 'desktop-orders', file: 'todo.txt', aliases: ['todo.txt', 'desktop-orders', 'desktop-orders-admin'] }
+  expect(appliesTo(A({ id: 'a', title: 'a', project: 'desktop-orders-admin' }), proj)).toBe(true)
+  expect(appliesTo(A({ id: 'b', title: 'b', project: 'code-cyber' }), proj)).toBe(false)
+  expect(appliesTo(A({ id: 'a', title: 'a', project: 'desktop-orders-admin' }), { slug: 'desktop-orders', file: 'todo.txt' })).toBe(false)
+})
+
 test('gate words: done, skip <reason>, skip alone, anything else', () => {
   expect(parseGate('done')).toEqual({ kind: 'done' })
   expect(parseGate('  Done. ')).toEqual({ kind: 'done' })

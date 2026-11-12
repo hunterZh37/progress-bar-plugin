@@ -2,6 +2,12 @@
 
 Versions of the progress-bar plugin, newest first. Each line is the release commit. Full detail is in the git history.
 
+## 0.31.2
+
+- **One project per list:** folders that `projects.txt` maps to the same list (like two folders on `todo.txt`) share one project. Before, each folder got its own name, so an action added from one folder never showed in a session of the other, and a `cwd` job from one fell back to the shared `jobs.txt`.
+- **Worktrees:** a session or job in a git worktree uses its repo's project and list. Before, a worktree outside a mapped prefix got its own empty list. A `projects.txt` prefix on the worktree itself still wins.
+- **Actions** are tagged with the list (`todo.txt`), so older builds match them too. Ones tagged with a folder name still show in every folder sharing that list.
+
 ## 0.31.1
 
 - **Stop confirm never sticks:** the `[x]` confirm under a RUNNING row is no longer kept across `/reload-plugins`. It closes after 8 seconds with no choice, and on Cancel, Escape or the focus leaving it.

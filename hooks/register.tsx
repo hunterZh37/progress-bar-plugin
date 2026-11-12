@@ -17,7 +17,7 @@ import { setHideEmails } from './privacy'
 import { macClicks, parseMacClicks } from './mac'
 import { checkpointCommand, noteStatusLine, panelCommand, registerPanel, startPanel } from './panel'
 import { FILE_FRESH_MS, FRESH_MS, closestFile, pairFile, type PairCandidate, eta, pickMeta, expandHome, rateLeft, trackJob, lines, parseProgress, parseWatch, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
-import { PROJECTS_REL, gitRootOf, resolveProject, sessionProject } from './project'
+import { PROJECTS_REL, gitRootOf, mainRootOf, resolveProject, sessionProject, worktreeCwd } from './project'
 import { LONG_BASH_MS, PROGRESS_TOOL, backgroundShellIds, endBackground, endShell, endShellsFor, finishedTaskIds, liveShells, mirrorTasks, startShell, taskCreated, taskList, taskUpdated, touchShells, writeReport } from './report'
 import type { Task } from './report'
 import { PROJECT_LINE, pickOwner, routeOf, sessionKeyOf as keyOf } from './route'
@@ -196,12 +196,13 @@ async function bornOf($: EngineInterface, path: string): Promise<number> {
   } catch { return 0 }
 }
 
-const gitRoots = new Map<string, string>()
+const gitRoots = new Map<string, { root: string; main: string }>()
 
-/** The project slug of a folder, as the per-project to-dos name it. */
+/** The project key of a folder (its list, see project.ts): folders sharing a list, and a repo's worktrees, share one. */
 async function projectOfCwd($: EngineInterface, h: string, cwd: string, projectsText: string): Promise<string> {
-  if (!gitRoots.has(cwd)) gitRoots.set(cwd, await gitRootOf($, cwd))
-  return resolveProject(cwd, gitRoots.get(cwd)!, projectsText, h).slug
+  if (!gitRoots.has(cwd)) { const root = await gitRootOf($, cwd); gitRoots.set(cwd, { root, main: await mainRootOf($, root) }) }
+  const g = gitRoots.get(cwd)!
+  return resolveProject(cwd, g.main, projectsText, h, worktreeCwd(cwd, g.root, g.main)).key
 }
 
 /**
@@ -371,7 +372,7 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
   let projectsText = ''
   try { projectsText = String(await $.fs.read(`${h}/${PROJECTS_REL}`)) } catch { projectsText = '' }
   let project = ''
-  try { const sp = await sessionProject($, h); project = sp.cwd ? sp.slug : '' } catch { project = '' }
+  try { const sp = await sessionProject($, h); project = sp.cwd ? sp.key : '' } catch { project = '' }
   // Remember this session's agents (start time, tools) so a plugin reload keeps them, and claim their progress files.
   // The claims file's first line names this session's project, so other sessions know where a cwd-owned job shows.
   try {

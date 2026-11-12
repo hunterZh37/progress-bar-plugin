@@ -671,6 +671,33 @@ class Projects(unittest.TestCase):
         os.environ['PB_CWD'] = os.path.join(self.home, 'loose', 'dir')
         self.assertEqual(self.g.main(io.StringIO(''), T0), [])
 
+    def test_worktree_uses_its_main_checkout_list_and_a_prefix_on_the_worktree_wins(self):
+        wt = os.path.join(self.home, 'wt', 'orders-x')
+        os.makedirs(os.path.join(wt, 'web'))
+        with open(os.path.join(wt, '.git'), 'w') as f:
+            f.write('gitdir: ' + os.path.join(self.home, 'Desktop', 'Orders', '.git', 'worktrees', 'orders-x') + '\n')
+        inner = os.path.join(self.home, 'Desktop', 'Orders', '.claude', 'worktrees', 'a')
+        os.makedirs(inner)
+        with open(os.path.join(inner, '.git'), 'w') as f:
+            f.write('gitdir: ../../../.git/worktrees/a\n')
+        self.assertEqual(self.rel(os.path.join(wt, 'web')), 'todos/desktop-orders.txt')
+        self.assertEqual(self.rel(inner), 'todos/desktop-orders.txt')
+        self.write('todos/projects.txt', '~/Desktop/Orders\ttodo.txt\n')
+        self.assertEqual(self.rel(os.path.join(wt, 'web')), 'todo.txt')
+        self.assertEqual(self.rel(inner), 'todo.txt')
+        self.write('todos/projects.txt', '~/Desktop/Orders\ttodo.txt\n~/wt/orders-x\tExperiments\n')
+        self.assertEqual(self.rel(os.path.join(wt, 'web')), 'todos/experiments.txt')
+
+    def test_actions_from_a_folder_sharing_the_list_count_here(self):
+        os.makedirs(os.path.join(self.home, 'Desktop', 'Orders-admin'))
+        self.write('todos/projects.txt', '~/Desktop/Orders\ttodo.txt\n~/Desktop/Orders-admin\ttodo.txt\n')
+        self.write('actions.json', json.dumps([
+            {'id': 'a1', 'title': 'admin step', 'project': 'desktop-orders-admin', 'status': 'open'},
+            {'id': 'a2', 'title': 'list step', 'project': 'todo.txt', 'status': 'open'},
+            {'id': 'a3', 'title': 'cyber step', 'project': 'work-cyber-portal', 'status': 'open'},
+        ]))
+        self.assertEqual(self.g.action_count(os.path.join(self.home, 'Desktop', 'Orders')), 2)
+
     def test_actions_needed_count_by_project_first_in_summary_and_full_view(self):
         self.write('todos/projects.txt', '~/Desktop/Orders\ttodo.txt\n')
         nb = os.path.join(self.home, 'Desktop', 'Orders')

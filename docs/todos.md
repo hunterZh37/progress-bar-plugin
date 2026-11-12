@@ -57,6 +57,8 @@ Each session shows the to-dos of its own project, and only its own running and d
 ~/code/shop/web	shop-web
 ```
 
+- **Shared lists are one project:** folders mapped to the same list (two folders on `todo.txt`) count as one project. A `cwd` job from either shows in sessions of both, and an action added in one shows in the other.
+- **Worktrees:** a git worktree uses its repo's list, wherever it sits (`.claude/worktrees/...` inside the repo, or a folder elsewhere). A `projects.txt` prefix that holds the worktree itself still wins.
 - **New project:** with no file yet, the list is empty. The panel shows no TO-DO section and `/progress-bar todo` says `No to-dos for <project>`. The first add creates the file.
 - **Everywhere:** the status line TO-DO, the Status panel, the to-do menu, `/progress-bar todo ...` and auto-next all use the session's list. A run with no folder (a script, a test) reads `todo.txt`.
 - **Owned jobs:** a progress file with `session` shows only in that session. One with `cwd` (and no open `session`) shows in the sessions of that folder's project. A session writes these to `.lines/jobs-<session>.txt`. A `cwd` whose project has no open session falls back to `jobs.txt`.

@@ -19,7 +19,7 @@ import { PANE, rowCol, maxReading, noteShows, NOTE_MS, sameName, waitPhrase, wai
 import { EVENTS_PY, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from '../hooks/events'
 import { REPOS_REL, parseBranches, parseCommits, webUrl } from '../hooks/github'
 import { blocker, clip, doneEvents, isRunningRow, jobMachine, keyWords, moveItem, nextPrompt, nextReady, parseCaps, parseItem, parseMode, rankTodos, ranked, rowName, shortJob, todoRows } from '../hooks/priority'
-import { fileOf, parseProjects, projectSlug, resolveProject } from '../hooks/project'
+import { fileOf, mainOfGitFile, parseProjects, projectSlug, resolveProject, worktreeCwd } from '../hooks/project'
 import { aliveTasks, bgLaunch, jobText, oneLine, scanTranscript, snapOf, toolWhat, waitSegs, watchedJob } from '../hooks/waiting'
 import { FEW_STEPS, RATE_MIN_MS, eta, expandHome, line, rateLeft, stepRate, trackJob, lines, parseProgress, parseTitles, pickMeta, parseWatch, prevOf, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoItems, todoList } from '../hooks/render'
 
@@ -394,13 +394,43 @@ test('per-project to-dos: map by longest prefix, else the git root under home, n
   expect(projectSlug(HOME, HOME)).toBe('home')
   expect(projectSlug('/srv/Cyber Portal/', HOME)).toBe('srv-cyber-portal')
   expect(fileOf('Web App')).toBe('todos/web-app.txt')
-  expect(resolveProject(`${HOME}/Desktop/Orders/api`, `${HOME}/Desktop/Orders`, map, HOME)).toEqual({ slug: 'desktop-orders', file: 'todo.txt' })
+  expect(resolveProject(`${HOME}/Desktop/Orders/api`, `${HOME}/Desktop/Orders`, map, HOME)).toMatchObject({ slug: 'desktop-orders', file: 'todo.txt', key: 'todo.txt' })
   expect(resolveProject(`${HOME}/.claude-progress`, '', map, HOME).file).toBe('todo.txt')
-  expect(resolveProject(`${HOME}/Desktop/Orders/web/src`, `${HOME}/Desktop/Orders`, map, HOME)).toEqual({ slug: 'web-app', file: 'todos/web-app.txt' })
+  expect(resolveProject(`${HOME}/Desktop/Orders/web/src`, `${HOME}/Desktop/Orders`, map, HOME)).toMatchObject({ slug: 'web-app', file: 'todos/web-app.txt', key: 'web-app' })
   expect(resolveProject(`${HOME}/Desktop/OrdersX`, `${HOME}/Desktop/OrdersX`, map, HOME).file).toBe('todos/desktop-ordersx.txt')
-  expect(resolveProject(`${HOME}/code/cyber/app`, `${HOME}/code/cyber`, '', HOME)).toEqual({ slug: 'code-cyber', file: 'todos/code-cyber.txt' })
+  expect(resolveProject(`${HOME}/code/cyber/app`, `${HOME}/code/cyber`, '', HOME)).toMatchObject({ slug: 'code-cyber', file: 'todos/code-cyber.txt', key: 'code-cyber' })
   expect(resolveProject(`${HOME}/scratch`, '', '', HOME).file).toBe('todos/scratch.txt')
-  expect(resolveProject('', '', map, HOME)).toEqual({ slug: 'todo.txt', file: 'todo.txt' })
+  expect(resolveProject('', '', map, HOME)).toMatchObject({ slug: 'todo.txt', file: 'todo.txt', key: 'todo.txt' })
+})
+
+test('folders that share a list in projects.txt share one project key, and every folder slug is an alias', () => {
+  const map = '~/Desktop/Orders\ttodo.txt\n~/Desktop/Orders-admin\ttodo.txt\n~/.claude-progress\ttodo.txt\n~/code/shop\tShop\n'
+  const a = resolveProject(`${HOME}/Desktop/Orders`, `${HOME}/Desktop/Orders`, map, HOME)
+  const b = resolveProject(`${HOME}/Desktop/Orders-admin/web`, `${HOME}/Desktop/Orders-admin`, map, HOME)
+  const c = resolveProject(`${HOME}/.claude-progress`, '', map, HOME)
+  expect(a.slug).toBe('desktop-orders')
+  expect(b.slug).toBe('desktop-orders-admin')
+  expect([a.key, b.key, c.key]).toEqual(['todo.txt', 'todo.txt', 'todo.txt'])
+  expect(a.aliases).toEqual(expect.arrayContaining(['todo.txt', 'desktop-orders', 'desktop-orders-admin', 'claude-progress']))
+  expect(a.aliases).not.toContain('code-shop')
+  expect(resolveProject(`${HOME}/code/shop`, `${HOME}/code/shop`, map, HOME).aliases).toEqual(expect.arrayContaining(['shop', 'todos/shop.txt', 'code-shop']))
+})
+
+test('a git worktree maps to its main checkout\'s project, and a projects.txt prefix holding the worktree itself wins', () => {
+  expect(mainOfGitFile('gitdir: /home/u/code/shop/.git/worktrees/agent-1\n', '/home/u/code/shop/.claude/worktrees/agent-1')).toBe('/home/u/code/shop')
+  expect(mainOfGitFile('gitdir: ../../../.git/worktrees/agent-1\n', '/home/u/code/shop/.claude/worktrees/agent-1')).toBe('/home/u/code/shop')
+  expect(mainOfGitFile('gitdir: /home/u/code/shop/.git/modules/lib\n', '/home/u/code/shop/lib')).toBe('')
+  expect(worktreeCwd('/tmp/wt/shop-x/web', '/tmp/wt/shop-x', `${HOME}/code/shop`)).toBe(`${HOME}/code/shop/web`)
+  expect(worktreeCwd(`${HOME}/code/shop/web`, `${HOME}/code/shop`, `${HOME}/code/shop`)).toBe(`${HOME}/code/shop/web`)
+  // No prefix: a worktree anywhere takes its main checkout's slug, not its own folder's.
+  expect(resolveProject('/tmp/wt/shop-x/web', `${HOME}/code/shop`, '', HOME, `${HOME}/code/shop/web`)).toMatchObject({ slug: 'code-shop', file: 'todos/code-shop.txt' })
+  // A prefix on the main checkout covers a worktree outside it.
+  const map = '~/code/shop\ttodo.txt\n'
+  expect(resolveProject('/tmp/wt/shop-x', `${HOME}/code/shop`, map, HOME, `${HOME}/code/shop`)).toMatchObject({ file: 'todo.txt', key: 'todo.txt' })
+  // A worktree under a mapped prefix stays on it; a prefix naming the worktree itself wins over the main checkout's.
+  expect(resolveProject(`${HOME}/code/shop/.claude/worktrees/a`, `${HOME}/code/shop`, map, HOME, `${HOME}/code/shop`).file).toBe('todo.txt')
+  const map2 = `${map}/tmp/wt/shop-x\tExperiments\n`
+  expect(resolveProject('/tmp/wt/shop-x/web', `${HOME}/code/shop`, map2, HOME, `${HOME}/code/shop/web`)).toMatchObject({ file: 'todos/experiments.txt' })
 })
 
 test('/progress-bar todo in another project uses its own list, and an unknown one starts empty', async ($, on) => {

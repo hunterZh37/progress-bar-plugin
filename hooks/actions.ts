@@ -66,11 +66,14 @@ export function parseActions(text: string): Action[] {
   })
 }
 
-/** An action applies to a session when it has no project, or names the session's project slug or to-do file. */
-export const appliesTo = (a: Action, proj: { slug: string; file: string }) =>
-  !a.project || a.project === proj.slug || a.project === proj.file || `todos/${a.project}.txt` === proj.file
+/**
+ * An action applies to a session when it has no project, or names the session's project: its slug, its to-do file, or
+ * any other name its list goes by (`aliases`: the slug of every projects.txt folder sharing the list).
+ */
+export const appliesTo = (a: Action, proj: { slug: string; file: string; aliases?: string[] }) =>
+  !a.project || a.project === proj.slug || a.project === proj.file || `todos/${a.project}.txt` === proj.file || !!proj.aliases?.includes(a.project)
 
-export const openFor = (list: Action[], proj: { slug: string; file: string }) => list.filter(a => a.status === 'open' && appliesTo(a, proj))
+export const openFor = (list: Action[], proj: { slug: string; file: string; aliases?: string[] }) => list.filter(a => a.status === 'open' && appliesTo(a, proj))
 
 export type NewAction = { title: string; command?: string; why?: string; check?: string; project?: string }
 
@@ -281,7 +284,7 @@ export async function logEvent($: EngineInterface, h: string, level: 'success' |
 
 async function projectOf($: EngineInterface, h: string) {
   const p = await sessionProject($, h)
-  return { slug: p.slug, file: p.file }
+  return { slug: p.slug, file: p.file, key: p.key, aliases: p.aliases }
 }
 
 /** Open actions for this session, and the panel's copy of them. */
@@ -339,7 +342,8 @@ export async function addFromClaude($: EngineInterface, h: string, n: NewAction 
   if (!h) return 'No home folder found.'
   if (!clean(n.title, 200)) return 'An action needs a title.'
   const proj = await projectOf($, h)
-  const project = n.global ? '' : (n.project || proj.slug)
+  // The list's key, not the folder's slug: every folder sharing the list (and older builds, by file) sees it.
+  const project = n.global ? '' : (n.project || proj.key)
   const r = addAction(await loadActions($, h), { ...n, project }, Math.floor((await $.clock.now()) / 1000), rid())
   if (r.isNew) {
     await saveActions($, h, r.list)

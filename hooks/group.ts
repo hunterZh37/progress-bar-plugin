@@ -291,37 +291,80 @@ def _home_slug(r):
     return _slug(rel) or ('home' if r == h else 'root')
 
 
-def project_of(cwd=None):
-    """(list file under ROOT, project slug), as hooks/project.ts resolves them."""
-    cwd = (os.environ.get('PB_CWD', '') if cwd is None else cwd).rstrip('/')
-    if not cwd:
-        return ('todo.txt', 'todo.txt')
-    best = None
+def _projects_rows():
+    out = []
     for l in (read(os.path.join(ROOT, 'todos', 'projects.txt')) or '').splitlines():
         l = l.strip()
         m = re.match(r'^(.+?)(?:\t+|\s{2,})(\S.*)$', l)
         if not l or l.startswith('#') or not m:
             continue
         pre = re.sub(r'^~(?=/|$)', lambda _: HOME, m.group(1).strip()).rstrip('/') or '/'
-        if _under(cwd, pre) and (best is None or len(pre) > len(best[0])):
-            best = (pre, m.group(2).strip())
-    if best:
-        v = best[1]
-        f = v.lstrip('/') if v.endswith('.txt') else 'todos/' + _slug(v) + '.txt'
-        if f == 'todo.txt':
-            return (f, _home_slug(best[0]))
-        return (f, re.sub(r'\.txt$', '', re.sub(r'^todos/', '', f)))
-    root, d = '', cwd
+        out.append((pre, m.group(2).strip()))
+    return out
+
+
+def _file_of(v):
+    return v.lstrip('/') if v.endswith('.txt') else 'todos/' + _slug(v) + '.txt'
+
+
+def _git_root(cwd):
+    """(nearest folder holding .git, its main checkout). A worktree's .git file names the main one."""
+    d = cwd
     while d:
-        if os.path.exists(os.path.join(d, '.git')):
-            root = d
-            break
+        g = os.path.join(d, '.git')
+        if os.path.exists(g):
+            main = d
+            if os.path.isfile(g):
+                m = re.search(r'^gitdir:\s*(.+?)\s*$', read(g) or '', re.M)
+                if m:
+                    gd = os.path.normpath(os.path.join(d, m.group(1)))
+                    w = re.match(r'^(.*)/\.git/worktrees/[^/]+$', gd)
+                    if w:
+                        main = w.group(1) or '/'
+            return d, main
         up = os.path.dirname(d)
         if up == d:
             break
         d = up
-    sl = _home_slug(root or cwd)
+    return '', ''
+
+
+def project_of(cwd=None):
+    """(list file under ROOT, project slug), as hooks/project.ts resolves them.
+    A projects.txt prefix holding the folder wins. Else, in a git worktree, one holding the same path in its main
+    checkout, so a worktree shares its repo's list. Else the main checkout's slug."""
+    cwd = (os.environ.get('PB_CWD', '') if cwd is None else cwd).rstrip('/')
+    if not cwd:
+        return ('todo.txt', 'todo.txt')
+    rows = _projects_rows()
+
+    def best_of(c):
+        b = None
+        for pre, v in rows:
+            if _under(c, pre) and (b is None or len(pre) > len(b[0])):
+                b = (pre, v)
+        return b
+    root, main = _git_root(cwd)
+    best = best_of(cwd)
+    if best is None and root and main != root and _under(cwd, root):
+        best = best_of(main + cwd[len(root):])
+    if best:
+        f = _file_of(best[1])
+        if f == 'todo.txt':
+            return (f, _home_slug(best[0]))
+        return (f, re.sub(r'\.txt$', '', re.sub(r'^todos/', '', f)))
+    sl = _home_slug(main or cwd)
     return ('todos/' + sl + '.txt', sl)
+
+
+def project_aliases(cwd=None):
+    """Every name this session's list goes by: its file, its slug and the slug of each projects.txt folder sharing it."""
+    f, sl = project_of(cwd)
+    keys = {f, sl, re.sub(r'\.txt$', '', re.sub(r'^todos/', '', f))}
+    for pre, v in _projects_rows():
+        if _file_of(v) == f:
+            keys.add(_home_slug(pre))
+    return f, keys
 
 
 def action_count(cwd=None):
@@ -332,8 +375,7 @@ def action_count(cwd=None):
             data = data.get('actions')
         if not isinstance(data, list):
             return 0
-        f, sl = project_of(cwd)
-        keys = {f, sl}
+        f, keys = project_aliases(cwd)
         n = 0
         for a in data:
             if not isinstance(a, dict) or not a.get('id') or not a.get('title') or a.get('status', 'open') not in ('open', None):

@@ -135,6 +135,28 @@ test('a file with this session shows only here, another open session keeps its o
   expect(files[`${P}/.state/claims-${KEY}.txt`]).toContain('#project code-shop')
 })
 
+test('cwd routing: a folder sharing this list in projects.txt, and a worktree of this repo, are this project', { options: { openPanel: false } }, async ($, on) => {
+  const files: Record<string, string> = {
+    [`${P}/todos/projects.txt`]: '~/code/shop\ttodo.txt\n~/code/shop-admin\ttodo.txt\n',
+    [`${P}/admin-job.json`]: job({ cwd: '/home/u/code/shop-admin/api' }),
+    [`${P}/wt-job.json`]: job({ cwd: '/tmp/wt/shop-x/web' }),
+    [`${P}/orders-job.json`]: job({ cwd: '/home/u/Desktop/Orders' }),
+    [`${CWD}/.git/HEAD`]: 'ref',
+    '/tmp/wt/shop-x/.git': 'gitdir: /home/u/code/shop/.git/worktrees/shop-x\n',
+    '/home/u/Desktop/Orders/.git/HEAD': 'ref',
+  }
+  world(on, files)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call(report({ title: 'kick', finished: true }))
+  const mine = files[`${L}/jobs-${KEY}.txt`] ?? ''
+  expect(mine).toContain('admin-job')
+  expect(mine).toContain('wt-job')
+  expect(mine).not.toContain('orders-job')
+  expect(files[`${L}/jobs.txt`] ?? '').toContain('orders-job')
+  // The claims header names the list, so a session in shop-admin reads this one as its own project.
+  expect(files[`${P}/.state/claims-${KEY}.txt`]).toContain('#project todo.txt')
+})
+
 test('with todos/lines.txt the legacy jobs.txt routing is unchanged', { options: { openPanel: false } }, async ($, on) => {
   const files: Record<string, string> = { [`${P}/linux-import.json`]: job(), [`${P}/todos/lines.txt`]: 'jobs.txt\ttodo.txt\n' }
   world(on, files)
