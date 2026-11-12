@@ -33,8 +33,10 @@ export type Listening = { pid: number; cmd: string; port: number; cwd: string; m
 export type LocalLabel = { port: number; path: string; label: string }
 export type LocalView = { listening: Listening[]; root: string; at: number; labels?: LocalLabel[]; labelsPath?: string; ignore?: string[] }
 export type ChromeView = { line: string; tone: 'ok' | 'warn' | 'dim'; warn: string; usedAt: number; others: string[]; hint?: string; check?: ChromeCheck | null; otherChecks?: (ChromeCheck | null)[] }
-/** Status panel: the open [x] stop/pause menu (a row key, '' for none), each fresh progress file's controllable bits and the paused rows (hooks/control.ts). */
-export type Ctl = { open: string; files: Record<string, { command?: string; pid?: number; ports?: number[] }>; paused: Record<string, number> }
+/** Status panel: each fresh progress file's controllable bits and the paused rows (hooks/control.ts). */
+/** Status panel: the open [x] stop confirm, never on disk: its row key ('' for none), when it opened and the code load it belongs to. */
+export type StopAsk = { key: string; at: number; load: string }
+export type Ctl = { files: Record<string, { command?: string; pid?: number; ports?: number[] }>; paused: Record<string, number> }
 /** Status panel: the tab shown. */
 export type Tab = 'list' | 'connectors' | 'github' | 'log' | 'chat' | 'topology'
 
@@ -111,6 +113,6 @@ export type Topo = { cfg: TopoConfig; health: Record<string, TopoHealth> }
 
 declare module 'claude-code' {
   interface PluginState {
-    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; project: Project; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards; recap: Recap; inbox: Inbox; channel: Channel; chat: ChatState; actions: Action[]; actionUi: ActionUi; health: Health; done: Record<string, DoneRec>; topo: Topo; goal: Goal; chrome: ChromeView; ctl: Ctl; local: LocalView }
+    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; project: Project; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards; recap: Recap; inbox: Inbox; channel: Channel; chat: ChatState; actions: Action[]; actionUi: ActionUi; health: Health; done: Record<string, DoneRec>; topo: Topo; goal: Goal; chrome: ChromeView; ctl: Ctl; stopAsk: StopAsk; local: LocalView }
   }
 }

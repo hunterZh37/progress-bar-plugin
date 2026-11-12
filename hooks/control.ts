@@ -1,4 +1,4 @@
-// Stop or pause a running job from the List tab: the [x] at a RUNNING row's end opens "Stop · Pause · Cancel".
+// Stop or pause a running job from the List tab: the [x] at a RUNNING row's end opens "Cancel · Stop · Pause".
 //
 // What each kind of row can do:
 // - shell: a background Bash shell this plugin recorded (its progress file holds `command` and `taskId`). Stop sends
@@ -14,6 +14,7 @@
 
 import type { EngineInterface } from 'claude-code'
 
+import type { StopAsk } from '../types'
 import { logEvent } from './actions'
 import { endShell } from './report'
 
@@ -31,10 +32,52 @@ export function controlKind(name: string, isAgent: boolean, raw: Record<string, 
 
 const validPid = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v > 1
 
-/** The choices under an open [x]: Pause only where it can work, Resume once paused. */
+/**
+ * The choices under an open [x]: Cancel first (the focus lands there, so a stray Enter stops nothing), Pause only
+ * where it can work, Resume once paused.
+ */
 export function controlOptions(kind: CtlKind, paused: boolean): string[] {
-  if (kind === 'shell' || kind === 'job-pid') return paused ? ['Resume', 'Stop', 'Cancel'] : ['Stop', 'Pause', 'Cancel']
-  return ['Stop', 'Cancel']
+  if (kind === 'shell' || kind === 'job-pid') return paused ? ['Cancel', 'Resume', 'Stop'] : ['Cancel', 'Stop', 'Pause']
+  return ['Cancel', 'Stop']
+}
+
+// ---- The open stop confirm: ephemeral, one row at a time ----
+// It lives in the session's state only so the drawing redraws, never on disk. It belongs to this load of the code
+// (LOAD_ID; a /reload-plugins starts a new one, so a confirm from before a reload never shows again), to one exact
+// row key, and to a time: ASK_MS with no choice dismisses it. Cancel, Escape, the focus moving off it or the panel
+// losing the keyboard close it too.
+
+export type { StopAsk }
+export const NO_ASK: StopAsk = { key: '', at: 0, load: '' }
+/** How long an open confirm waits for a choice before it closes by itself. */
+export const ASK_MS = 8000
+/** This load of the module: module variables start over at a reload, the session's state does not. */
+export const LOAD_ID = `load-${Math.random().toString(36).slice(2)}`
+
+/** Whether the confirm for row `key` shows: opened for that row, in this load, after the last focus loss, within ASK_MS. */
+export function askShown(a: StopAsk | undefined, key: string, now: number, load: string = LOAD_ID, blurAt = 0): boolean {
+  if (!a || !a.key || a.key !== key || a.load !== load) return false
+  if (a.at <= blurAt) return false
+  return now >= a.at && now - a.at < ASK_MS
+}
+
+/** Whether a stored confirm is over (another load, past ASK_MS, or none) and should be cleared. */
+export const askStale = (a: StopAsk | undefined, now: number, load: string = LOAD_ID, blurAt = 0) =>
+  !!a?.key && !askShown(a, a.key, now, load, blurAt)
+
+/** The [x] press: opens the confirm on this row (moving it from any other row), or closes it when already open here. */
+export function toggleAsk(a: StopAsk | undefined, key: string, now: number, load: string = LOAD_ID, blurAt = 0): StopAsk {
+  return askShown(a, key, now, load, blurAt) ? NO_ASK : { key, at: now, load }
+}
+
+/** The keys of a row's [x] and its confirm's buttons, unique per row. */
+export const askKeys = (key: string) => ({ x: `xb-${key}`, opt: (o: string) => `xo-${key}-${o.toLowerCase()}` })
+
+/** Whether the focus ring landing on `element` keeps the confirm for row `key` open: only its own [x] or buttons. */
+export function focusKeeps(key: string, element: string | undefined): boolean {
+  if (!key || !element) return false
+  const k = askKeys(key)
+  return element === k.x || ['Cancel', 'Stop', 'Pause', 'Resume'].some(o => element === k.opt(o))
 }
 
 export type Proc = { pid: number; ppid: number; uid: number; startMs: number; command: string }

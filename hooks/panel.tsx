@@ -18,7 +18,8 @@ import { clip, moveItem, nextPrompt, parseItem, rankTodos, shownTitle, todoRows 
 import { DEFAULT_GOAL, OTHER, areaOf, lensTags, plainTitle, projectGoal, readGoal } from './goal'
 import type { LensTag } from './goal'
 import { sessionProject } from './project'
-import { controlKind, controlOptions, readPaused, runControl } from './control'
+import { NO_ASK, askKeys, askShown, askStale, controlKind, controlOptions, focusKeeps, readPaused, runControl, toggleAsk } from './control'
+import type { StopAsk } from './control'
 import type { CtlKind } from './control'
 import { sessionKeyOf } from './route'
 import { DEFAULT_TOPOLOGY, queuesOf, readTopology, renderTopology, resolveMachine } from './topology'
@@ -97,9 +98,17 @@ const ghAtom = atom({ plugin: 'progress-bar', key: 'gh' } as const, { repos: [],
 // Running jobs whose line is open to show its details, by slug.
 const openAtom = atom({ plugin: 'progress-bar', key: 'openCards' } as const, [] as string[])
 const metaAtom = atom({ plugin: 'progress-bar', key: 'meta' } as const, {} as Record<string, Meta>)
-// The [x] stop/pause menu (control.ts): the row whose menu is open, each fresh progress file's controllable bits
-// (a shell's recorded command, a job's pid; never the command itself) and the paused rows.
-const ctlAtom = atom({ plugin: 'progress-bar', key: 'ctl' } as const, { open: '', files: {}, paused: {} } as Ctl)
+// The [x] stop/pause menu (control.ts): each fresh progress file's controllable bits (a shell's recorded command, a
+// job's pid; never the command itself) and the paused rows.
+const ctlAtom = atom({ plugin: 'progress-bar', key: 'ctl' } as const, { files: {}, paused: {} } as Ctl)
+// The open stop confirm (control.ts askShown): one exact row, this load of the code only, closed after ASK_MS, on
+// Cancel, on Escape and when the focus leaves it. Never written to disk. (Before 0.31.1 it was ctl.open: it outlived
+// /reload-plugins and never timed out, so a confirm came back with Stop under the focus.)
+const askAtom = atom({ plugin: 'progress-bar', key: 'stopAsk' } as const, NO_ASK as StopAsk)
+// When the Status panel last lost the keyboard (module variable: a reload starts it over). A confirm opened before
+// that no longer shows.
+let panelBlurAt = 0
+let panelHadFocus = false
 const logAtom = atom({ plugin: 'progress-bar', key: 'log' } as const, { events: [], filter: 'all', open: '', seenAt: 0, dirs: [] } as { events: Ev[]; filter: LogFilter; open: string; seenAt: number; dirs: string[] })
 const recapAtom = atom({ plugin: 'progress-bar', key: 'recap' } as const, { cp: null, lastTick: 0, open: false } as Recap)
 const inboxAtom = atom({ plugin: 'progress-bar', key: 'inbox' } as const, { checked: 0, items: [] } as Inbox)
@@ -766,7 +775,14 @@ async function setScriptNote($: EngineInterface, script: string) {
 }
 
 /** Runs the status line script in full, as this session, and keeps its lines. */
+/** Clears a stop confirm left from before a reload, past its time or opened before the panel lost the keyboard. */
+export async function clearStaleAsk($: EngineInterface) {
+  const ask = await read($, askAtom)
+  if (askStale(ask, await $.clock.now(), undefined, panelBlurAt)) await update($, askAtom, () => NO_ASK)
+}
+
 export async function pollPanel($: EngineInterface, h: string) {
+  await clearStaleAsk($)
   if (!h) return
   try {
     const r = await $.process.run(['/bin/sh', `${h}/${SCRIPT_REL}`], { stdin: await sessionInput($, h), env: { PB_FULL: '1' }, timeoutMs: 8000 })
@@ -1070,6 +1086,9 @@ export function registerPanel(on: On) {
   })
   // Escape (or Tab, a click) moving the focus off a LOCALHOST name prompt closes it.
   on('ui.focus', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    // The ring leaving an open stop confirm (Tab, arrows, a click elsewhere, Escape) closes it.
+    const ask = await read($, askAtom)
+    if (ask.key && !focusKeeps(ask.key, e.element)) await update($, askAtom, () => NO_ASK)
     if (!/^lh-(?:in|inp|x)-/.test(e.element ?? '')) {
       const open = await read($, openAtom)
       if (open.some(x => x.startsWith('lh-edit:'))) await update($, openAtom, l => l.filter(x => !x.startsWith('lh-edit:')))
@@ -1208,15 +1227,32 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const nowMs = await $.clock.now()
     const meta = await read($, metaAtom)
     const openCards = new Set(await read($, openAtom))
-    // Stop or pause from a row's [x] (control.ts): which kind of control a row has, and the open menu's choices.
+    // Stop or pause from a row's [x] (control.ts): which kind of control a row has, and the open confirm's choices.
     const ctl = await read($, ctlAtom)
+    // The panel losing the keyboard (Escape, a click in the chat) closes an open confirm: one opened before that
+    // moment no longer shows, and the next poll clears it.
+    const focusedNow = e.props.isFocused === true
+    if (panelHadFocus && !focusedNow) panelBlurAt = nowMs
+    panelHadFocus = focusedNow
+    const ask = await read($, askAtom)
+    const asking = (key: string) => askShown(ask, key, nowMs, undefined, panelBlurAt)
     const ctlKindOf = (c: RunCard): CtlKind | null => controlKind(c.name, c.kind.text === 'Claude agent', ctl.files[c.name])
+    // [x] opens the confirm on this exact row (moving it from any other row) and puts the focus on Cancel, or
+    // closes it when it is already open here.
+    const pressX = async (key: string) => {
+      const now = await $.clock.now()
+      const next = toggleAsk(await read($, askAtom), key, now, undefined, panelBlurAt)
+      await update($, askAtom, () => next)
+      if (next.key) void $.ui.focus({ requestId: PANE, key: askKeys(key).opt('Cancel') }).catch(() => undefined)
+    }
     const ctlBtn = (c: RunCard, key: string) => (ctlKindOf(c)
-      ? <Box key={`x-${key}`} flexShrink={0}><Text>{' '}</Text><Button key={`xb-${key}`} plain onPress={() => update($, ctlAtom, x => ({ ...x, open: x.open === key ? '' : key }))}><Text dimColor>{'[x]'}</Text></Button></Box>
+      ? <Box key={`x-${key}`} flexShrink={0}><Text>{' '}</Text><Button key={askKeys(key).x} plain onPress={() => pressX(key)}><Text dimColor>{'[x]'}</Text></Button></Box>
       : null)
-    const choose = async (c: RunCard, kind: CtlKind, title: string, choice: string) => {
-      await update($, ctlAtom, x => ({ ...x, open: '' }))
-      if (choice === 'Cancel' || !homeDir) return
+    const choose = async (c: RunCard, kind: CtlKind, title: string, choice: string, key: string) => {
+      // Only a confirm still open on this row acts: a press on one already closed (timed out, reloaded) does nothing.
+      const live = askShown(await read($, askAtom), key, await $.clock.now(), undefined, panelBlurAt)
+      await update($, askAtom, () => NO_ASK)
+      if (choice === 'Cancel' || !live || !homeDir) return
       const path = `${homeDir}/${DIR_REL}/${c.name}.json`
       let raw: Record<string, unknown> = {}
       try { raw = JSON.parse(String(await $.fs.read(path))) as Record<string, unknown> } catch { raw = {} }
@@ -1225,15 +1261,19 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       await update($, ctlAtom, x => ({ ...x, paused }))
       if (said) $.ui.toast(said, { timeoutMs: 6000 })
     }
+    // Cancel first and focused, so Enter right after the [x] stops nothing. Stop takes a move to it, then Enter or a click.
     const ctlMenu = (c: RunCard, key: string, indent: number, title: string) => {
       const kind = ctlKindOf(c)
-      if (!kind || ctl.open !== key) return null
+      if (!kind || !asking(key)) return null
       const opts = controlOptions(kind, !!ctl.paused[c.name])
+      const k = askKeys(key)
       return (
         <Box key={`xm-${key}`} paddingLeft={indent}>
           {opts.flatMap((o, j) => [
             j ? <Text key={`xs${j}`} dimColor>{' · '}</Text> : null,
-            <Button key={`xo${j}`} plain onPress={() => choose(c, kind, title, o)}>{o === 'Stop' ? <Text color="red">{o}</Text> : <Text>{o}</Text>}</Button>,
+            o === 'Cancel'
+              ? <Button key={k.opt(o)} plain autoFocus onPress={() => choose(c, kind, title, o, key)}><Text>{o}</Text></Button>
+              : <Button key={k.opt(o)} plain onPress={() => choose(c, kind, title, o, key)}>{o === 'Stop' ? <Text color="red">{o}</Text> : <Text>{o}</Text>}</Button>,
           ]).filter(Boolean)}
         </Box>
       )

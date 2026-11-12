@@ -123,9 +123,14 @@ A background Bash shell that runs a server (`npm run dev`, `pnpm start`, `next d
 
 ## Stop or pause a job
 
-A RUNNING row with something to control ends with a dim `[x]`. Press it for `Stop · Pause · Cancel` under the row.
+A RUNNING row with something to control ends with a dim `[x]`. Press it for `Cancel · Stop · Pause` under the row.
 
-- **Background shell** (dev servers too, from their LOCALHOST row's `[x]`): Stop sends SIGTERM to the shell Claude started for that command and its child processes. Pause sends SIGSTOP and the row reads `paused`, then the menu offers `Resume · Stop`. If its process is not found, Stop asks Claude to TaskStop it.
+- **Cancel first:** the focus lands on Cancel, so a stray Enter stops nothing. To stop, move to Stop, then press Enter or click it.
+- **Closes by itself:** with no choice in 8 seconds the confirm closes. Cancel, Escape, moving the focus away or leaving the panel close it too.
+- **One row at a time:** `[x]` on another row moves the confirm there. `[x]` again on the same row closes it.
+- **Never restored:** the confirm is not saved anywhere. After `/reload-plugins` it is gone.
+
+- **Background shell** (dev servers too, from their LOCALHOST row's `[x]`): Stop sends SIGTERM to the shell Claude started for that command and its child processes. Pause sends SIGSTOP and the row reads `paused`, then the menu offers `Cancel · Resume · Stop`. If its process is not found, Stop asks Claude to TaskStop it.
 - **Subagent:** Stop asks Claude, as a prompt, to stop it with TaskStop and say what it had done. There is no pause.
 - **Progress-file job with a `pid`:** Stop (SIGTERM), Pause (SIGSTOP), Resume (SIGCONT), and Stop marks the file stopped.
 - **Progress-file job without a `pid`:** Stop writes `"stopped": true, "stoppedAt": <ms>` into its file. The row moves to DONE as `stopped by you`. Scripts should read their file before each write and quit when `stopped` is true.

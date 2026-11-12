@@ -2,6 +2,12 @@
 
 Versions of the progress-bar plugin, newest first. Each line is the release commit. Full detail is in the git history.
 
+## 0.31.1
+
+- **Stop confirm never sticks:** the `[x]` confirm under a RUNNING row is no longer kept across `/reload-plugins`. It closes after 8 seconds with no choice, and on Cancel, Escape or the focus leaving it.
+- **Cancel is the default:** the confirm reads `Cancel · Stop` with the focus on Cancel, so a stray Enter stops nothing. Stop takes a move to it first.
+- **Exact row:** the confirm belongs to one row. `[x]` on another row moves it there.
+
 ## 0.31.0
 
 - **No false stuck alarms:** a row reads `⚠ stuck` only when nothing shows it is alive. Its progress file or a heartbeat file written, its agent's transcript written, a background task of its agent still running, or a live background shell all count.
@@ -23,6 +29,7 @@ Versions of the progress-bar plugin, newest first. Each line is the release comm
 
 ## Earlier releases
 
+- 0.31.1: the stop confirm never sticks or comes back after a reload, Cancel is focused first, 8 s timeout
 - 0.31.0: no false stuck alarms, expect_minutes and heartbeat for quiet steps, finished shells clear when the saved transcript path is stale
 - 0.30.0: neutral defaults for any user, usage meter opt-in, hideEmails, Chrome line after first use
 - 0.29.1: /attach picker opens in about 0.1 s, not 2 s, by asking the frontmost terminal to show it, and focus returns to the terminal after pick or cancel

@@ -1,6 +1,6 @@
 {
   "name": "progress-bar",
-  "version": "0.31.0",
+  "version": "0.31.1",
   "description": "Live progress bars in the status line and a docked Status panel for subagents and long jobs that write ~/.claude-progress/<slug>.json",
   "license": "MIT",
   "author": {

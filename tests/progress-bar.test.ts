@@ -7,7 +7,7 @@ import { CHECKPOINT_PY } from '../hooks/checkpoint'
 import { forgetLocalState } from '../hooks/chrome'
 import { closestFile, pairFile, serverOf } from '../hooks/render'
 import type { PairCandidate } from '../hooks/render'
-import { controlKind, controlOptions, parsePs, pidCheck, shellTree } from '../hooks/control'
+import { ASK_MS, LOAD_ID, askShown, askStale, controlKind, controlOptions, focusKeeps, parsePs, pidCheck, shellTree, toggleAsk } from '../hooks/control'
 import { finishedTaskIds } from '../hooks/report'
 import { loginKey, usageFileRel, usageMeterOn } from '../hooks/usage'
 import { clock } from '../hooks/done'
@@ -562,7 +562,7 @@ test('the sliding piece moves one cell a second and wraps', async () => {
 /** A world for the panel: the status script answers `full`, files live in `files`. */
 function panelWorld(on: On, files: Record<string, string>, full = FULL, answer: (argv: string[]) => string | undefined = () => undefined) {
   const ran: { argv: string[]; env?: Record<string, string>; stdin?: string }[] = []
-  mock.clock(on, { now: NOW })
+  const clk = mock.clock(on, { now: NOW })
   mock.env(on, { HOME })
   on('command.register', () => ({ value: { command: 'progress-bar' } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -587,7 +587,7 @@ function panelWorld(on: On, files: Record<string, string>, full = FULL, answer: 
   on('ui.open', (_, e) => { opened.push(e.id); return { value: { isPlaced: true } } })
   on('ui.close', () => ({ value: undefined }))
   on('ui.panes', () => ({ value: [] as never }))
-  return { ran, opened }
+  return { ran, opened, clk }
 }
 
 const SCRIPT = `${HOME}/.claude/progress-bar/statusline.sh`
@@ -1794,10 +1794,141 @@ test('controls: which rows get an [x], and the choices each offers', () => {
   expect(controlKind('crawl', false, { done: 1, total: 2, pid: 1 })).toBe('job-file')
   expect(controlKind('box: train.py', false, { done: 1 })).toBe(null)
   expect(controlKind('no-file-here', false, undefined)).toBe(null)
-  expect(controlOptions('shell', false)).toEqual(['Stop', 'Pause', 'Cancel'])
-  expect(controlOptions('job-pid', true)).toEqual(['Resume', 'Stop', 'Cancel'])
-  expect(controlOptions('agent', false)).toEqual(['Stop', 'Cancel'])
-  expect(controlOptions('job-file', false)).toEqual(['Stop', 'Cancel'])
+  // Cancel comes first, so the focus starts on it and a stray Enter stops nothing.
+  expect(controlOptions('shell', false)).toEqual(['Cancel', 'Stop', 'Pause'])
+  expect(controlOptions('job-pid', true)).toEqual(['Cancel', 'Resume', 'Stop'])
+  expect(controlOptions('agent', false)).toEqual(['Cancel', 'Stop'])
+  expect(controlOptions('job-file', false)).toEqual(['Cancel', 'Stop'])
+})
+
+// ---- 0.31.1: the stop confirm never sticks: one row, this load only, 8 s, Cancel focused ----
+
+test('stop confirm state: one exact row, this load only, gone after ASK_MS or a focus loss, toggles and moves', () => {
+  const T = 1_000_000
+  const a = toggleAsk(undefined, 'redesign-ui', T)
+  expect(a).toEqual({ key: 'redesign-ui', at: T, load: LOAD_ID })
+  expect(askShown(a, 'redesign-ui', T + 1)).toBe(true)
+  // keyed to the exact row, never a neighbour or a prefix
+  expect(askShown(a, 'redesign', T + 1)).toBe(false)
+  expect(askShown(a, 'redesign-ui-2', T + 1)).toBe(false)
+  // a reload (another load id) never brings it back
+  expect(askShown(a, 'redesign-ui', T + 1, 'load-before-reload')).toBe(false)
+  expect(askShown({ ...a, load: 'load-before-reload' }, 'redesign-ui', T + 1)).toBe(false)
+  expect(askStale({ ...a, load: 'load-before-reload' }, T + 1)).toBe(true)
+  // the timeout
+  expect(ASK_MS).toBe(8000)
+  expect(askShown(a, 'redesign-ui', T + ASK_MS - 1)).toBe(true)
+  expect(askShown(a, 'redesign-ui', T + ASK_MS)).toBe(false)
+  expect(askStale(a, T + ASK_MS)).toBe(true)
+  expect(askStale(a, T + 1)).toBe(false)
+  // the panel losing the keyboard after it opened
+  expect(askShown(a, 'redesign-ui', T + 2, LOAD_ID, T + 1)).toBe(false)
+  expect(askShown(a, 'redesign-ui', T + 2, LOAD_ID, T - 1)).toBe(true)
+  // [x] on the same row closes it, on another row moves it there
+  expect(toggleAsk(a, 'redesign-ui', T + 1).key).toBe('')
+  expect(toggleAsk(a, 'crawl', T + 1)).toEqual({ key: 'crawl', at: T + 1, load: LOAD_ID })
+  // an expired confirm reopens on the next [x], it does not toggle closed
+  expect(toggleAsk(a, 'redesign-ui', T + ASK_MS).key).toBe('redesign-ui')
+  // the focus keeps it only on its own [x] and buttons
+  expect(focusKeeps('crawl', 'xb-crawl')).toBe(true)
+  expect(focusKeeps('crawl', 'xo-crawl-cancel')).toBe(true)
+  expect(focusKeeps('crawl', 'xo-crawl-2-cancel')).toBe(false)
+  expect(focusKeeps('crawl', 'open-crawl')).toBe(false)
+  expect(focusKeeps('crawl', undefined)).toBe(false)
+})
+
+const STOP_FULL = ['▾ ▶ RUNNING', '  ◐ crawl ██░░ 50.0% · 1/2 · fetching · 3m', '  ◐ index ██░░ 50.0% · 1/2 · building · 3m'].join('\n')
+const stopFiles = (): Record<string, string> => ({
+  [SCRIPT]: statusScript(), [FLAG]: 'on\n',
+  [`${DIR}/crawl.json`]: JSON.stringify({ done: 1, total: 2, title: 'Crawl sites' }),
+  [`${DIR}/index.json`]: JSON.stringify({ done: 1, total: 2, title: 'Build index' }),
+})
+const btnKeys = async (ui: { findAll: (q: never) => Promise<{ key?: string }[]> }) => (await ui.findAll({ type: 'Button' } as never)).map(b => b.key ?? '')
+
+test('stop confirm: Cancel is first and focused, Cancel clears it and stops nothing', async ($, on) => {
+  const files = stopFiles()
+  panelWorld(on, files, STOP_FULL)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, isFocused: true } })
+  expect((await btnKeys(ui)).filter(k => k.startsWith('xo-'))).toEqual([])
+  await ui.press({ key: 'xb-crawl' })
+  // Cancel is drawn first and holds autoFocus (the [x] also moves the ring to it); Stop never starts focused.
+  expect((await btnKeys(ui)).filter(k => k.startsWith('xo-'))).toEqual(['xo-crawl-cancel', 'xo-crawl-stop'])
+  const cancel = (await ui.find({ key: 'xo-crawl-cancel' })) as unknown as { props?: { autoFocus?: boolean } }
+  const stop = (await ui.find({ key: 'xo-crawl-stop' })) as unknown as { props?: { autoFocus?: boolean } }
+  expect(cancel.props?.autoFocus).toBe(true)
+  expect(stop.props?.autoFocus).toBeUndefined()
+  await ui.press({ key: 'xo-crawl-cancel' })
+  expect((await btnKeys(ui)).filter(k => k.startsWith('xo-'))).toEqual([])
+  expect(JSON.parse(files[`${DIR}/crawl.json`]!).stopped).toBeUndefined()
+  // redraws keep it closed
+  await ui.redraw()
+  expect((await btnKeys(ui)).filter(k => k.startsWith('xo-'))).toEqual([])
+  await ui.unmount()
+})
+
+test('stop confirm: [x] on another row moves it, the focus leaving closes it', async ($, on) => {
+  const files = stopFiles()
+  panelWorld(on, files, STOP_FULL)
+  on('ui.focus', () => ({}) as never)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, isFocused: true } })
+  await ui.press({ key: 'xb-crawl' })
+  await ui.press({ key: 'xb-index' })
+  expect((await btnKeys(ui)).filter(k => k.startsWith('xo-'))).toEqual(['xo-index-cancel', 'xo-index-stop'])
+  // the ring moving to another element (Tab, a click elsewhere) closes it
+  await $.ui.focus({ component: 'Pane', requestId: PANE, element: 'open-crawl', origin: { kind: 'person' } } as never)
+  await ui.redraw()
+  expect((await btnKeys(ui)).filter(k => k.startsWith('xo-'))).toEqual([])
+  // the panel losing the keyboard (Escape, a click in the chat) closes it too
+  await ui.press({ key: 'xb-crawl' })
+  expect((await btnKeys(ui)).filter(k => k.startsWith('xo-'))).toEqual(['xo-crawl-cancel', 'xo-crawl-stop'])
+  await ui.redraw({ ...PANE_PROPS, isFocused: false })
+  expect((await btnKeys(ui)).filter(k => k.startsWith('xo-'))).toEqual([])
+  await ui.unmount()
+})
+
+test('stop confirm: a confirm stored before a reload is not restored', async ($, on) => {
+  const files = stopFiles()
+  panelWorld(on, files, STOP_FULL)
+  // What the session state holds across /reload-plugins: the confirm from the copy before, and the old ctl.open.
+  const kept: Record<string, { value: unknown; version: number }> = {
+    stopAsk: { value: { key: 'crawl', at: NOW, load: 'load-before-reload' }, version: 1 },
+    ctl: { value: { open: 'crawl', files: { crawl: {}, index: {} }, paused: {} }, version: 1 },
+  }
+  on('state.get', (_, e, next) => { const k = (e as { key: string }).key; return k in kept ? { value: kept[k] } as never : next(e) })
+  on('state.set', (_, e, next) => {
+    const w = e as { key: string; value: unknown; ifVersion?: number }
+    if (!(w.key in kept)) return next(e)
+    const cur = kept[w.key]!
+    if (w.ifVersion !== undefined && w.ifVersion !== cur.version) return { value: { isSet: false, version: cur.version } } as never
+    kept[w.key] = { value: w.value, version: cur.version + 1 }
+    return { value: { isSet: true, version: cur.version + 1 } } as never
+  })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  // the row and its [x] are there, the confirm is not, and the poll cleared what was stored
+  expect(await btnKeys(ui)).toContain('xb-crawl')
+  expect((await btnKeys(ui)).filter(k => k.startsWith('xo-'))).toEqual([])
+  expect((await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')).not.toContain('Stop')
+  expect((kept.stopAsk!.value as { key: string }).key).toBe('')
+  await ui.unmount()
+})
+
+test('stop confirm: no choice in 8 s dismisses it, and a late Stop does nothing', async ($, on) => {
+  const files = stopFiles()
+  const { clk } = panelWorld(on, files, STOP_FULL)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  await ui.press({ key: 'xb-crawl' })
+  await clk.advance(ASK_MS - 1000)
+  await ui.redraw()
+  expect((await btnKeys(ui)).filter(k => k.startsWith('xo-'))).toEqual(['xo-crawl-cancel', 'xo-crawl-stop'])
+  await clk.advance(1000)
+  await ui.redraw()
+  expect((await btnKeys(ui)).filter(k => k.startsWith('xo-'))).toEqual([])
+  expect(JSON.parse(files[`${DIR}/crawl.json`]!).stopped).toBeUndefined()
+  await ui.unmount()
 })
 
 test('pidCheck: only this user\'s live process that is still the job, never pid 1, this process or Claude', () => {
