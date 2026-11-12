@@ -959,7 +959,9 @@ export const register: Register = (on, options) => {
     const i = e as unknown as Record<string, unknown>
     const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
     const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
-    const text = await writeReport($, await resolveHome($), { title: str(i.title) ?? '', done: num(i.done), total: num(i.total), step: str(i.step), why: str(i.why), parent: str(i.parent), slug: str(i.slug), reads: str(i.reads), writes: str(i.writes), impact: str(i.impact), area: str(i.area), gains: pickGains(typeof i.gains === 'string' ? (() => { try { return JSON.parse(i.gains as string) } catch { return undefined } })() : i.gains), finished: i.finished === true, expectMinutes: num(i.expect_minutes) ?? (typeof i.expect_minutes === 'string' ? num(Number(i.expect_minutes)) : undefined), heartbeat: str(i.heartbeat) })
+    // A list may arrive as JSON text. Anything else passes through, so writeReport can say it was not a list.
+    const listArg = (v: unknown) => { if (typeof v !== 'string') return v; try { return JSON.parse(v) as unknown } catch { return v } }
+    const text = await writeReport($, await resolveHome($), { title: str(i.title) ?? '', done: num(i.done), total: num(i.total), step: str(i.step), why: str(i.why), parent: str(i.parent), slug: str(i.slug), reads: str(i.reads), writes: str(i.writes), impact: str(i.impact), area: str(i.area), gains: pickGains(typeof i.gains === 'string' ? (() => { try { return JSON.parse(i.gains as string) } catch { return undefined } })() : i.gains), finished: i.finished === true, expectMinutes: num(i.expect_minutes) ?? (typeof i.expect_minutes === 'string' ? num(Number(i.expect_minutes)) : undefined), heartbeat: str(i.heartbeat), steps: listArg(i.steps), stepStates: listArg(i.step_states) })
     await poll($).catch(() => undefined)
     return { result: text }
   })

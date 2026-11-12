@@ -29,6 +29,7 @@ progress_report(title: "Every order matched to its customer", why: "customer sea
 ```
 
 - It writes `~/.claude-progress/<slug of title>.json` with this session's id, folder and `startedAt` filled in, so the bar shows in this session's Status panel on any machine.
+- **Steps known up front? Pass `steps` on the first call**, the step names in order: `steps: ["design", "implement", "tests and docs", "commit"]`. Pressing the job's row then shows them as a checklist (done, current, to do), following `done`. Later calls need only `done` and `step`: the list is kept. Mark a step skipped or failed with `step_states` (`["done", "skipped", "active", "todo"]`).
 - Pass `slug` to pick the file name, `parent` to nest it under a bigger job.
 - Pass `reads` and `writes` for a job that moves data between machines (`reads: "orders table"`, `writes: "Postgres on server-1"`). The Status panel's Topology tab shows them on the branch between machines.
 - At the end call it with `finished: true` and `impact`: what the job changed and why it matters, one to three short lines (`Board links rebuilt: 1.29M pairs, 109K split people merged`). That removes the bar and keeps the impact on its DONE row.
@@ -48,6 +49,7 @@ Path: `~/.claude-progress/<slug>.json`
 
 - **done**, **total**: numbers, `total` above 0. Without them the line shows `working`.
 - **step**: a few words on the current step.
+- **steps**: optional, the step names in order (`["build", "test", "deploy"]`), up to 50. An item can be `{"name": "test", "state": "failed"}` (`done`, `active`, `todo`, `skipped`, `failed`). Others follow `done`. The row's card shows them as a checklist. Keep `total` equal to its length when you can: the bar follows `total`.
 - **startedAt**: optional, milliseconds since the epoch. Without it the file's time is used.
 - **title**: plain words for the improvement the job makes, so a person knows at a glance why it runs. Name the outcome, not the mechanism: `Every board member counted, not just 25` rather than `Board lists past 25 seats`, `Know where more orgs serve` rather than `Service places round 3`. The Status panel shows it in bold above the slug.
 - **area**: the goal area the job improves, by name from `~/.claude-progress/goals/<project>.json` (`Search`, `Payments`). Set it whenever the project's goal has areas.
@@ -70,7 +72,7 @@ Path: `~/.claude-progress/<slug>.json`
 ## When to write it
 
 - **Your own multi-step job:** write the file after each step, overwriting it. Count the steps up front.
-- **Briefing a subagent:** name the file after the slug of the Agent call's `description` (`Hold Hope until org list plays` -> `hold-hope-until-org-list-plays`), not a name of its own, so the bar lands on that agent's line. (The plugin also pairs a differently named file it created since it started when the words match, but the slug is sure.) Name the slug from the subagent's `description` and add to its prompt: "After each step call `progress_report` with slug `<slug>`, area `<area>`, done N, total T and a short step, and `finished: true` at the end with impact and gains (which of cost, quality, speed got better, with a number). Without that tool, overwrite `~/.claude-progress/<slug>.json` with `{"done": N, "total": T, "step": "<short>", "area": "<area>", "cwd": "<absolute working dir>"}` (add `"session"` only if you know the id) and delete it when finished. Steps: ...". The plugin then puts the bar on that subagent's line.
+- **Briefing a subagent:** name the file after the slug of the Agent call's `description` (`Hold Hope until org list plays` -> `hold-hope-until-org-list-plays`), not a name of its own, so the bar lands on that agent's line. (The plugin also pairs a differently named file it created since it started when the words match, but the slug is sure.) Name the slug from the subagent's `description` and add to its prompt: "On your first `progress_report` call pass `steps` (the step names below). After each step call `progress_report` with slug `<slug>`, area `<area>`, done N, total T and a short step, and `finished: true` at the end with impact and gains (which of cost, quality, speed got better, with a number). Without that tool, overwrite `~/.claude-progress/<slug>.json` with `{"done": N, "total": T, "step": "<short>", "area": "<area>", "cwd": "<absolute working dir>"}` (add `"session"` only if you know the id) and delete it when finished. Steps: ...". The plugin then puts the bar on that subagent's line.
 - **Background shell jobs:** have the script write the file itself (below).
 
 ## Jobs that only write a log: watch files

@@ -42,7 +42,12 @@ export type Tab = 'list' | 'connectors' | 'github' | 'log' | 'chat' | 'topology'
 
 /** Status panel: a job's plain-language title, what it unlocks and its parent job's slug, from its progress file or titles.txt. */
 /** `reads` and `writes`: what the job reads and writes, for the Topology tab's flows. */
-export type Meta = { title?: string; why?: string; parent?: string; reads?: string; writes?: string; area?: string; impact?: string; gains?: Gains }
+/** `steps`: the job's checklist in order, each with its state resolved from the file (explicit, else from `done`). */
+export type Meta = { title?: string; why?: string; parent?: string; reads?: string; writes?: string; area?: string; impact?: string; gains?: Gains; steps?: StepItem[] }
+/** One checklist item's state: finished, the current one, still to do, skipped or failed. */
+export type StepState = 'done' | 'active' | 'todo' | 'skipped' | 'failed'
+/** One item of a job's step checklist. */
+export type StepItem = { name: string; state: StepState }
 /** What a job made better, by lens: lower cost, better quality, faster speed. Each a short plain line, a number when possible. */
 export type Gains = { cost?: string; quality?: string; speed?: string }
 /** ~/.claude-progress/goals/<project>.json: a project's anchor goal, the areas of it a job can improve and the lenses of "better". */

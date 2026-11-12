@@ -14,13 +14,14 @@ import { clock } from '../hooks/done'
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
 import { draw } from './render'
-import { fitChrome, glanceParts, nowLine, verbSplit, TIE, tieFirst } from '../hooks/panel'
+import { checkRows, fitChrome, glanceParts, nowLine, verbSplit, TIE, tieFirst } from '../hooks/panel'
 import { PANE, rowCol, maxReading, noteShows, NOTE_MS, sameName, waitPhrase, waitReason, badge, evId, fitLabel, labelCol, machineTitle, machines, maxMeter, nestRows, runCount, shortTitle, parseSections, runCard, shortAge, timeTail, slide, stripAnsi } from '../hooks/panel'
 import { EVENTS_PY, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from '../hooks/events'
 import { REPOS_REL, parseBranches, parseCommits, webUrl } from '../hooks/github'
 import { blocker, clip, doneEvents, isRunningRow, jobMachine, keyWords, moveItem, nextPrompt, nextReady, parseCaps, parseItem, parseMode, rankTodos, ranked, rowName, shortJob, todoRows } from '../hooks/priority'
 import { fileOf, mainOfGitFile, parseProjects, projectSlug, resolveProject, worktreeCwd } from '../hooks/project'
 import { aliveTasks, bgLaunch, jobText, oneLine, scanTranscript, snapOf, toolWhat, waitSegs, watchedJob } from '../hooks/waiting'
+import { CHECKLIST_MAX, checklistLines, stepItems } from '../hooks/render'
 import { FEW_STEPS, RATE_MIN_MS, eta, expandHome, line, rateLeft, stepRate, trackJob, lines, parseProgress, parseTitles, pickMeta, parseWatch, prevOf, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoItems, todoList } from '../hooks/render'
 
 const NOW = 1_800_000_000_000
@@ -2118,5 +2119,92 @@ test('NEEDS YOU: absent when nothing needs you, no empty heading', async ($, on)
   // Two lines for the running row: bold title with bar and %, then the step and time, dim.
   const at = lines.findIndex(l => /^  ◐ Job/.test(l))
   expect(lines[at + 1]).toBe('    ⎿ a step · 3m')
+  await ui.unmount()
+})
+
+// ---- Step checklist in open running cards ----
+
+test('stepItems: states from done, an explicit state wins, all done once done reaches total', () => {
+  const st = (v: unknown, d?: number, t?: number) => stepItems(v, d, t).map(x => x.state)
+  expect(st(['a', 'b', 'c', 'd'], 2, 4)).toEqual(['done', 'done', 'active', 'todo'])
+  expect(st(['a', 'b'], undefined, undefined)).toEqual(['active', 'todo'])
+  expect(st(['a', 'b', 'c'], 3, 3)).toEqual(['done', 'done', 'done'])
+  expect(st(['a', { name: 'b', state: 'failed' }, { name: 'c', state: 'skipped' }, 'd'], 1, 4)).toEqual(['done', 'failed', 'skipped', 'todo'])
+  // A list longer than total: the bar follows total, the list still shows, done past its end means all done.
+  expect(st(['a', 'b', 'c', 'd', 'e', 'f'], 2, 4)).toEqual(['done', 'done', 'active', 'todo', 'todo', 'todo'])
+  expect(st(['a', 'b'], 1, 5)).toEqual(['done', 'active'])
+  expect(stepItems('nope', 1, 2)).toEqual([])
+  expect(stepItems(undefined)).toEqual([])
+  expect(pickMeta({ done: 1, total: 2, steps: ['x', 'y'] }).steps).toEqual([{ name: 'x', state: 'done' }, { name: 'y', state: 'active' }])
+  expect(pickMeta({ steps: 'x' })).not.toHaveProperty('steps')
+})
+
+test('checkRows: one mark per state, the active item adds the step dim, long names cut with …', () => {
+  const items = stepItems(['design', 'implement', 'tests', { name: 'docs', state: 'skipped' }, { name: 'deploy', state: 'failed' }], 1, 5)
+  const rows = checkRows(items, 'writing card code', 40)
+  expect(rows.map(r => `${r.mark} ${r.name}${r.suffix}`)).toEqual(['✓ design', '◐ implement · writing card code', '○ tests', '· docs', '✖ deploy'])
+  expect(rows.map(r => r.state)).toEqual(['done', 'active', 'todo', 'skipped', 'failed'])
+  // The step that repeats the name adds nothing.
+  expect(checkRows(items, 'Implement', 40)[1]!.suffix).toBe('')
+  // Cut to the room: mark and space take 2.
+  const long = checkRows(stepItems(['a very long step name that will not fit'], 0, 1), '', 14)
+  expect(long[0]!.name).toBe('a very long…')
+  expect(long[0]!.name.length).toBe(12)
+})
+
+test('checklistLines: up to 12 lines, a window around the active item with … N earlier and … N more', () => {
+  const names = Array.from({ length: 30 }, (_, i) => `s${i}`)
+  const shown = (d: number) => checklistLines(stepItems(names, d, 30)).map(l => (l.kind === 'more' ? `${l.where}:${l.n}` : l.item.name))
+  expect(checklistLines(stepItems(names.slice(0, 12), 3, 12)).length).toBe(12)
+  expect(shown(0)).toEqual(['s0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 'after:19'])
+  expect(shown(15)).toEqual(['before:13', 's13', 's14', 's15', 's16', 's17', 's18', 's19', 's20', 's21', 's22', 'after:7'])
+  expect(shown(29)).toEqual(['before:19', ...names.slice(19)])
+  for (const d of [0, 5, 15, 27, 29, 30]) expect(shown(d).length).toBe(CHECKLIST_MAX)
+  // Nothing active: the window goes to the first failed, else the first to do.
+  const failed = stepItems(names.map((n, i) => (i === 20 ? { name: n, state: 'failed' } : { name: n, state: 'done' })))
+  expect(checklistLines(failed).some(l => l.kind === 'item' && l.item.name === 's20')).toBe(true)
+  const rows = checkRows(stepItems(names, 15, 30), '', 40)
+  expect(rows[0]).toEqual({ mark: '…', name: '13 earlier', suffix: '', state: 'more' })
+  expect(rows[11]).toEqual({ mark: '…', name: '7 more', suffix: '', state: 'more' })
+})
+
+test('an open running card lists its steps under ⎿: done dim, the current one normal, to do dim, skipped struck', async ($, on) => {
+  const full = ['▾ ▶ RUNNING', '  ◐ ship-it ████░░ 40.0% · 2/5 · write tests · 3m'].join('\n')
+  const steps = ['design', 'implement', 'write tests', { name: 'docs', state: 'skipped' }, { name: 'commit', state: 'failed' }]
+  // total 5 matches the list here.
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [`${DIR}/ship-it.json`]: JSON.stringify({ done: 2, total: 5, step: 'write tests', title: 'Ship it', steps }) }
+  panelWorld(on, files, full)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  // Closed: no checklist.
+  expect(await ui.find({ type: 'Text', text: 'implement' })).toBe(undefined)
+  await ui.press({ key: 'open-ship-it' })
+  const texts = await ui.findAll({ type: 'Text' })
+  const at = (t: string) => texts.find(x => x.text === t) as unknown as { props?: { dimColor?: boolean; strikethrough?: boolean } } | undefined
+  expect(at('design')?.props?.dimColor).toBe(true)
+  expect(at('write tests')?.props?.dimColor).toBe(false)
+  expect(at('docs')?.props?.strikethrough).toBe(true)
+  expect(at('commit')?.props?.dimColor).toBe(false)
+  const marks = texts.map(t => t.text ?? '').filter(t => /^[✓◐○·✖] $/.test(t))
+  expect(marks).toEqual(['✓ ', '✓ ', '◐ ', '· ', '✖ '])
+  const lines = draw((await ui.find({ type: 'Box' })) as never)
+  const i = lines.findIndex(l => /✓ design/.test(l))
+  expect(lines.slice(i, i + 5).map(l => l.trim())).toEqual(['✓ design', '✓ implement', '◐ write tests', '· docs', '✖ commit'])
+  await ui.unmount()
+})
+
+test('a subagent row whose progress file (slug of its description) has steps shows the checklist, and total wins the bar', async ($, on) => {
+  const full = ['▾ ▶ RUNNING', '  ◐ Build docs ██░░ 25.0% · 1/4 · pages · 3m · 12 tools'].join('\n')
+  // Six steps, total 4: the bar says 25%, the card lists all six.
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [`${DIR}/build-docs.json`]: JSON.stringify({ done: 1, total: 4, step: 'pages', steps: ['plan', 'pages', 'images', 'links', 'index', 'publish'] }) }
+  panelWorld(on, files, full)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  await ui.press({ key: 'open-build-docs' })
+  const lines = draw((await ui.find({ type: 'Box' })) as never)
+  const i = lines.findIndex(l => /✓ plan/.test(l))
+  expect(i).toBeGreaterThan(-1)
+  expect(lines.slice(i, i + 6).map(l => l.trim())).toEqual(['✓ plan', '◐ pages', '○ images', '○ links', '○ index', '○ publish'])
+  expect(lines.some(l => /25%/.test(l))).toBe(true)
   await ui.unmount()
 })

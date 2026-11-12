@@ -100,7 +100,7 @@ progress() { mkdir -p ~/.claude-progress; printf '{"done":%s,"total":%s,"step":"
 progress nightly-import 2 5 "batch 3"
 ```
 
-Delete the file when the job ends. The full format, with `title`, `why`, `parent`, `impact` and watch files, is in [docs/progress-files.md](docs/progress-files.md).
+Delete the file when the job ends. Add `steps` (the step names in order) and pressing the job's row shows them as a checklist. The full format, with `title`, `why`, `parent`, `steps`, `impact` and watch files, is in [docs/progress-files.md](docs/progress-files.md).
 
 ## Configuration
 

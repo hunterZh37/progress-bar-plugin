@@ -2,6 +2,16 @@
 
 Versions of the progress-bar plugin, newest first. Each line is the release commit. Full detail is in the git history.
 
+## 0.32.0
+
+- **Step checklist:** a progress file can list its steps in order (`steps`). Press a running row's title and its card shows them under the step line: `✓` done and `○` to do dim, `◐` the current one in normal weight, `✖` failed in red, `·` skipped dim and struck through.
+- **States:** an item follows `done` (before it done, at it current, after it to do), or names its own state with `{"name", "state"}`. When the list's length differs from `total`, the bar follows `total` and the list still shows.
+- **Long lists:** up to 12 lines, a longer list as a window around the current item with `… N earlier` and `… N more`. Names are cut with `…` to the card.
+- **progress_report:** takes `steps` (up to 50, more are cut) and `step_states`. Later calls without `steps` keep the stored list, `finished: true` clears it. A `steps` that is not a list is ignored with a note.
+- **Subagents:** an agent row shows the checklist of its progress file (the slug of its description).
+- **Skill:** the progress-reporting skill tells agents to pass `steps` on their first call when the steps are known.
+- **Status line:** unchanged.
+
 ## 0.31.2
 
 - **One project per list:** folders that `projects.txt` maps to the same list (like two folders on `todo.txt`) share one project. Before, each folder got its own name, so an action added from one folder never showed in a session of the other, and a `cwd` job from one fell back to the shared `jobs.txt`.
@@ -35,6 +45,8 @@ Versions of the progress-bar plugin, newest first. Each line is the release comm
 
 ## Earlier releases
 
+- 0.32.0: running cards show the job's step checklist (`steps`), done, current and to do
+- 0.31.2: folders sharing a list are one project, worktrees use their repo's list
 - 0.31.1: the stop confirm never sticks or comes back after a reload, Cancel is focused first, 8 s timeout
 - 0.31.0: no false stuck alarms, expect_minutes and heartbeat for quiet steps, finished shells clear when the saved transcript path is stale
 - 0.30.0: neutral defaults for any user, usage meter opt-in, hideEmails, Chrome line after first use

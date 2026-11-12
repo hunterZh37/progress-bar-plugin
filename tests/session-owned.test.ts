@@ -554,3 +554,48 @@ test('a shell row whose finish is only in the live transcript clears, though the
   // The checked path is what a reload restores now.
   expect(JSON.parse(files[`${P}/.state/bg-${KEY}.json`]!).txBase).toBe(live)
 })
+
+// ---- Step checklist: steps on the progress file ----
+
+test('progress_report steps: stored on the first call, kept by later calls without steps, step_states by index', { options: { openPanel: false } }, async ($, on) => {
+  const files: Record<string, string> = {}
+  world(on, files)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call(report({ title: 'Ship it', slug: 'ship', done: 0, total: 3, steps: ['design', ' build ', '', 'release'] }))
+  expect(JSON.parse(files[`${P}/ship.json`]!).steps).toEqual(['design', 'build', 'release'])
+  // A later call with no steps keeps the list, and the startedAt.
+  await $.tool.call(report({ title: 'Ship it', slug: 'ship', done: 1, total: 3, step: 'build' }))
+  expect(JSON.parse(files[`${P}/ship.json`]!).steps).toEqual(['design', 'build', 'release'])
+  // step_states alone apply to the stored list. A bad state leaves a plain name.
+  await $.tool.call(report({ title: 'Ship it', slug: 'ship', done: 2, total: 3, step_states: ['done', 'skipped', 'nope'] }))
+  expect(JSON.parse(files[`${P}/ship.json`]!).steps).toEqual([{ name: 'design', state: 'done' }, { name: 'build', state: 'skipped' }, 'release'])
+  // steps as JSON text works too.
+  await $.tool.call(report({ title: 'Ship it', slug: 'ship', done: 2, total: 3, steps: '["a","b"]' }))
+  expect(JSON.parse(files[`${P}/ship.json`]!).steps).toEqual(['a', 'b'])
+  // finished clears it with the file.
+  await $.tool.call(report({ title: 'Ship it', slug: 'ship', finished: true, impact: 'shipped' }))
+  expect(files[`${P}/ship.json`]).toBe(undefined)
+  await $.tool.call(report({ title: 'Ship it', slug: 'ship', done: 0, total: 2 }))
+  expect(JSON.parse(files[`${P}/ship.json`]!)).not.toHaveProperty('steps')
+})
+
+test('progress_report steps: a non-list is ignored with a note and keeps the stored list, over 50 is cut to 50', { options: { openPanel: false } }, async ($, on) => {
+  const files: Record<string, string> = {}
+  world(on, files)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call(report({ title: 'Big', done: 0, total: 60, steps: ['one'] }))
+  const bad = await $.tool.call(report({ title: 'Big', done: 0, total: 60, steps: 'not a list' }))
+  expect(String((bad as { result?: unknown }).result)).toContain('steps must be a list')
+  expect(JSON.parse(files[`${P}/big.json`]!).steps).toEqual(['one'])
+  const many = Array.from({ length: 60 }, (_, i) => `step ${i + 1}`)
+  const r = await $.tool.call(report({ title: 'Big', done: 0, total: 60, steps: many }))
+  expect(String((r as { result?: unknown }).result)).toContain('Only the first 50 steps were kept')
+  const kept = JSON.parse(files[`${P}/big.json`]!).steps as string[]
+  expect(kept.length).toBe(50)
+  expect(kept[49]).toBe('step 50')
+  // Objects, numbers and long names: only named items stay, names cut to 200.
+  const b = reportBody({ title: 'T', steps: [{ name: 'x', state: 'failed' }, 7, { state: 'done' }, 'y'.repeat(300)] }, { session: '', cwd: '' }, 5)
+  expect((b.steps as unknown[]).length).toBe(2)
+  expect((b.steps as unknown[])[0]).toEqual({ name: 'x', state: 'failed' })
+  expect(((b.steps as unknown[])[1] as string).length).toBe(200)
+})

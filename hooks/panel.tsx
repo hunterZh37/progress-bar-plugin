@@ -28,7 +28,8 @@ import { turnOnStatusLine } from './setup'
 import { parseSaved, sessionLogin, usageFileRel, usageMeterOn } from './usage'
 import { shownEmails } from './privacy'
 import type { UsageReading } from './usage'
-import { FEW_STEPS, FILE_FRESH_MS, todoItems as parseTodo, parseTitles, pickMeta, serverOf, slug } from './render'
+import { FEW_STEPS, FILE_FRESH_MS, STEP_MARK, checklistLines, todoItems as parseTodo, parseTitles, pickMeta, serverOf, slug } from './render'
+import type { StepItem, StepState } from '../types'
 import type { LocalView } from '../types'
 import type { Action, ActionUi, Channel, ChatMsg, ChatState, Checkpoint, ChromeCheck, Conn, Ctl, DoneRec, Ev, GoalArea, Health, Inbox, LogFilter, Meta, Recap, Snap, Todo } from '../types'
 
@@ -76,6 +77,26 @@ export const TIE = '⎿ '
 /** Each line builder gets whether it is the first under its row (it takes the "⎿ "), unless one already sits above. */
 export function tieFirst<T>(lines: (((first: boolean) => T) | null | undefined | false)[], above = false): T[] {
   return lines.filter((l): l is (first: boolean) => T => !!l).map((l, j) => l(!above && j === 0))
+}
+
+/** One checklist line in an open card: its mark, the item's name cut to fit, a dim suffix, and its state. */
+export type CheckRow = { mark: string; name: string; suffix: string; state: StepState | 'more' }
+
+/**
+ * An open card's checklist, `room` cells wide after the "⎿ " column: "✓ name" per item (see checklistLines for the
+ * window), names cut with "…". The active item adds " · <step>" when the job's step says more than its name.
+ */
+export function checkRows(items: readonly StepItem[], step: string, room: number): CheckRow[] {
+  const w = Math.max(4, room - 2)
+  const st = step.trim()
+  return checklistLines(items).map(l => {
+    if (l.kind === 'more') return { mark: '…', name: clip(l.where === 'before' ? `${l.n} earlier` : `${l.n} more`, w), suffix: '', state: 'more' as const }
+    const { name, state } = l.item
+    const said = state === 'active' && st && st.toLowerCase() !== name.toLowerCase() && !name.toLowerCase().includes(st.toLowerCase()) ? ` · ${st}` : ''
+    const cut = clip(name, w)
+    const left = w - cut.length
+    return { mark: STEP_MARK[state], name: cut, suffix: said && left > 4 ? clip(said, left) : '', state }
+  })
 }
 
 const foldedAtom = atom({ plugin: 'progress-bar', key: 'folded' } as const, [])
@@ -1390,8 +1411,22 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // The step and time are on line two already, so the card adds only what line two leaves out: what it waits on,
     // the area and why (no "Other" when the area is unknown), the machine, a watcher and the gains it named.
     // `above`: a sub-line already sits over these, so none of them takes the "⎿ ".
+    // The checklist (steps in its progress file): done and to-do items dim, the current one in normal weight, a
+    // failed one red, a skipped one dim and struck through.
+    const checkLine = (key: string, pad: string, c: CheckRow, first: boolean) => {
+      const dim = c.state !== 'active' && c.state !== 'failed'
+      return (
+        <Box key={key} paddingLeft={pad.length}>
+          {tie(first)}
+          <Box flexShrink={0}><Text dimColor={dim} color={c.state === 'failed' ? 'red' : c.state === 'done' ? 'green' : undefined}>{`${c.mark} `}</Text></Box>
+          <Text dimColor={dim} strikethrough={c.state === 'skipped'} wrap="truncate-end">{c.name}</Text>
+          {c.suffix ? <Text dimColor wrap="truncate-end">{c.suffix}</Text> : null}
+        </Box>
+      )
+    }
     const details = (r: RunCard, k: string, pad: string, waitOn: string, tags: LensTag[] = [], machine = '', ar?: GoalArea, why = '', above = true) => tieFirst([
       waitOn ? (f: boolean) => hang(`t${k}`, pad, `waiting on: ${waitOn}`, false, f) : null,
+      ...checkRows(metaOf(r.name).steps ?? [], r.step, width - pad.length - TIE.length).map((c, j) => (f: boolean) => checkLine(`ck${k}-${j}`, pad, c, f)),
       ar && ar.id !== OTHER.id ? (f: boolean) => second(`ar${k}`, pad.length, ar, why, true, f) : why ? (f: boolean) => hang(`wy${k}`, pad, why, true, f) : null,
       machine ? (f: boolean) => hang(`mc${k}`, pad, `machine: ${machine}`, true, f) : null,
       r.watchedBy ? (f: boolean) => hang(`wb${k}`, pad, `watched by ${r.watchedBy}`, true, f) : null,

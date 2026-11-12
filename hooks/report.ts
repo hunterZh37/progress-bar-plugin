@@ -3,7 +3,8 @@ import type { Gains } from '../types'
 
 import { impactLines, saveDone } from './done'
 import { pickGains } from './goal'
-import { serverOf, slug } from './render'
+import { MAX_STEPS, STEP_STATES, cleanSteps, serverOf, slug } from './render'
+import type { StoredStep } from './render'
 import { sessionKeyOf } from './route'
 
 // Progress files written for Claude: the progress_report tool, the session's own task list (TodoWrite, TaskCreate,
@@ -34,23 +35,42 @@ export const PROGRESS_TOOL = {
       gains: { type: 'object', description: 'What the job makes better, by lens: any of cost, quality, speed, each a short plain line with a number when possible. Example: {"quality": "1.65M more board seats counted", "speed": "labels in 7h instead of 12h"}. State the ones that apply.', properties: { cost: { type: 'string' }, quality: { type: 'string' }, speed: { type: 'string' } } },
       expect_minutes: { type: 'number', description: 'Optional. How many minutes the current step is expected to stay quiet (no new done count). Example: 90 for a remote job that runs about 1.5 h. The bar shows no stuck warning until then. It applies to this step only: the next report without it clears it.' },
       heartbeat: { type: 'string', description: 'Optional. A local file the job keeps writing, such as its log (~/ allowed). Each write counts as a sign of life, so a quiet step is not marked stuck while the file changes.' },
+      steps: { type: 'array', items: { type: 'string' }, description: 'Optional. The job\'s steps in order, a few words each, up to 50. Pass it on the first call when the steps are known. Opening the row shows them as a checklist: done, current, to do, from done. Later calls without steps keep the list.' },
+      step_states: { type: 'array', items: { type: 'string', enum: ['done', 'active', 'todo', 'skipped', 'failed'] }, description: 'Optional. A state per step, same order as steps: done, active, todo, skipped or failed. Use it only to mark a step skipped or failed, or out of order. Steps without one follow done.' },
       finished: { type: 'boolean', description: 'true removes the bar once the job is over. Pass impact with it.' },
     },
     required: ['title'],
   },
 }
 
-export type ReportInput = { title: string; done?: number; total?: number; step?: string; why?: string; parent?: string; slug?: string; reads?: string; writes?: string; impact?: string; area?: string; gains?: Gains; finished?: boolean; expectMinutes?: number; heartbeat?: string }
+export type ReportInput = { title: string; done?: number; total?: number; step?: string; why?: string; parent?: string; slug?: string; reads?: string; writes?: string; impact?: string; area?: string; gains?: Gains; finished?: boolean; expectMinutes?: number; heartbeat?: string; steps?: unknown; stepStates?: unknown }
 
 /** The longest quiet window a report may announce: one day. */
 export const MAX_EXPECT_MIN = 24 * 60
 export type Owner = { session: string; cwd: string }
 
 /**
- * The progress file's JSON for a report. `startedAt` comes from the file it replaces, else now. `expectMinutes` becomes
- * `quietUntil` (epoch ms, from `now`): no stuck mark before then.
+ * The checklist a report stores: its `steps` (else the file's, `prev`), with `stepStates` set by index. A step with a
+ * state given is `{name, state}`, the rest plain names whose state follows `done`. Null when there is none.
  */
-export function reportBody(i: ReportInput, owner: Owner, startedAt: number, now = startedAt): Record<string, unknown> {
+export function reportSteps(i: Pick<ReportInput, 'steps' | 'stepStates'>, prev?: unknown): StoredStep[] | null {
+  const base = cleanSteps(i.steps) ?? cleanSteps(prev)
+  if (!base?.length) return null
+  const states = Array.isArray(i.stepStates) ? i.stepStates : null
+  if (!states) return base
+  return base.map((x, j) => {
+    const name = typeof x === 'string' ? x : x.name
+    const st = states[j]
+    return typeof st === 'string' && (STEP_STATES as readonly string[]).includes(st) ? { name, state: st as (typeof STEP_STATES)[number] } : name
+  })
+}
+
+/**
+ * The progress file's JSON for a report. `startedAt` comes from the file it replaces, else now. `expectMinutes` becomes
+ * `quietUntil` (epoch ms, from `now`): no stuck mark before then. `prevSteps`: the replaced file's `steps`, kept when
+ * the report names none.
+ */
+export function reportBody(i: ReportInput, owner: Owner, startedAt: number, now = startedAt, prevSteps?: unknown): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   if (typeof i.done === 'number' && typeof i.total === 'number' && i.total > 0) {
     out.done = Math.max(0, Math.min(i.done, i.total))
@@ -70,6 +90,8 @@ export function reportBody(i: ReportInput, owner: Owner, startedAt: number, now 
   if (gains) out.gains = gains
   if (typeof i.expectMinutes === 'number' && Number.isFinite(i.expectMinutes) && i.expectMinutes > 0) out.quietUntil = Math.round(now + Math.min(i.expectMinutes, MAX_EXPECT_MIN) * 60_000)
   if (i.heartbeat?.trim()) out.heartbeat = i.heartbeat.trim()
+  const steps = reportSteps(i, prevSteps)
+  if (steps) out.steps = steps
   if (owner.session) out.session = owner.session
   if (owner.cwd) out.cwd = owner.cwd
   return out
@@ -84,12 +106,20 @@ export async function ownerOf($: EngineInterface): Promise<Owner> {
   return { session, cwd }
 }
 
-async function startedAtOf($: EngineInterface, path: string, now: number): Promise<number> {
+async function prevOf($: EngineInterface, path: string): Promise<Record<string, unknown>> {
   try {
-    const p = JSON.parse(String(await $.fs.read(path))) as { startedAt?: unknown }
-    if (typeof p.startedAt === 'number') return p.startedAt
+    const p = JSON.parse(String(await $.fs.read(path))) as unknown
+    if (p && typeof p === 'object' && !Array.isArray(p)) return p as Record<string, unknown>
   } catch { /* new file */ }
-  return now
+  return {}
+}
+
+/** What the model is told about a `steps` it passed that was cut or could not be used. */
+export function stepsNote(steps: unknown): string {
+  if (steps === undefined || steps === null) return ''
+  if (!Array.isArray(steps)) return ' steps must be a list of step names, so it was ignored.'
+  if (steps.length > MAX_STEPS) return ` Only the first ${MAX_STEPS} steps were kept.`
+  return ''
 }
 
 /** Writes (or with `finished`, removes) one progress file. Returns what the model reads. */
@@ -115,11 +145,12 @@ export async function writeReport($: EngineInterface, h: string, i: ReportInput,
     return `Removed the bar ${name}.${impact.length ? '' : ' Pass impact (what it changed) next time so its DONE row says so.'}`
   }
   const now = await $.clock.now()
-  const body = reportBody(i, owner ?? await ownerOf($), await startedAtOf($, path, now), now)
+  const prev = await prevOf($, path)
+  const body = reportBody(i, owner ?? await ownerOf($), typeof prev.startedAt === 'number' ? prev.startedAt : now, now, prev.steps)
   await $.fs.write(path, JSON.stringify(body))
   const pct = typeof body.done === 'number' ? ` ${body.done}/${body.total}` : ''
   const quiet = typeof body.quietUntil === 'number' ? ` No stuck warning for ${Math.round(((body.quietUntil as number) - now) / 60_000)} min.` : ''
-  return `Bar ${name}${pct} shows in this session's Status panel.${quiet} Call again after each step, and with finished: true at the end.`
+  return `Bar ${name}${pct} shows in this session's Status panel.${quiet}${stepsNote(i.steps)} Call again after each step, and with finished: true at the end.`
 }
 
 // ---- The session's own task list as one bar ----

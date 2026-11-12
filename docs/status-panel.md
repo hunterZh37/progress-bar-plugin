@@ -80,7 +80,7 @@ The status line then reads:
 - **On by default:** the first session writes `~/.claude-progress/.state/panel-on`. With that file the pane opens at session start and the status line prints the summary. `panel off` deletes it, writes `.state/panel-off` so the default never turns it back on, and closes the pane. `panel on` undoes that. With **Open the Status panel** off in `/config`, nothing is written and `/progress-bar` opens it once.
 - **To-do menu:** click a to-do (under TO-DO, or your own under NEEDS YOU) for Done, Up, Down, Start (a ready machine item), Delete or Move back to to-do (a checked-off one). It edits this project's list, on the line that still holds that item's text, so a line added since the panel drew never hits the wrong item. TO-DO lists open items only. Checked-off ones move to DONE, after finished jobs, folded to one dim line, `▸ 15 checked-off to-dos`, and count there.
 - **Rows:** clustered by area (see **Goal view**). To-dos one per line under each machine (yours under NEEDS YOU), running jobs a line and a dim step line each, a press opening the details (see **Running cards**), done jobs one line each with their impact and finish time (see **Done rows**).
-- **Tied lines:** every dim line under a row starts with a dim `⎿ `, as Claude Code ties a command's output to it. Only the first line under a row gets it, the next ones line up under its text, and wrapped text indents under the text, not under `⎿`. This covers running and waiting rows, open cards, open DONE rows, `waits for` to-do lines, recap and inbox lines, Log details and Connectors accounts. One-line rows (LOCALHOST, to-dos) have none.
+- **Tied lines:** every dim line under a row starts with a dim `⎿ `, as Claude Code ties a command's output to it. Only the first line under a row gets it, the next ones line up under its text, and wrapped text indents under the text, not under `⎿`. This covers running and waiting rows, open cards (their step checklist too), open DONE rows, `waits for` to-do lines, recap and inbox lines, Log details and Connectors accounts. One-line rows (LOCALHOST, to-dos) have none.
 - **Status line on:** after **▶ Turn on status line**, the answer (`Status line on: ...`) shows for 3 minutes, then clears.
 - **Tabs:** words, `List  Connectors  GitHub  Log  Chat  Topology`. The shown tab is bold cyan, the others dim. Connectors adds `!N` when N need attention (`Connectors !2`), Log adds `!N` for unseen errors, Chat adds the unread count (`Chat 3`). In a pane too narrow for the full names they shorten to `List  Conn  Git  Log  Chat  Topo`. **List** (the default) shows the goal view above. **Connectors** shows your connectors, **GitHub** your repos, **Log** the events log, **Topology** your machines.
 
@@ -141,6 +141,18 @@ A RUNNING row with something to control ends with a dim `[x]`. Press it for `Can
 ## Running cards
 
 Each running job in the Status panel is two lines: the bold title, bar, percent and time left, then the current step and run time dim (`scoring · 42m`). The bars line up. Press a title to open its card with the details, press it again to close it.
+
+**Step checklist:** a job whose progress file has `steps` lists them first in its open card, one per line under the step line, lined up under its `⎿`. Done `✓` and to do `○` items are dim, the current one `◐` is in normal weight, `✖` failed is red and `·` skipped is dim and struck through. The current item adds the job's `step` dim when it says more than the item's name. Up to 12 lines show, a longer list as a window around the current item with `… N earlier` and `… N more`. Names are cut with `…` to the card. A subagent row shows the checklist of its progress file too. See **Step checklist** in [progress-files.md](progress-files.md).
+
+```
+  ◐ Ship it  ━━━━──────  40%
+    ⎿ write tests · 3m
+      ✓ design
+      ✓ implement
+      ◐ write tests
+      · docs
+      ✖ commit
+```
 
 Waiting jobs draw no bar: `⏸ <title>`, then a dim line with why it waits and for how long, cut with `…`. Press the title to read the whole reason with how long it has waited (`last action 4m ago: Bash, check log · for 12m`), then the same details card. `· waiting` shows only when nothing is known.
 

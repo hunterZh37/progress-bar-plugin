@@ -11,15 +11,17 @@ How jobs report progress: the progress file format, watch files for log-only job
  "title": "Docs site · all pages", "why": "the public help pages", "parent": "release-prep",
  "session": "2f6c1e0a-7d4b-4e8f-9a1c-5b3d2e7f8a90", "cwd": "/Users/me/code/docs",
  "area": "Tools", "gains": {"speed": "help pages build in 2m instead of 9m"},
- "impact": "Docs rebuilt: 412 pages\nSearch index 18% smaller"}
+ "impact": "Docs rebuilt: 412 pages\nSearch index 18% smaller",
+ "steps": ["build", "render pages", "check links", "index", "publish"]}
 ```
 
-Easiest: Claude calls the plugin's `progress_report` tool (title, why, done, total, step, parent, slug, reads, writes, area, gains, impact, expect_minutes, heartbeat, finished). With `finished: true` it saves the done record (below) and removes the file. It writes this file with `session`, `cwd` and `startedAt` filled in.
+Easiest: Claude calls the plugin's `progress_report` tool (title, why, done, total, step, steps, step_states, parent, slug, reads, writes, area, gains, impact, expect_minutes, heartbeat, finished). With `finished: true` it saves the done record (below) and removes the file. It writes this file with `session`, `cwd` and `startedAt` filled in.
 
 | Field | Does |
 | --- | --- |
 | `done`, `total` | Draw the bar. Leave them out and the line says `working` |
 | `step` | A few words on the current step |
+| `steps` | Optional. The job's steps in order, a list of names (see **Step checklist**). Pressing the row shows them as a checklist |
 | `startedAt` | Optional, ms. Otherwise the file's birth time, else when the plugin first saw it |
 | `title` | Optional plain-language name. The job's line shows the part before ` · ` or `: `, and the open card shows the id and badge. The part before ` · ` names the job in the Log tab and in `waiting on:` |
 | `why` | Optional. What the job unlocks, shown dim under its row (`unlocks: …` in an opened DONE row) |
@@ -52,6 +54,30 @@ Shell helper:
 progress() { mkdir -p ~/.claude-progress; printf '{"done":%s,"total":%s,"step":"%s"}\n' "$2" "$3" "$4" > ~/.claude-progress/"$1".json; }
 progress nightly-import 2 5 "batch 3"
 ```
+
+## Step checklist
+
+`steps` lists the job's steps in order. Press the running row's title and its card shows them, one per line:
+
+```
+  ◐ Docs site  ━━━━──────  40%  6m left
+    ⎿ render pages · 3m
+      ✓ build
+      ◐ render pages
+      ○ check links
+      ○ index
+      ○ publish
+```
+
+- **Items:** each is a name (`"build"`), or `{"name": "build", "state": "done"}` to set its state. States: `done` (`✓`, dim), `active` (`◐`, normal weight), `todo` (`○`, dim), `skipped` (`·`, dim and struck through where the terminal can), `failed` (`✖`, red).
+- **States from the count:** an item with no state follows `done`. Items before index `done` are done, the one at `done` is active, the rest are to do. Once `done` reaches `total` all are done.
+- **Mismatch with `total`:** the bar always follows `done` and `total`. When the list is longer or shorter than `total`, the whole list still shows, with states from `done` as above.
+- **The current step:** `step` still shows on the row's dim line. When it says more than the active item's name, the item adds it dim: `◐ render pages · page 40 of 412`.
+- **Long lists:** a card shows at most 12 lines. A longer list shows a window around the active item (else the first failed, else the first to do), with `… N earlier` above it and `… N more` below.
+- **Limits:** at most 50 items are kept, each name cut to 200 characters. Names wider than the card are cut with `…`.
+- **With `progress_report`:** pass `steps` on the first call. A later call without `steps` keeps the stored list, and `finished: true` removes it with the file. `step_states` (same order as `steps`, `done|active|todo|skipped|failed`) sets states by index, also on its own for the stored list. A `steps` that is not a list is ignored, and the stored list stays.
+- **Subagents:** an agent's row shows the checklist of its progress file, the one named after the slug of its description or paired with it.
+- **Status line:** unchanged. The checklist shows only in the Status panel.
 
 ## Stuck and signs of life
 

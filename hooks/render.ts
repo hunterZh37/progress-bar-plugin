@@ -1,6 +1,6 @@
 // Pure helpers: no `$`, so tests import them directly.
 
-import type { Gains, Meta } from '../types'
+import type { Gains, Meta, StepItem, StepState } from '../types'
 import type { Life } from './alive'
 
 export type Progress = { done: number | null; total: number | null; step: string; startedAt?: number }
@@ -276,7 +276,7 @@ export function parseProgress(text: string): Progress | null {
   }
 }
 
-/** The `title`, `why`, `parent`, `reads`, `writes`, `area` and `impact` strings and the `gains` of a parsed progress file, the ones present and not empty. */
+/** The `title`, `why`, `parent`, `reads`, `writes`, `area` and `impact` strings, the `gains` and the `steps` checklist of a parsed progress file, the ones present and not empty. */
 export function pickMeta(p: unknown): Meta {
   const m: Meta = {}
   if (!p || typeof p !== 'object') return m
@@ -284,6 +284,9 @@ export function pickMeta(p: unknown): Meta {
     const v = (p as Record<string, unknown>)[k]
     if (typeof v === 'string' && v.trim()) m[k] = v.trim()
   }
+  const raw = p as Record<string, unknown>
+  const steps = stepItems(raw.steps, typeof raw.done === 'number' ? raw.done : undefined, typeof raw.total === 'number' ? raw.total : undefined)
+  if (steps.length) m.steps = steps
   const g = (p as Record<string, unknown>).gains
   if (g && typeof g === 'object' && !Array.isArray(g)) {
     const gains: Gains = {}
@@ -295,6 +298,80 @@ export function pickMeta(p: unknown): Meta {
   }
   return m
 }
+
+// ---- A job's step checklist ----
+
+/** At most this many steps are kept in a progress file. More are cut. */
+export const MAX_STEPS = 50
+/** A step's name is cut to this many characters when stored. */
+export const MAX_STEP_NAME = 200
+/** An open card lists at most this many checklist lines (items and "… N more" lines). */
+export const CHECKLIST_MAX = 12
+export const STEP_STATES: readonly StepState[] = ['done', 'active', 'todo', 'skipped', 'failed']
+const isState = (x: unknown): x is StepState => typeof x === 'string' && (STEP_STATES as readonly string[]).includes(x)
+
+/** One step as stored: a name, or `{name, state}` when its state was given. Null when it has no name. */
+export type StoredStep = string | { name: string; state: StepState }
+export function storedStep(x: unknown): StoredStep | null {
+  const cut = (v: string) => { const t = v.replace(/\s+/g, ' ').trim(); return t.length > MAX_STEP_NAME ? `${t.slice(0, MAX_STEP_NAME - 1)}…` : t }
+  if (typeof x === 'string') return cut(x) || null
+  if (x && typeof x === 'object' && !Array.isArray(x)) {
+    const o = x as Record<string, unknown>
+    const name = typeof o.name === 'string' ? cut(o.name) : ''
+    if (!name) return null
+    return isState(o.state) ? { name, state: o.state } : name
+  }
+  return null
+}
+
+/** A `steps` value as stored: names or `{name, state}`, empties dropped, at most MAX_STEPS. Null when not an array. */
+export function cleanSteps(v: unknown): StoredStep[] | null {
+  if (!Array.isArray(v)) return null
+  return v.map(storedStep).filter((x): x is StoredStep => x !== null).slice(0, MAX_STEPS)
+}
+
+/**
+ * A progress file's `steps` with each item's state. A state given in the file wins. Otherwise it comes from `done`:
+ * an index below it is done, the one at it is active, the rest to do. Without `done` the first item is active.
+ * `total` is not used: when it differs from the list's length the bar follows `total` and the list still shows.
+ */
+export function stepItems(v: unknown, done?: number, total?: number): StepItem[] {
+  const list = cleanSteps(v)
+  if (!list?.length) return []
+  const d = typeof done === 'number' && Number.isFinite(done) ? Math.max(0, Math.floor(done)) : 0
+  const finished = typeof total === 'number' && total > 0 && typeof done === 'number' && done >= total
+  return list.map((x, i) => {
+    if (typeof x !== 'string') return { name: x.name, state: x.state }
+    return { name: x, state: finished || i < d ? 'done' : i === d ? 'active' : 'todo' }
+  })
+}
+
+/** A checklist line: an item with its index, or "… N earlier" above the window, or "… N more" below it. */
+export type CheckLine = { kind: 'item'; item: StepItem; index: number } | { kind: 'more'; n: number; where: 'before' | 'after' }
+
+/**
+ * The lines an open card shows for a checklist, at most `max`. A longer list shows a window around the active item
+ * (else the first failed, else the first to do, else the end), with "… N earlier" above it and "… N more" below.
+ */
+export function checklistLines(items: readonly StepItem[], max = CHECKLIST_MAX): CheckLine[] {
+  const all = items.map((item, index) => ({ kind: 'item' as const, item, index }))
+  if (items.length <= max) return all
+  const find = (s: StepState) => items.findIndex(x => x.state === s)
+  const at = [find('active'), find('failed'), find('todo')].find(i => i >= 0) ?? items.length - 1
+  const n = items.length
+  // Two items of context before the anchor, then fill the rest after it.
+  let start = Math.max(0, at - 2)
+  let w = max - (start > 0 ? 1 : 0) - 1
+  if (start + w >= n) { w = max - 1; start = n - w }
+  const out: CheckLine[] = []
+  if (start > 0) out.push({ kind: 'more', n: start, where: 'before' })
+  out.push(...all.slice(start, start + w))
+  if (start + w < n) out.push({ kind: 'more', n: n - start - w, where: 'after' })
+  return out
+}
+
+/** A checklist item's mark: single-width symbols only. */
+export const STEP_MARK: Record<StepState, string> = { done: '✓', active: '◐', todo: '○', skipped: '·', failed: '✖' }
 
 /** ~/.claude-progress/titles.txt: `<job id><TAB><title><TAB><why><TAB><parent><TAB><area>` per line (area optional), keyed by the job id's slug. */
 export function parseTitles(text: string): Record<string, Meta> {
