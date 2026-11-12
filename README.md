@@ -21,7 +21,7 @@ Live progress bars, a to-do list and a docked Status panel for Claude Code. One 
 - **Long commands:** a Bash command that runs over a minute, or in the background, shows as a row until it ends.
 - **Real bars:** a job that writes `~/.claude-progress/<slug>.json` gets a bar with percent, count, step and time left. See [docs/progress-files.md](docs/progress-files.md).
 - **Bars from logs:** a job that only writes a log gets a bar from a watch file, with `■ stopped` or `✖ error` when it dies.
-- **Groups:** lines sort into TO-DO, PROBLEMS, RUNNING, WAITING and DONE. A row that has not moved for 10 minutes shows `⚠ stuck`.
+- **Groups:** lines sort into TO-DO, PROBLEMS, RUNNING, WAITING and DONE. A row that has not moved for 10 minutes, with no other sign of life, shows `⚠ stuck`. A long quiet step can say how long it takes (`expect_minutes`) or name a log that keeps changing (`heartbeat`). See [docs/progress-files.md](docs/progress-files.md#stuck-and-signs-of-life).
 - **To-dos:** each project has its own list, with priorities, blockers and auto-next. See [docs/todos.md](docs/todos.md).
 - **Status panel:** a docked pane beside the chat with List, Connectors, GitHub, Log, Chat and Topology tabs. See [docs/status-panel.md](docs/status-panel.md).
 - **Action needed:** a step only you can run holds your next prompt until it is done or skipped. See [docs/action-needed.md](docs/action-needed.md).
@@ -143,7 +143,7 @@ All under `~/.claude-progress/`. None is needed. Each is read only when it exist
 | `chrome-local-accounts.txt` | This Mac's Google accounts, for the Chrome warning |
 | `localhost-ignore.txt` | Processes or ports to leave out of LOCALHOST |
 | `.state/caps` | `machine=N` lines: how many jobs auto-next runs at once per machine. Default `local=3` |
-| `.state/stuck-minutes` | Minutes before a row reads stuck. Default 10 |
+| `.state/stuck-minutes` | Minutes with no sign of life before a row reads stuck. Default 10 |
 
 ## Privacy
 

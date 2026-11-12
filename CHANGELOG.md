@@ -2,6 +2,13 @@
 
 Versions of the progress-bar plugin, newest first. Each line is the release commit. Full detail is in the git history.
 
+## 0.31.0
+
+- **No false stuck alarms:** a row reads `⚠ stuck` only when nothing shows it is alive. Its progress file or a heartbeat file written, its agent's transcript written, a background task of its agent still running, or a live background shell all count.
+- **Quiet steps:** `progress_report` takes `expect_minutes` (written as `quietUntil`). No stuck warning until that time passes. It also takes `heartbeat`, a log whose writes count as life.
+- **Finished shells clear:** the session's transcript path is checked once a minute. A saved path from another config or project folder is dropped for this session's newest transcript, so finished background shells leave RUNNING. Shell rows left from before a reload clear once the transcript shows them finished.
+- **Real stalls still warn:** a row with no sign of life past the threshold shows `⚠ stuck` and logs one warning.
+
 ## 0.30.0
 
 - **Any user, any project:** no author machines, projects or emails in defaults, examples or tests.
@@ -16,6 +23,7 @@ Versions of the progress-bar plugin, newest first. Each line is the release comm
 
 ## Earlier releases
 
+- 0.31.0: no false stuck alarms, expect_minutes and heartbeat for quiet steps, finished shells clear when the saved transcript path is stale
 - 0.30.0: neutral defaults for any user, usage meter opt-in, hideEmails, Chrome line after first use
 - 0.29.1: /attach picker opens in about 0.1 s, not 2 s, by asking the frontmost terminal to show it, and focus returns to the terminal after pick or cancel
 - 0.29.0: /attach opens the macOS file picker and adds the chosen files to the prompt as @ mentions, bindable to a chord

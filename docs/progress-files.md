@@ -14,7 +14,7 @@ How jobs report progress: the progress file format, watch files for log-only job
  "impact": "Docs rebuilt: 412 pages\nSearch index 18% smaller"}
 ```
 
-Easiest: Claude calls the plugin's `progress_report` tool (title, why, done, total, step, parent, slug, reads, writes, area, gains, impact, finished). With `finished: true` it saves the done record (below) and removes the file. It writes this file with `session`, `cwd` and `startedAt` filled in.
+Easiest: Claude calls the plugin's `progress_report` tool (title, why, done, total, step, parent, slug, reads, writes, area, gains, impact, expect_minutes, heartbeat, finished). With `finished: true` it saves the done record (below) and removes the file. It writes this file with `session`, `cwd` and `startedAt` filled in.
 
 | Field | Does |
 | --- | --- |
@@ -29,6 +29,8 @@ Easiest: Claude calls the plugin's `progress_report` tool (title, why, done, tot
 | `reads`, `writes` | Optional short strings for the Topology tab: what the job reads and writes, like `orders table` or `Postgres on mac-mini`. Without `reads` a job on a helper machine reads from the data host's database. Without `writes` it is not drawn writing anything |
 | `area` | Which part of the goal the job improves, by name, from the project's `~/.claude-progress/goals/<project>.json` (see **Goal view**). Example: `Search`. Set it on every job when the project's goal has areas. Without it the panel guesses from keywords in the title, why and impact, else `Other` |
 | `gains` | Optional. What the job makes better, by lens: any of `cost`, `quality`, `speed`, each a short plain line with a number when possible. Example: `{"quality": "12K more orders matched", "speed": "import in 7h instead of 12h", "cost": "$14 of compute instead of $60"}`. Name only the ones that apply |
+| `quietUntil` | Optional, epoch ms (seconds also work). The current step is expected to stay quiet until then, so the row shows no `⚠ stuck` before it. `progress_report` writes it from `expect_minutes`, and the next report without `expect_minutes` clears it. See **Stuck and signs of life** |
+| `heartbeat` | Optional path to a local file the job keeps writing, such as its log (`~/` allowed). Each write counts as a sign of life |
 | `impact` | Optional, set it before the job ends. How the job made things better: what the data or product now has or gets right, with the key number, one to three short lines (a string with newlines, or a list). Skip commit ids and file names. Example: `1.65M more board seats, so board links and people search see whole boards`. Shown when its DONE row is opened |
 
 - **Slug:** the job or subagent description, lowercased, each run of other characters turned into `-`. `Build docs!` becomes `build-docs`.
@@ -50,6 +52,24 @@ Shell helper:
 progress() { mkdir -p ~/.claude-progress; printf '{"done":%s,"total":%s,"step":"%s"}\n' "$2" "$3" "$4" > ~/.claude-progress/"$1".json; }
 progress nightly-import 2 5 "batch 3"
 ```
+
+## Stuck and signs of life
+
+A running row shows `⚠ stuck Nm` when nothing about it has moved for `.state/stuck-minutes` minutes (default 10). Its count and step text count, and so does any of these signs of life:
+
+| Sign | Where it comes from |
+| --- | --- |
+| **Progress file written** | The job rewrote its file, even with the same numbers. A plain heartbeat works |
+| **Heartbeat file written** | The file named in `heartbeat` changed, such as a log a remote job syncs here |
+| **Quiet window** | `quietUntil` (from `progress_report` `expect_minutes`) is still ahead. The stuck clock starts when it ends |
+| **Agent activity** | The owning subagent's transcript was written, or a background shell or Monitor it started still runs |
+| **Background shell** | A shell row this session runs, while its checked transcript has no finished notice for it |
+| **Watch log** | A watch file's log changed |
+
+- **Real stalls still warn:** a row with no sign of life past the threshold, or whose quiet window ended that long ago, shows `⚠ stuck` and logs one warning to `events.jsonl`.
+- **Example:** a step that starts a remote job of about 90 minutes reports `expect_minutes: 90`. The row stays a spinner until then, and warns only 10 minutes after that if nothing else moved.
+- **How:** each session's plugin writes `.state/alive-<session>.json` every poll, one entry per row: `at` (the last sign of life, ms) and `until` (the quiet window, ms). `group.py` reads every such file written in the last 6 hours.
+- **Transcript check:** the plugin finds this session's transcript once a minute: the last Stop's `transcript_path`, the saved path, and this session's file under its config folder (`CLAUDE_CONFIG_DIR`, else `~/.claude`). Only a file named after this session's id counts, and the newest wins. A path saved while the session ran under another config or project folder is dropped, so finished background shells clear even when another plugin's hook skips this one's Stop hook. Shell rows left from before a `/reload-plugins` clear too, once the transcript shows them finished.
 
 ## Watch files: bars from a log
 

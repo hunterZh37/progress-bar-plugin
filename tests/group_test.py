@@ -265,6 +265,47 @@ class Group(unittest.TestCase):
         self.assertIn('stuck 31m', self.run_('▶ j ██░░ 1/2\n', now=T0 + 31 * 60)[1])
 
 
+    def alive(self, life, key='abcd'):
+        """An alive-<session>.json as the plugin writes it: {job slug: {at, until}} in ms."""
+        self.write('.state/alive-' + key + '.json', json.dumps(life))
+
+    def test_quiet_window_holds_off_the_stuck_mark_until_it_ends(self):
+        # A remote job said its step takes about 90 min (progress_report expect_minutes=90).
+        self.alive({'etl': {'until': (T0 + 90 * 60) * 1000}})
+        self.run_('▶ etl ███░ 60.0% · 3/5 · clone + test\n', now=T0)
+        for m in (11, 45, 89, 99):
+            self.assertNotIn('stuck', self.run_('▶ etl ███░ 60.0% · 3/5 · clone + test\n', now=T0 + m * 60)[1])
+        # The window ended 11 minutes ago and nothing moved: a real stall warns again.
+        self.assertIn('⚠ stuck 11m', self.run_('▶ etl ███░ 60.0% · 3/5 · clone + test\n', now=T0 + 101 * 60)[1])
+
+    def test_a_recent_sign_of_life_is_not_stuck(self):
+        # The row's numbers sat for 30 min, but its heartbeat log (or transcript, or progress file) was written at 25 min.
+        self.alive({'rebuild-similar-orgs': {'at': (T0 + 25 * 60) * 1000}})
+        self.run_('▶ Rebuild similar orgs ██░░ 1/4 · embed\n', now=T0)
+        self.assertNotIn('stuck', self.run_('▶ Rebuild similar orgs ██░░ 1/4 · embed\n', now=T0 + 30 * 60)[1])
+        # Signs of life older than the threshold do not help: stuck counts from the last one.
+        self.assertIn('⚠ stuck 11m', self.run_('▶ Rebuild similar orgs ██░░ 1/4 · embed\n', now=T0 + 36 * 60)[1])
+
+    def test_no_sign_of_life_still_warns(self):
+        # Other jobs' signs, an empty file and a broken file never keep this row alive.
+        self.alive({'other-job': {'at': (T0 + 10 * 60) * 1000, 'until': (T0 + 3600) * 1000}})
+        self.write('.state/alive-empty.json', '{}')
+        self.write('.state/alive-broken.json', '{not json')
+        self.run_('▶ lonely ██░░ 1/2 · step\n', now=T0)
+        self.assertIn('⚠ stuck 11m', self.run_('▶ lonely ██░░ 1/2 · step\n', now=T0 + 11 * 60)[1])
+
+    def test_alive_files_from_long_closed_sessions_are_ignored(self):
+        self.alive({'j': {'until': (T0 + 3600) * 1000}}, key='old')
+        p = os.path.join(self.root, '.state', 'alive-old.json')
+        os.utime(p, (time.time() - 7 * 3600, time.time() - 7 * 3600))
+        self.run_('▶ j ██░░ 1/2\n', now=T0)
+        self.assertIn('stuck', self.run_('▶ j ██░░ 1/2\n', now=T0 + 11 * 60)[1])
+
+    def test_alive_times_in_seconds_and_several_sessions_merge(self):
+        self.alive({'j': {'at': T0 + 5 * 60}}, key='s1')
+        self.alive({'j': {'until': (T0 + 20 * 60) * 1000}}, key='s2')
+        self.assertEqual(self.g.load_alive()['j'], (T0 + 5 * 60, T0 + 20 * 60))
+
     def test_done_in_is_time_left_not_done(self):
         self.assertEqual(self.g.kind('▶ import ██░░ 40.0% · 2/5 · done in 1h'), 'running')
         self.assertEqual(self.g.kind('▶ import · done'), 'done')
@@ -413,6 +454,14 @@ class Events(unittest.TestCase):
         g('✖ error deploy · 1m\n', T0 + 14 * 60)
         got = [(e['level'], e['title']) for e in self.events()]
         self.assertEqual(sorted(got), sorted([('error', 'deploy: problem'), ('warning', 'Nightly import stuck'), ('success', 'nightly done')]))
+
+    def test_a_quiet_but_alive_job_logs_no_stuck_event(self):
+        self.write('nightly.json', '{"done":1,"total":2,"title":"Nightly import · all files"}')
+        self.write('.state/alive-abcd.json', json.dumps({'nightly': {'until': (T0 + 90 * 60) * 1000}}))
+        g = lambda t: self.g.main(io.StringIO('▶ nightly ██░░ 1/2\n'), t)
+        for m in (0, 11, 30, 60):
+            g(T0 + m * 60)
+        self.assertEqual([e for e in self.events() if e['level'] == 'warning'], [])
 
     def test_stopped_row_whose_log_ends_done_is_a_success(self):
         self.write('log-dirs.txt', self.logs + '\n')

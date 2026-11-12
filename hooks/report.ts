@@ -32,17 +32,25 @@ export const PROGRESS_TOOL = {
       impact: { type: 'string', description: 'How the finished job made things better: what the data or product now has or gets right, with the key number, one to three short lines (newlines split them). No commit ids or file names. Example: 1.65M more board seats, so board links and people search see whole boards. Shown when its DONE row is opened.' },
       area: { type: 'string', description: 'Which part of the goal (~/.claude-progress/goals/<project>.json areas) the job improves, by name. Example: Search. Set it whenever the project goal has areas, so the Status panel shows that area under the title of the job.' },
       gains: { type: 'object', description: 'What the job makes better, by lens: any of cost, quality, speed, each a short plain line with a number when possible. Example: {"quality": "1.65M more board seats counted", "speed": "labels in 7h instead of 12h"}. State the ones that apply.', properties: { cost: { type: 'string' }, quality: { type: 'string' }, speed: { type: 'string' } } },
+      expect_minutes: { type: 'number', description: 'Optional. How many minutes the current step is expected to stay quiet (no new done count). Example: 90 for a remote job that runs about 1.5 h. The bar shows no stuck warning until then. It applies to this step only: the next report without it clears it.' },
+      heartbeat: { type: 'string', description: 'Optional. A local file the job keeps writing, such as its log (~/ allowed). Each write counts as a sign of life, so a quiet step is not marked stuck while the file changes.' },
       finished: { type: 'boolean', description: 'true removes the bar once the job is over. Pass impact with it.' },
     },
     required: ['title'],
   },
 }
 
-export type ReportInput = { title: string; done?: number; total?: number; step?: string; why?: string; parent?: string; slug?: string; reads?: string; writes?: string; impact?: string; area?: string; gains?: Gains; finished?: boolean }
+export type ReportInput = { title: string; done?: number; total?: number; step?: string; why?: string; parent?: string; slug?: string; reads?: string; writes?: string; impact?: string; area?: string; gains?: Gains; finished?: boolean; expectMinutes?: number; heartbeat?: string }
+
+/** The longest quiet window a report may announce: one day. */
+export const MAX_EXPECT_MIN = 24 * 60
 export type Owner = { session: string; cwd: string }
 
-/** The progress file's JSON for a report. `startedAt` comes from the file it replaces, else now. */
-export function reportBody(i: ReportInput, owner: Owner, startedAt: number): Record<string, unknown> {
+/**
+ * The progress file's JSON for a report. `startedAt` comes from the file it replaces, else now. `expectMinutes` becomes
+ * `quietUntil` (epoch ms, from `now`): no stuck mark before then.
+ */
+export function reportBody(i: ReportInput, owner: Owner, startedAt: number, now = startedAt): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   if (typeof i.done === 'number' && typeof i.total === 'number' && i.total > 0) {
     out.done = Math.max(0, Math.min(i.done, i.total))
@@ -60,6 +68,8 @@ export function reportBody(i: ReportInput, owner: Owner, startedAt: number): Rec
   if (i.area?.trim()) out.area = i.area.trim()
   const gains = pickGains(i.gains)
   if (gains) out.gains = gains
+  if (typeof i.expectMinutes === 'number' && Number.isFinite(i.expectMinutes) && i.expectMinutes > 0) out.quietUntil = Math.round(now + Math.min(i.expectMinutes, MAX_EXPECT_MIN) * 60_000)
+  if (i.heartbeat?.trim()) out.heartbeat = i.heartbeat.trim()
   if (owner.session) out.session = owner.session
   if (owner.cwd) out.cwd = owner.cwd
   return out
@@ -105,10 +115,11 @@ export async function writeReport($: EngineInterface, h: string, i: ReportInput,
     return `Removed the bar ${name}.${impact.length ? '' : ' Pass impact (what it changed) next time so its DONE row says so.'}`
   }
   const now = await $.clock.now()
-  const body = reportBody(i, owner ?? await ownerOf($), await startedAtOf($, path, now))
+  const body = reportBody(i, owner ?? await ownerOf($), await startedAtOf($, path, now), now)
   await $.fs.write(path, JSON.stringify(body))
   const pct = typeof body.done === 'number' ? ` ${body.done}/${body.total}` : ''
-  return `Bar ${name}${pct} shows in this session's Status panel. Call again after each step, and with finished: true at the end.`
+  const quiet = typeof body.quietUntil === 'number' ? ` No stuck warning for ${Math.round(((body.quietUntil as number) - now) / 60_000)} min.` : ''
+  return `Bar ${name}${pct} shows in this session's Status panel.${quiet} Call again after each step, and with finished: true at the end.`
 }
 
 // ---- The session's own task list as one bar ----

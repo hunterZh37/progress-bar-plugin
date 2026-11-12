@@ -9,6 +9,7 @@ import { withStatusLine } from '../hooks/register'
 import { prevOf, statusScript } from '../hooks/render'
 import { reportBody, shellSlug, taskProgress, taskSlug } from '../hooks/report'
 import { pickOwner, routeOf, sessionKeyOf } from '../hooks/route'
+import { aliveRel, heartbeatOf, mergeLife, pickTxBase, quietUntilOf, toMs } from '../hooks/alive'
 
 // Progress files carry their owner (session id, folder), the plugin sets itself up on first run, and the main
 // session's own task list and long shell commands show with no skill.
@@ -24,14 +25,16 @@ const CWD = '/home/u/code/shop'
 const SCRIPT = `${HOME}/.claude/progress-bar/statusline.sh`
 
 /** A world with files in memory, a fixed session id and folder, and timers that never fire. */
-function world(on: On, files: Record<string, string>, opts: { agents?: unknown[]; onRun?: (argv: readonly string[]) => { exitCode: number; stdout: string } | undefined; userStatusLine?: string; projectStatusLine?: string; isPlaced?: boolean; script?: { exitCode: number; stdout: string; stderr: string } } = {}) {
+function world(on: On, files: Record<string, string>, opts: { agents?: unknown[]; onRun?: (argv: readonly string[]) => { exitCode: number; stdout: string } | undefined; userStatusLine?: string; projectStatusLine?: string; isPlaced?: boolean; script?: { exitCode: number; stdout: string; stderr: string }; now?: number; mtimes?: Record<string, number> } = {}) {
   const opened: string[] = []
   const runs: string[][] = []
   const toasts: string[] = []
   // A fresh connectors check, so an open panel starts no background check that outlives the test.
   files[`${HOME}/${CONN_CACHE_REL}`] ??= `#checked\t${Math.floor(NOW / 1000)}\n`
   mock.env(on, { HOME })
-  on('clock.now', () => ({ value: NOW }))
+  const now = opts.now ?? NOW
+  const mtime = (p: string) => opts.mtimes?.[p] ?? now
+  on('clock.now', () => ({ value: now }))
   on('clock.every', async () => { await new Promise<void>(() => {}); return { value: undefined } })
   on('clock.sleep', async () => { await new Promise<void>(() => {}); return { value: undefined } })
   on('session.id', () => ({ value: SID }))
@@ -40,11 +43,11 @@ function world(on: On, files: Record<string, string>, opts: { agents?: unknown[]
   on('agent.list', () => ({ value: (opts.agents ?? []) as never }))
   on('command.register', () => ({ value: { command: 'progress-bar' } }))
   on('tool.register', (_, e) => ({ value: { tool: `mcp__progress-bar__${e.name}` } }))
-  on('fs.list', (_, e) => ({ value: Object.keys(files).filter(f => f.startsWith(`${e.path}/`) && !f.slice(e.path.length + 1).includes('/')).map(f => ({ name: f.slice(e.path.length + 1), kind: 'file' as const, size: 1, mtimeMs: NOW, isLink: false })) }))
+  on('fs.list', (_, e) => ({ value: Object.keys(files).filter(f => f.startsWith(`${e.path}/`) && !f.slice(e.path.length + 1).includes('/')).map(f => ({ name: f.slice(e.path.length + 1), kind: 'file' as const, size: 1, mtimeMs: mtime(f), isLink: false })) }))
   on('fs.read', (_, e) => { const t = files[String(e.path)]; if (t === undefined) throw new Error('ENOENT'); return { value: t } })
   on('fs.write', (_, e) => { files[String(e.path)] = e.text; return { value: undefined } })
   on('fs.exists', (_, e) => ({ value: String(e.path) in files || Object.keys(files).some(f => f.startsWith(`${e.path}/`)) }))
-  on('fs.stat', (_, e) => { if (!(String(e.path) in files)) throw new Error('ENOENT'); return { value: { size: 1, mtimeMs: NOW } as never } })
+  on('fs.stat', (_, e) => { if (!(String(e.path) in files)) throw new Error('ENOENT'); return { value: { size: 1, mtimeMs: mtime(String(e.path)) } as never } })
   on('settings.read', (_, e) => {
     const cmd = e.source === 'user' ? opts.userStatusLine : e.source === 'project' ? opts.projectStatusLine : undefined
     return { value: (cmd ? { statusLine: { type: 'command', command: cmd } } : {}) as never }
@@ -454,4 +457,78 @@ test('a progress file marked stopped leaves RUNNING and is recorded as stopped b
   await settle($ as never)
   expect(files[`${L}/agents-${KEY}.txt`] ?? '').not.toMatch(/crawl/)
   expect(JSON.parse(files[`${HOME}/${DONE_REL}/crawl.json`]!)).toMatchObject({ title: 'Crawl sites', impact: ['stopped by you'] })
+})
+
+// ---- No false stuck alarms: signs of life beyond the numbers, and a transcript path that is really this session's ----
+
+test('expect_minutes becomes a quiet window, heartbeat a file whose writes count, and both clear on the next report', () => {
+  const o = { session: SID, cwd: CWD }
+  const b = reportBody({ title: 'T', done: 3, total: 5, expectMinutes: 90, heartbeat: ' ~/logs/etl.log ' }, o, 5, NOW)
+  expect(b.quietUntil).toBe(NOW + 90 * 60_000)
+  expect(b.heartbeat).toBe('~/logs/etl.log')
+  // Capped at a day, ignored when not a positive number, and a plain report carries neither.
+  expect(reportBody({ title: 'T', expectMinutes: 1e6 }, o, 5, NOW).quietUntil).toBe(NOW + 24 * 3_600_000)
+  expect(reportBody({ title: 'T', expectMinutes: -5 }, o, 5, NOW).quietUntil).toBe(undefined)
+  expect(reportBody({ title: 'T', done: 4, total: 5 }, o, 5, NOW)).not.toHaveProperty('quietUntil')
+  expect(quietUntilOf({ quietUntil: 1_800_000_000 })).toBe(1_800_000_000_000)
+  expect(quietUntilOf({ quietUntil: 'soon' })).toBe(undefined)
+  expect(heartbeatOf({ heartbeat: 42 })).toBe('')
+  expect(toMs(0)).toBe(undefined)
+  expect(mergeLife({ at: 5 }, { at: 3, until: 9 })).toEqual({ at: 5, until: 9 })
+  expect(mergeLife(undefined, {})).toEqual({})
+})
+
+test('pickTxBase: the newest transcript named after this session wins, an old copy from another config folder loses', () => {
+  const live = `/home/u/.claude/projects/-home-u-code-shop/${SID}`
+  const stale = `/home/u/.claude-work/projects/-home-u-code-shop-api/${SID}`
+  expect(pickTxBase([{ base: stale, mtime: NOW - 2 * 86_400_000 }, { base: live, mtime: NOW }], SID)).toBe(live)
+  // A path that names another session, or a transcript that is gone, never counts.
+  expect(pickTxBase([{ base: `/home/u/.claude/projects/x/${OTHER}`, mtime: NOW }], SID)).toBe('')
+  expect(pickTxBase([{ base: live, mtime: 0 }], SID)).toBe('')
+  expect(pickTxBase([{ base: stale, mtime: NOW }], SID)).toBe(stale)
+})
+
+test('a progress_report with expect_minutes and a heartbeat file writes this session\'s alive file for group.py', { options: { openPanel: false } }, async ($, on) => {
+  const files: Record<string, string> = { [`${HOME}/logs/etl.log`]: 'row 1\n' }
+  world(on, files, { mtimes: { [`${HOME}/logs/etl.log`]: NOW - 60_000 } })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call(report({ title: 'Data updates write to the new database', slug: 'etl-move', done: 3, total: 5, step: 'clone and test', expect_minutes: 90, heartbeat: '~/logs/etl.log' }))
+  expect(JSON.parse(files[`${P}/etl-move.json`]!)).toMatchObject({ quietUntil: NOW + 90 * 60_000, heartbeat: '~/logs/etl.log' })
+  const alive = JSON.parse(files[`${P}/${aliveRel(KEY)}`]!) as Record<string, { at?: number; until?: number }>
+  expect(alive['etl-move']).toEqual({ at: NOW, until: NOW + 90 * 60_000 })
+  await settle($ as never)
+})
+
+test('a shell row whose finish is only in the live transcript clears, though the saved path names an old copy', { options: { openPanel: false } }, async ($, on) => {
+  const T = NOW + 7 * 86_400_000 // its own clock, so no earlier test's once-a-minute check holds this one back
+  const stale = `${HOME}/.claude-work/projects/-home-u-code-shop-api/${SID}`
+  const live = `${HOME}/.claude/projects/-home-u-code-shop/${SID}`
+  const row = `${P}/shell-build-and-swap-the-shop-service.json`
+  const files: Record<string, string> = {
+    [`${P}/.state/bg-${KEY}.json`]: JSON.stringify({ snap: { at: T - 86_400_000, tasks: [] }, txBase: stale }),
+    [`${stale}.jsonl`]: '{"old":"copy"}\n',
+    [`${live}.jsonl`]: '{"type":"user","content":"<task-notification><task-id>bq7</task-id><status>completed</status></task-notification>"}\n',
+    [row]: JSON.stringify({ step: 'running in the background', title: 'Build and swap the shop service', session: SID, cwd: CWD, command: './deploy.sh', taskId: 'bq7' }),
+    // Another session's shell with the same task id is never touched.
+    [`${P}/shell-other-session.json`]: JSON.stringify({ step: 'running in the background', title: 'x', session: OTHER, taskId: 'bq7' }),
+  }
+  const tails: string[] = []
+  world(on, files, {
+    now: T,
+    mtimes: { [`${stale}.jsonl`]: T - 2 * 86_400_000, [`${live}.jsonl`]: T - 5_000 },
+    onRun: argv => {
+      if (argv[0] !== 'tail') return undefined
+      const f = String(argv[argv.length - 1])
+      tails.push(f)
+      return { exitCode: 0, stdout: files[f] ?? '' }
+    },
+  })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await settle($ as never)
+  expect(tails).toContain(`${live}.jsonl`)
+  expect(tails).not.toContain(`${stale}.jsonl`)
+  expect(files[row]).toBe(undefined)
+  expect(files[`${P}/shell-other-session.json`]).toBeDefined()
+  // The checked path is what a reload restores now.
+  expect(JSON.parse(files[`${P}/.state/bg-${KEY}.json`]!).txBase).toBe(live)
 })

@@ -1,6 +1,7 @@
 // Pure helpers: no `$`, so tests import them directly.
 
 import type { Gains, Meta } from '../types'
+import type { Life } from './alive'
 
 export type Progress = { done: number | null; total: number | null; step: string; startedAt?: number }
 
@@ -20,6 +21,8 @@ export type Row = {
   eta?: string
   /** Waiting or pending agents only: why it waits and for how long (waiting.ts waitSegs). */
   wait?: string[]
+  /** Signs of life beyond its numbers (alive.ts), written to .state/alive-<session>.json for the stuck mark. */
+  life?: Life
 }
 
 /**

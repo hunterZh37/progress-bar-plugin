@@ -18,7 +18,7 @@ import { macClicks, parseMacClicks } from './mac'
 import { checkpointCommand, noteStatusLine, panelCommand, registerPanel, startPanel } from './panel'
 import { FILE_FRESH_MS, FRESH_MS, closestFile, pairFile, type PairCandidate, eta, pickMeta, expandHome, rateLeft, trackJob, lines, parseProgress, parseWatch, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
 import { PROJECTS_REL, gitRootOf, resolveProject, sessionProject } from './project'
-import { LONG_BASH_MS, PROGRESS_TOOL, backgroundShellIds, endBackground, endShell, endShellsFor, finishedTaskIds, mirrorTasks, startShell, taskCreated, taskList, taskUpdated, touchShells, writeReport } from './report'
+import { LONG_BASH_MS, PROGRESS_TOOL, backgroundShellIds, endBackground, endShell, endShellsFor, finishedTaskIds, liveShells, mirrorTasks, startShell, taskCreated, taskList, taskUpdated, touchShells, writeReport } from './report'
 import type { Task } from './report'
 import { PROJECT_LINE, pickOwner, routeOf, sessionKeyOf as keyOf } from './route'
 import type { Progress, Row, Track } from './render'
@@ -26,6 +26,7 @@ import { isDarwin } from './mac'
 import { impactLines, parseDone, reportOf, saveDone, summarize, DONE_REL } from './done'
 import { pickGains } from './goal'
 import { aliveTasks, bgLaunch, scanTranscript, snapOf, toolWhat, waitSegs } from './waiting'
+import { addLife, aliveRel, heartbeatOf, pickTxBase, quietUntilOf, type Life } from './alive'
 import type { BgSnap, BgTask, Job, TxScan } from './waiting'
 
 const WATCH = '.watch.json'
@@ -56,7 +57,7 @@ async function watchRow($: EngineInterface, h: string, dir: string, name: string
   // No startedAt: trackRows starts it when first seen, never at the log's last write.
   const startedAt = w.startedAt ?? 0
   const label = w.label ?? name.slice(0, -WATCH.length)
-  return { id: `watch:${label}`, description: label, status: 'running', startedAt, tools: 0, lastTool: '', done: p.done, total: p.total, step: p.step, state, eta: w.startedAt ? eta(now - w.startedAt, p.done, p.total) : '' }
+  return { id: `watch:${label}`, description: label, status: 'running', startedAt, tools: 0, lastTool: '', done: p.done, total: p.total, step: p.step, state, eta: w.startedAt ? eta(now - w.startedAt, p.done, p.total) : '', life: { at: st.mtimeMs } }
 }
 
 // Subagents and shell jobs write { "done": 3, "total": 8, "step": "..." } to ~/.claude-progress/<slug>.json.
@@ -114,6 +115,13 @@ const TRACK_KEEP_MS = 2 * 86_400_000
 let snap: BgSnap | null = null
 // Where this session's transcripts are (the main one's path without .jsonl), and each agent's own, from SubagentStop.
 let txBase = ''
+// The last Stop's transcript_path (a Stop can be skipped by another plugin's hook), when txBase was last checked, and
+// when a read of a checked transcript last succeeded (background shells count as alive only while that is recent).
+let txHook = ''
+let txCheckAt = 0
+let txReadAt = 0
+const TX_CHECK_MS = 60_000
+const SHELL_TRUST_MS = 2 * 60_000
 const txOf = new Map<string, string>()
 // Each waiting agent's transcript scan, kept while the transcript does not change.
 const scans = new Map<string, { mtime: number; scan: TxScan }>()
@@ -136,6 +144,8 @@ async function explainWaits($: EngineInterface, agents: Awaited<ReturnType<Engin
     // Tasks past a Monitor's deadline, or missing from a newer snapshot, are over.
     let alive = aliveTasks(s.bg ?? [], snap, now)
     if (s.bg) s.bg = alive
+    // A background task it started (a shell, a Monitor) still running is a sign of life for its row.
+    if (alive.length) r.life = { ...r.life, at: now }
     if (a.status !== 'waiting') { s.waitSince = undefined; if (a.status !== 'pending') continue }
     const path = txPath(a.id)
     // Its transcript, read again only when it changed: background tasks still running (a reload forgets the ones
@@ -154,6 +164,7 @@ async function explainWaits($: EngineInterface, agents: Awaited<ReturnType<Engin
     }
     if (scan) {
       alive = [...alive, ...scan.running.filter(x => !alive.some(y => y.id === x.id)).map(x => ({ ...x, kind: x.kind === 'monitor' ? 'monitor' as const : 'shell' as const, at: 0 }))]
+      if (scan.running.length) r.life = { ...r.life, at: now }
       if (!s.lastWhat && scan.lastWhat && scan.lastTool === s.lastTool) { s.lastWhat = scan.lastWhat; if (scan.lastAt) s.lastAt = scan.lastAt }
     }
     if (a.status === 'waiting' && !s.waitSince) {
@@ -245,7 +256,8 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
     try {
       const b = JSON.parse(String(await $.fs.read(`${dir}/.state/bg-${key}.json`))) as { snap?: BgSnap; txBase?: string }
       if (!snap && b.snap && Array.isArray(b.snap.tasks)) snap = b.snap
-      if (!txBase && typeof b.txBase === 'string') txBase = b.txBase
+      // A saved path is only a candidate: resolveTx keeps it when it is still this session's newest transcript.
+      if (!txBase && typeof b.txBase === 'string') { txBase = b.txBase; txCheckAt = 0 }
     } catch { /* none yet */ }
     try {
       const k = JSON.parse(String(await $.fs.read(`${dir}/${agentsRel(key)}`))) as { agents?: Record<string, Known>; files?: Record<string, number> }
@@ -254,13 +266,6 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
       }
       for (const [n, at] of Object.entries(k.files ?? {})) if (typeof at === 'number' && !stamped.has(n)) stamped.set(n, at)
     } catch { /* none yet */ }
-    // Before any Stop names it: the session's transcript folder, ~/.claude/projects/<folder with - for each symbol>/<session id>.
-    if (!txBase) {
-      try {
-        const base = `${h}/.claude/projects/${(await $.session.cwd()).replace(/[^A-Za-z0-9]/g, '-')}/${await $.session.id()}`
-        if (await $.fs.exists(`${base}/subagents`)) txBase = base
-      } catch { /* a Stop names it later */ }
-    }
   }
   let agents: Awaited<ReturnType<typeof $.agent.list>> = []
   try { agents = await $.agent.list() } catch { agents = [] }
@@ -351,7 +356,14 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
         if (raw && typeof raw === 'object') agentFiles.set(a.id, raw)
       } catch { p = null }
     }
-    rows.push({ id: a.id, description: a.description, status: a.status, startedAt: s.startedAt, tools: s.tools, lastTool: s.lastTool, done: p?.done ?? null, total: p?.total ?? null, step: p?.step ?? '' })
+    const row: Row = { id: a.id, description: a.description, status: a.status, startedAt: s.startedAt, tools: s.tools, lastTool: s.lastTool, done: p?.done ?? null, total: p?.total ?? null, step: p?.step ?? '' }
+    // Signs of life: its progress file (written, a quiet window, a heartbeat file) and its own transcript written.
+    const life = new Map<string, Life>()
+    if (h && name) addLife(life, 'r', await fileLife($, h, `${dir}/${name}.json`, agentFiles.get(a.id)))
+    const tp = txPath(a.id)
+    if (tp) { try { addLife(life, 'r', { at: (await $.fs.stat(tp)).mtimeMs }) } catch { /* none yet */ } }
+    if (life.has('r')) row.life = life.get('r')
+    rows.push(row)
   }
   const shared = new Set<string>()
   if (!h) { await explainWaits($, agents, rows, [], now); return { rows, now, shared } }
@@ -426,6 +438,14 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
     const id = `file:${name}`
     if (route === 'shared') shared.add(id)
     const row: Row = { id, description: name, status: 'running', startedAt: p.startedAt ?? 0, tools: 0, lastTool: '', done: p.done, total: p.total, step: p.step }
+    // A shell row's file is rewritten by this plugin every poll, so its write says nothing. It is alive while this
+    // copy runs it and has read the session's checked transcript lately without finding its finished notice.
+    if (name.startsWith('shell-')) {
+      if (liveShells.has(`${dir}/${f.name}`) && now - txReadAt < SHELL_TRUST_MS) row.life = { at: now }
+    } else {
+      const l = await fileLife($, h, `${dir}/${f.name}`, raw, f.mtimeMs)
+      if (l.at || l.until) row.life = l
+    }
     rows.push(row)
     if (raw && typeof raw === 'object') fileNow.set(name, { row, raw: raw as Record<string, unknown> })
     const m = pickMeta(raw)
@@ -436,6 +456,57 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
   await trackRows($, dir, rows, now)
   await recordFinished($, h, dir, fileNow, now)
   return { rows, now, shared }
+}
+
+/**
+ * A progress file's signs of life: its last write, the quiet window it announces (`quietUntil`) and the last write of
+ * the heartbeat file it names (`heartbeat`, `~/` allowed).
+ */
+async function fileLife($: EngineInterface, h: string, path: string, raw: unknown, mtime?: number): Promise<Life> {
+  const out = new Map<string, Life>()
+  let m = mtime ?? 0
+  if (!m) { try { m = (await $.fs.stat(path)).mtimeMs } catch { m = 0 } }
+  addLife(out, 'f', { at: m || undefined, until: quietUntilOf(raw) })
+  const hb = heartbeatOf(raw)
+  if (hb) { try { addLife(out, 'f', { at: (await $.fs.stat(expandHome(hb, h))).mtimeMs }) } catch { /* not there yet */ } }
+  return out.get('f') ?? {}
+}
+
+/**
+ * Checks where this session's transcript is, at most every minute: the last Stop's transcript_path, the saved path,
+ * and this session's file under its config folder (CLAUDE_CONFIG_DIR, else ~/.claude) for its folder, else for any
+ * project folder. Only a file named after this session's id that exists counts, and the newest wins, so a path saved
+ * while the session ran under another config or project folder (an old copy that never sees new events) is dropped.
+ */
+async function resolveTx($: EngineInterface, h: string, now: number) {
+  if (!h || now - txCheckAt < TX_CHECK_MS) return
+  txCheckAt = now
+  let sid = ''
+  try { sid = await $.session.id() } catch { sid = '' }
+  // A base with no main transcript yet but a subagents folder still counts, below any real transcript.
+  const mtimeOf = async (b: string) => {
+    try { return (await $.fs.stat(`${b}.jsonl`)).mtimeMs } catch { /* not written yet */ }
+    return (await $.fs.exists(`${b}/subagents`).catch(() => false)) ? 1 : 0
+  }
+  const cands: { base: string; mtime: number }[] = []
+  for (const b of new Set([txHook, txBase].filter(Boolean))) cands.push({ base: b, mtime: await mtimeOf(b) })
+  if (sid) {
+    let root = `${h}/.claude/projects`
+    try { const { dir } = await sessionLogin($, h); if (dir) root = `${dir}/projects` } catch { /* default login */ }
+    let own = ''
+    try { own = `${root}/${(await $.session.cwd()).replace(/[^A-Za-z0-9]/g, '-')}/${sid}` } catch { own = '' }
+    const m = own ? await mtimeOf(own) : 0
+    if (own) cands.push({ base: own, mtime: m })
+    // The session moved folders: look for its id in every project folder of this login.
+    if (!m) {
+      try {
+        for (const d of await $.fs.list(root)) if (d.kind === 'dir') { const b = `${root}/${d.name}/${sid}`; const t = await mtimeOf(b); if (t) cands.push({ base: b, mtime: t }) }
+      } catch { /* no projects folder */ }
+    }
+  }
+  const before = txBase
+  txBase = pickTxBase(cands, sid)
+  if (txBase !== before) { scans.clear(); txReadAt = 0 }
 }
 
 /**
@@ -579,14 +650,40 @@ async function sessionKeyOf($: EngineInterface): Promise<string> {
 // tasks, so a row could otherwise stay "running in the background" long after the command ended. Checked every 30 s.
 let shellCheckAt = 0
 async function endFinishedShells($: EngineInterface) {
-  const ids = backgroundShellIds()
   const now = await $.clock.now()
-  if (!ids.length || !txBase || now - shellCheckAt < 30_000) return
+  const h = await resolveHome($)
+  await resolveTx($, h, now)
+  if (!txBase || now - shellCheckAt < 30_000) return
+  // This session's shell rows this copy does not run (started before a /reload-plugins): cleared once they finished.
+  const orphans = new Map<string, string>()
+  if (h) {
+    let sid = ''
+    try { sid = await $.session.id() } catch { sid = '' }
+    try {
+      for (const f of await $.fs.list(dirOf(h))) {
+        const path = `${dirOf(h)}/${f.name}`
+        if (f.kind !== 'file' || !f.name.startsWith('shell-') || !f.name.endsWith('.json') || liveShells.has(path)) continue
+        try {
+          const r = JSON.parse(String(await $.fs.read(path))) as { session?: unknown; taskId?: unknown }
+          if (sid && r.session === sid && typeof r.taskId === 'string' && r.taskId) orphans.set(path, r.taskId)
+        } catch { /* half written */ }
+      }
+    } catch { /* none */ }
+  }
+  const ids = [...backgroundShellIds(), ...orphans.values()]
+  if (!ids.length) return
   shellCheckAt = now
   let text = ''
-  try { text = (await $.process.run(['tail', '-c', '4000000', `${txBase}.jsonl`])).stdout } catch { return }
+  try {
+    const r = await $.process.run(['tail', '-c', '4000000', `${txBase}.jsonl`])
+    if (r.exitCode !== 0) return
+    text = r.stdout
+  } catch { return }
+  txReadAt = now
   const done = finishedTaskIds(text.replace(/\\n/g, '\n'), ids)
-  if (done.size) await endShellsFor($, done)
+  if (!done.size) return
+  await endShellsFor($, done)
+  for (const [path, id] of orphans) if (done.has(id)) await $.process.run(['rm', '-f', path]).catch(() => undefined)
 }
 
 /** The session's transcript: from the last Stop, else its folder under this login's config dir. */
@@ -621,6 +718,10 @@ async function poll($: EngineInterface) {
   try { await $.fs.write(`${base}/agents-${sessionKey}.txt`, lines(agents, now).join('\n')) } catch { /* next poll */ }
   try { await $.fs.write(`${base}/jobs-${sessionKey}.txt`, lines(mine, now).join('\n')) } catch { /* next poll */ }
   try { await $.fs.write(`${base}/jobs.txt`, lines(jobs, now).join('\n')) } catch { /* next poll */ }
+  // Signs of life beyond the numbers, for group.py's stuck mark (alive.ts).
+  const life: Record<string, Life> = {}
+  for (const r of rows) if (r.life && (r.life.at || r.life.until)) life[slug(r.description)] = r.life
+  try { await $.fs.write(`${dirOf(home)}/${aliveRel(sessionKey)}`, JSON.stringify(life)) } catch { /* next poll */ }
 }
 
 async function statusLineCommand($: EngineInterface): Promise<string | undefined> {
@@ -857,7 +958,7 @@ export const register: Register = (on, options) => {
     const i = e as unknown as Record<string, unknown>
     const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
     const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
-    const text = await writeReport($, await resolveHome($), { title: str(i.title) ?? '', done: num(i.done), total: num(i.total), step: str(i.step), why: str(i.why), parent: str(i.parent), slug: str(i.slug), reads: str(i.reads), writes: str(i.writes), impact: str(i.impact), area: str(i.area), gains: pickGains(typeof i.gains === 'string' ? (() => { try { return JSON.parse(i.gains as string) } catch { return undefined } })() : i.gains), finished: i.finished === true })
+    const text = await writeReport($, await resolveHome($), { title: str(i.title) ?? '', done: num(i.done), total: num(i.total), step: str(i.step), why: str(i.why), parent: str(i.parent), slug: str(i.slug), reads: str(i.reads), writes: str(i.writes), impact: str(i.impact), area: str(i.area), gains: pickGains(typeof i.gains === 'string' ? (() => { try { return JSON.parse(i.gains as string) } catch { return undefined } })() : i.gains), finished: i.finished === true, expectMinutes: num(i.expect_minutes) ?? (typeof i.expect_minutes === 'string' ? num(Number(i.expect_minutes)) : undefined), heartbeat: str(i.heartbeat) })
     await poll($).catch(() => undefined)
     return { result: text }
   })
@@ -914,7 +1015,7 @@ export const register: Register = (on, options) => {
     const i = e as unknown as { background_tasks?: { id: string; status?: string }[]; transcript_path?: unknown }
     const running = i.background_tasks
     if (Array.isArray(running)) await endBackground($, running).catch(() => undefined)
-    if (typeof i.transcript_path === 'string' && i.transcript_path.endsWith('.jsonl')) txBase = i.transcript_path.slice(0, -6)
+    if (typeof i.transcript_path === 'string' && i.transcript_path.endsWith('.jsonl')) { txHook = i.transcript_path.slice(0, -6); txBase = txHook; txCheckAt = 0 }
     snap = snapOf(running, await $.clock.now()) ?? snap
     return next(e)
   })

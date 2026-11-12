@@ -22,7 +22,10 @@ Then a yellow "inbox: N need you" while ~/.claude-progress/inbox.json lists item
 Then a cyan "channel: N new" while ~/.claude-progress/channel/received.json lists files not in .state/channel-read.txt (secure channel).
 It ends with "recap ready" while an overnight checkpoint (.state/overnight.json) is 4 h old or the panel saw a sleep.
 RUNNING rows get a spinner, or a yellow "stuck" mark when their numbers have not moved for
-~/.claude-progress/.state/stuck-minutes (default 10) minutes. Stuck rows sort first.
+~/.claude-progress/.state/stuck-minutes (default 10) minutes and no other sign of life is newer. Stuck rows sort first.
+Signs of life come from ~/.claude-progress/.state/alive-<session>.json (each session's plugin writes one): "at", the
+last one (its progress file or heartbeat file written, its agent's transcript written or background task running, a
+background shell not yet finished, a watch log), and "until", a quiet window the job announced (expect_minutes).
 Job names link to their progress file, or to a URL from ~/.claude-progress/links.txt ("<regex> | <url>").
 A job with a "parent" (its progress file, or the 4th column of ~/.claude-progress/titles.txt) is that parent's child.
 A stuck parent whose child runs, or changed in the last 10 min, is not stuck: its row ends "· waiting on: <child>".
@@ -172,6 +175,39 @@ def has_step(l):
         if p and not ELAPSED.match(p) and not re.match(r'^\d+/\d+$|^\d+ tools?$', p):
             return True
     return False
+
+
+ALIVE_KEEP = 6 * 3600
+
+
+def load_alive():
+    """{job slug: (last sign of life, end of its quiet window)} in seconds, merged from every alive-<session>.json
+    written in the last 6 hours. Missing or broken files count as no sign."""
+    out = {}
+    d = os.path.join(ROOT, '.state')
+    try:
+        names = [x for x in os.listdir(d) if x.startswith('alive-') and x.endswith('.json')]
+    except Exception:
+        return out
+    for x in names:
+        p = os.path.join(d, x)
+        try:
+            if time.time() - os.path.getmtime(p) > ALIVE_KEEP:  # file times are real time, whatever now is
+                continue
+            data = json.loads(read(p) or '{}')
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        for k, v in data.items():
+            if not isinstance(v, dict):
+                continue
+            at = v.get('at') if isinstance(v.get('at'), (int, float)) else 0
+            until = v.get('until') if isinstance(v.get('until'), (int, float)) else 0
+            at, until = at / 1000.0 if at > 1e12 else at, until / 1000.0 if until > 1e12 else until
+            a0, u0 = out.get(k, (0, 0))
+            out[k] = (max(a0, at), max(u0, until))
+    return out
 
 
 def ago(sec):
@@ -449,6 +485,15 @@ def main(stdin, now, summary=False):
 
     tt = titles()
     running = set(slugify(name_of(l)) for l in groups['running'])
+    alive = load_alive()
+
+    def quiet_for(l):
+        """Seconds since the row's last sign of life: its numbers or step changing, else a newer one from the alive
+        files. A quiet window counts as life until it ends."""
+        k = slugify(name_of(l))
+        last = (seen.get(k) or {}).get('changed', now)
+        at, until = alive.get(k, (0, 0))
+        return now - max(last, at, min(until, now))
 
     parents = {}
 
@@ -472,8 +517,7 @@ def main(stdin, now, summary=False):
     def stuck_for(l):
         if is_server(l):
             return None  # a server stays up by design
-        v = seen.get(slugify(name_of(l))) or {}
-        d = now - v.get('changed', now)
+        d = quiet_for(l)
         return d if d >= stuck_after and not waiting_on(l) else None
 
     def running_deco(i, body):
@@ -482,7 +526,7 @@ def main(stdin, now, summary=False):
         d = stuck_for(i)
         w = watchers.get(slugify(name_of(i)))
         by = ' · watched by: ' + ', '.join(w) if w else ''
-        if d is None and not is_server(i) and now - (seen.get(slugify(name_of(i))) or {}).get('changed', now) >= stuck_after:
+        if d is None and not is_server(i) and quiet_for(i) >= stuck_after:
             return SPIN[int(now) % len(SPIN)] + ' ' + body + ' · waiting on: ' + waiting_on(i) + by
         mark = '\033[33m⚠ stuck ' + ago(d) + '\033[0m' if d is not None else SPIN[int(now) % len(SPIN)]
         return mark + ' ' + body + ('' if has_step(i) else ' · in progress') + by
