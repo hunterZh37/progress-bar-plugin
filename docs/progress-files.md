@@ -21,7 +21,7 @@ Easiest: Claude calls the plugin's `progress_report` tool (title, why, done, tot
 | --- | --- |
 | `done`, `total` | Draw the bar. Leave them out and the line says `working` |
 | `step` | A few words on the current step |
-| `steps` | Optional. The job's steps in order, a list of names (see **Step checklist**). Pressing the row shows them as a checklist |
+| `steps` | Optional. The job's steps in order, a list of names (see **Step checklist**). The row shows them as a checklist inline, its card in full |
 | `startedAt` | Optional, ms. Otherwise the file's birth time, else when the plugin first saw it |
 | `title` | Optional plain-language name. The job's line shows the part before ` · ` or `: `, and the open card shows the id and badge. The part before ` · ` names the job in the Log tab and in `waiting on:` |
 | `why` | Optional. What the job unlocks, shown dim under its row (`unlocks: …` in an opened DONE row) |
@@ -57,7 +57,7 @@ progress nightly-import 2 5 "batch 3"
 
 ## Step checklist
 
-`steps` lists the job's steps in order. Press the running row's title and its card shows them, one per line:
+`steps` lists the job's steps in order. A running row shows up to 5 of them inline under its step line (see **Inline checklist** in [status-panel.md](status-panel.md#running-cards)). Press the row's title and its card shows them all, one per line:
 
 ```
   ◐ Docs site  ━━━━──────  40%  6m left

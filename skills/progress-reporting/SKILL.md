@@ -29,7 +29,7 @@ progress_report(title: "Every order matched to its customer", why: "customer sea
 ```
 
 - It writes `~/.claude-progress/<slug of title>.json` with this session's id, folder and `startedAt` filled in, so the bar shows in this session's Status panel on any machine.
-- **Steps known up front? Pass `steps` on the first call**, the step names in order: `steps: ["design", "implement", "tests and docs", "commit"]`. Pressing the job's row then shows them as a checklist (done, current, to do), following `done`. Later calls need only `done` and `step`: the list is kept. Mark a step skipped or failed with `step_states` (`["done", "skipped", "active", "todo"]`).
+- **Steps known up front? Pass `steps` on the first call**, the step names in order: `steps: ["design", "implement", "tests and docs", "commit"]`. The job's row then shows them as a checklist (done, current, to do), following `done`. Later calls need only `done` and `step`: the list is kept. Mark a step skipped or failed with `step_states` (`["done", "skipped", "active", "todo"]`).
 - Pass `slug` to pick the file name, `parent` to nest it under a bigger job.
 - Pass `reads` and `writes` for a job that moves data between machines (`reads: "orders table"`, `writes: "Postgres on server-1"`). The Status panel's Topology tab shows them on the branch between machines.
 - At the end call it with `finished: true` and `impact`: what the job changed and why it matters, one to three short lines (`Board links rebuilt: 1.29M pairs, 109K split people merged`). That removes the bar and keeps the impact on its DONE row.
@@ -49,7 +49,7 @@ Path: `~/.claude-progress/<slug>.json`
 
 - **done**, **total**: numbers, `total` above 0. Without them the line shows `working`.
 - **step**: a few words on the current step.
-- **steps**: optional, the step names in order (`["build", "test", "deploy"]`), up to 50. An item can be `{"name": "test", "state": "failed"}` (`done`, `active`, `todo`, `skipped`, `failed`). Others follow `done`. The row's card shows them as a checklist. Keep `total` equal to its length when you can: the bar follows `total`.
+- **steps**: optional, the step names in order (`["build", "test", "deploy"]`), up to 50. An item can be `{"name": "test", "state": "failed"}` (`done`, `active`, `todo`, `skipped`, `failed`). Others follow `done`. The row shows them as a checklist, its card in full. Keep `total` equal to its length when you can: the bar follows `total`.
 - **startedAt**: optional, milliseconds since the epoch. Without it the file's time is used.
 - **title**: plain words for the improvement the job makes, so a person knows at a glance why it runs. Name the outcome, not the mechanism: `Every board member counted, not just 25` rather than `Board lists past 25 seats`, `Know where more orgs serve` rather than `Service places round 3`. The Status panel shows it in bold above the slug.
 - **area**: the goal area the job improves, by name from `~/.claude-progress/goals/<project>.json` (`Search`, `Payments`). Set it whenever the project's goal has areas.

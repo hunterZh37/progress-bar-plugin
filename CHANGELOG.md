@@ -2,6 +2,16 @@
 
 Versions of the progress-bar plugin, newest first. Each line is the release commit. Full detail is in the git history.
 
+## 0.33.0
+
+- **Inline checklist:** a running row with `steps` shows its checklist under the step line, no press needed. The first dim line takes the `⎿`, the rest line up under it.
+- **Compact:** at most 5 items, one before the current item, the current one and up to 3 after, then `… N more` dim.
+- **No repeats:** when the step is the current item's name, the checklist replaces the step line and the current item carries the run time.
+- **Panel height:** at most 3 running rows show an inline checklist. The rest show only their step line.
+- **Card:** an opened row shows the full list as before (up to 12 lines with a window).
+- **Option:** **Inline step checklist** (`inlineSteps`) in `/config`, on by default. Off shows the list only in the opened card.
+- **Unchanged:** waiting rows, DONE rows and the status line.
+
 ## 0.32.0
 
 - **Step checklist:** a progress file can list its steps in order (`steps`). Press a running row's title and its card shows them under the step line: `✓` done and `○` to do dim, `◐` the current one in normal weight, `✖` failed in red, `·` skipped dim and struck through.

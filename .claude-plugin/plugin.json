@@ -1,6 +1,6 @@
 {
   "name": "progress-bar",
-  "version": "0.32.0",
+  "version": "0.33.0",
   "description": "Live progress bars in the status line and a docked Status panel for subagents and long jobs that write ~/.claude-progress/<slug>.json",
   "license": "MIT",
   "author": {
@@ -43,6 +43,12 @@
       "title": "Hide account emails",
       "description": "Mask account emails in the status line, the Status panel and the Chrome line, for screen sharing.",
       "default": false
+    },
+    "inlineSteps": {
+      "type": "boolean",
+      "title": "Inline step checklist",
+      "description": "Show a running job's step checklist under its row in the Status panel, without opening its card. Off, the checklist shows only in the opened card.",
+      "default": true
     }
   }
 }

@@ -370,6 +370,36 @@ export function checklistLines(items: readonly StepItem[], max = CHECKLIST_MAX):
   return out
 }
 
+/** A running row's inline checklist (closed card) lists at most this many items, then "… N more". */
+export const INLINE_MAX = 5
+/** At most this many running rows show an inline checklist. The rest show only their step line. */
+export const INLINE_ROWS = 3
+
+/**
+ * The lines a closed running row shows inline: up to `max` items around the active one (else the first failed,
+ * else the first to do, else the end): one before it, it, and the ones after it. Earlier items fold away. Later
+ * ones past the window become one "… N more" line.
+ */
+export function inlineLines(items: readonly StepItem[], max = INLINE_MAX): CheckLine[] {
+  const all = items.map((item, index) => ({ kind: 'item' as const, item, index }))
+  const n = items.length
+  if (n <= max) return all
+  const find = (s: StepState) => items.findIndex(x => x.state === s)
+  const at = [find('active'), find('failed'), find('todo')].find(i => i >= 0) ?? n - 1
+  let start = Math.max(0, at - 1)
+  const end = Math.min(n, start + max)
+  start = Math.max(0, end - max)
+  const out: CheckLine[] = all.slice(start, end)
+  if (end < n) out.push({ kind: 'more', n: n - end, where: 'after' })
+  return out
+}
+
+let inlineOn = true
+/** Turns inline checklists under running rows on or off (the inlineSteps option, on by default). */
+export function setInlineSteps(on: boolean) { inlineOn = on }
+/** True when the inlineSteps option is on. */
+export const inlineStepsOn = () => inlineOn
+
 /** A checklist item's mark: single-width symbols only. */
 export const STEP_MARK: Record<StepState, string> = { done: '✓', active: '◐', todo: '○', skipped: '·', failed: '✖' }
 

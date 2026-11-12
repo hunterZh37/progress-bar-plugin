@@ -14,14 +14,14 @@ import { clock } from '../hooks/done'
 import { GROUP_PY } from '../hooks/group'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
 import { draw } from './render'
-import { checkRows, fitChrome, glanceParts, nowLine, verbSplit, TIE, tieFirst } from '../hooks/panel'
+import { checkRows, inlineRows, fitChrome, glanceParts, nowLine, verbSplit, TIE, tieFirst } from '../hooks/panel'
 import { PANE, rowCol, maxReading, noteShows, NOTE_MS, sameName, waitPhrase, waitReason, badge, evId, fitLabel, labelCol, machineTitle, machines, maxMeter, nestRows, runCount, shortTitle, parseSections, runCard, shortAge, timeTail, slide, stripAnsi } from '../hooks/panel'
 import { EVENTS_PY, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from '../hooks/events'
 import { REPOS_REL, parseBranches, parseCommits, webUrl } from '../hooks/github'
 import { blocker, clip, doneEvents, isRunningRow, jobMachine, keyWords, moveItem, nextPrompt, nextReady, parseCaps, parseItem, parseMode, rankTodos, ranked, rowName, shortJob, todoRows } from '../hooks/priority'
 import { fileOf, mainOfGitFile, parseProjects, projectSlug, resolveProject, worktreeCwd } from '../hooks/project'
 import { aliveTasks, bgLaunch, jobText, oneLine, scanTranscript, snapOf, toolWhat, waitSegs, watchedJob } from '../hooks/waiting'
-import { CHECKLIST_MAX, checklistLines, stepItems } from '../hooks/render'
+import { CHECKLIST_MAX, INLINE_MAX, INLINE_ROWS, checklistLines, inlineLines, stepItems } from '../hooks/render'
 import { FEW_STEPS, RATE_MIN_MS, eta, expandHome, line, rateLeft, stepRate, trackJob, lines, parseProgress, parseTitles, pickMeta, parseWatch, prevOf, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoItems, todoList } from '../hooks/render'
 
 const NOW = 1_800_000_000_000
@@ -2176,8 +2176,8 @@ test('an open running card lists its steps under ⎿: done dim, the current one 
   panelWorld(on, files, full)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
-  // Closed: no checklist.
-  expect(await ui.find({ type: 'Text', text: 'implement' })).toBe(undefined)
+  // Closed: the checklist shows inline (inline checklists are tested below).
+  expect(await ui.find({ type: 'Text', text: 'implement' })).toBeDefined()
   await ui.press({ key: 'open-ship-it' })
   const texts = await ui.findAll({ type: 'Text' })
   const at = (t: string) => texts.find(x => x.text === t) as unknown as { props?: { dimColor?: boolean; strikethrough?: boolean } } | undefined
@@ -2206,5 +2206,94 @@ test('a subagent row whose progress file (slug of its description) has steps sho
   expect(i).toBeGreaterThan(-1)
   expect(lines.slice(i, i + 6).map(l => l.trim())).toEqual(['✓ plan', '◐ pages', '○ images', '○ links', '○ index', '○ publish'])
   expect(lines.some(l => /25%/.test(l))).toBe(true)
+  await ui.unmount()
+})
+
+// ---- Step checklist inline under running rows ----
+
+test('inlineLines: at most 5 items, one before the current one and up to 3 after, then … N more', () => {
+  const names = Array.from({ length: 12 }, (_, i) => `s${i}`)
+  const shown = (d: number) => inlineLines(stepItems(names, d, 12)).map(l => (l.kind === 'more' ? `more:${l.n}` : l.item.name))
+  expect(INLINE_MAX).toBe(5)
+  expect(shown(0)).toEqual(['s0', 's1', 's2', 's3', 's4', 'more:7'])
+  expect(shown(1)).toEqual(['s0', 's1', 's2', 's3', 's4', 'more:7'])
+  expect(shown(5)).toEqual(['s4', 's5', 's6', 's7', 's8', 'more:3'])
+  // Near the end the window fills from earlier items: still 5, no "more".
+  expect(shown(11)).toEqual(['s7', 's8', 's9', 's10', 's11'])
+  expect(shown(12)).toEqual(['s7', 's8', 's9', 's10', 's11'])
+  // A short list shows whole.
+  expect(inlineLines(stepItems(['a', 'b', 'c'], 1, 3)).length).toBe(3)
+  for (const d of [0, 3, 6, 9, 12]) expect(shown(d).filter(x => !x.startsWith('more')).length).toBe(INLINE_MAX)
+})
+
+test('inlineRows: a step equal to the current item replaces the step line and the item carries the run time', () => {
+  const items = stepItems(['design', 'implement', 'write tests'], 1, 3)
+  const same = inlineRows(items, 'Implement', '3m', 40)
+  expect(same.replaces).toBe(true)
+  expect(same.rows.map(r => `${r.mark} ${r.name}${r.suffix}`)).toEqual(['✓ design', '◐ implement · 3m', '○ write tests'])
+  // A step that says more keeps its own line, and the item repeats nothing.
+  const other = inlineRows(items, 'wiring the card', '3m', 40)
+  expect(other.replaces).toBe(false)
+  expect(other.rows.map(r => `${r.mark} ${r.name}${r.suffix}`)).toEqual(['✓ design', '◐ implement', '○ write tests'])
+  expect(inlineRows([], 'x', '', 40)).toEqual({ rows: [], replaces: false })
+})
+
+const inlineFile = (step: string, done: number, steps: unknown[], title: string) => JSON.stringify({ done, total: steps.length, step, title, steps })
+
+test('a closed running row lists its steps inline under ⎿, replacing a step line that repeats the current item', async ($, on) => {
+  const full = ['▾ ▶ RUNNING', '  ◐ ship-it ████░░ 40.0% · 2/5 · write tests · 3m', '  ◐ pack-it ████░░ 20.0% · 1/8 · zipping the bundle · 5m'].join('\n')
+  const files: Record<string, string> = {
+    [SCRIPT]: statusScript(), [FLAG]: 'on\n',
+    [`${DIR}/ship-it.json`]: inlineFile('write tests', 2, ['design', 'implement', 'write tests', { name: 'docs', state: 'skipped' }, 'commit'], 'Ship it'),
+    [`${DIR}/pack-it.json`]: inlineFile('zipping the bundle', 1, ['plan', 'bundle', 'sign', 'upload', 'verify', 'notify', 'tag', 'close'], 'Pack it'),
+  }
+  panelWorld(on, files, full)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  const lines = draw((await ui.find({ type: 'Box' })) as never)
+  // Ship it: the step names the current item, so no separate step line. The first item takes the ⎿.
+  const a = lines.findIndex(l => /Ship it/.test(l))
+  expect(lines.slice(a + 1, a + 6).map(l => l.trim())).toEqual([`${TIE}✓ design`, '✓ implement', '◐ write tests · 3m', '· docs', '○ commit'])
+  expect(lines.some(l => /write tests · 3m/.test(l) && /⎿ write/.test(l))).toBe(false)
+  // Pack it: its step says more, so the step line stays (with the ⎿) and the window of 5 follows, then … 3 more.
+  const b = lines.findIndex(l => /Pack it/.test(l))
+  expect(lines.slice(b + 1, b + 8).map(l => l.trim())).toEqual([`${TIE}zipping the bundle · 5m`, '✓ plan', '◐ bundle', '○ sign', '○ upload', '○ verify', '… 3 more'])
+  // Opened, the card keeps the full list and the inline one goes.
+  await ui.press({ key: 'open-pack-it' })
+  const open = draw((await ui.find({ type: 'Box' })) as never).map(l => l.trim())
+  expect(open.filter(l => /^○ close$/.test(l)).length).toBe(1)
+  expect(open.some(l => /3 more/.test(l))).toBe(false)
+  await ui.unmount()
+})
+
+test('inlineSteps off: closed running rows show only the step line, the opened card keeps the checklist', { options: { inlineSteps: false } }, async ($, on) => {
+  const full = ['▾ ▶ RUNNING', '  ◐ ship-it ████░░ 40.0% · 2/5 · write tests · 3m'].join('\n')
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [`${DIR}/ship-it.json`]: inlineFile('write tests', 2, ['design', 'implement', 'write tests', 'docs', 'commit'], 'Ship it') }
+  panelWorld(on, files, full)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  expect(await ui.find({ type: 'Text', text: 'implement' })).toBe(undefined)
+  const lines = draw((await ui.find({ type: 'Box' })) as never)
+  expect(lines.some(l => l.includes(`${TIE}write tests · 3m`))).toBe(true)
+  await ui.press({ key: 'open-ship-it' })
+  expect(await ui.find({ type: 'Text', text: 'implement' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('at most 3 running rows list steps inline, the rest show only their step line', async ($, on) => {
+  const ids = ['job-a', 'job-b', 'job-c', 'job-d']
+  const full = ['▾ ▶ RUNNING', ...ids.map(id => `  ◐ ${id} ████░░ 50.0% · 1/2 · work ${id} · 3m`)].join('\n')
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n' }
+  for (const id of ids) files[`${DIR}/${id}.json`] = inlineFile(`work ${id}`, 1, [`first ${id}`, `second ${id}`], `Title ${id}`)
+  panelWorld(on, files, full)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  expect(INLINE_ROWS).toBe(3)
+  const lines = draw((await ui.find({ type: 'Box' })) as never)
+  const withList = ids.filter(id => lines.some(l => l.includes(`✓ first ${id}`)))
+  expect(withList.length).toBe(INLINE_ROWS)
+  const without = ids.find(id => !withList.includes(id))!
+  expect(lines.some(l => l.includes(`${TIE}work ${without} · 3m`))).toBe(true)
+  for (const id of ids) expect(lines.some(l => l.includes(`work ${id} · 3m`))).toBe(true)
   await ui.unmount()
 })

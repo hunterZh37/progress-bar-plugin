@@ -100,7 +100,7 @@ progress() { mkdir -p ~/.claude-progress; printf '{"done":%s,"total":%s,"step":"
 progress nightly-import 2 5 "batch 3"
 ```
 
-Delete the file when the job ends. Add `steps` (the step names in order) and pressing the job's row shows them as a checklist. The full format, with `title`, `why`, `parent`, `steps`, `impact` and watch files, is in [docs/progress-files.md](docs/progress-files.md).
+Delete the file when the job ends. Add `steps` (the step names in order) and the job's row shows them as a checklist under it, its card in full. The full format, with `title`, `why`, `parent`, `steps`, `impact` and watch files, is in [docs/progress-files.md](docs/progress-files.md).
 
 ## Configuration
 
@@ -114,6 +114,7 @@ Set these in `/config`, under progress-bar.
 | **Open the Status panel** (`openPanel`) | on | Opens the panel at session start. Off keeps it closed until `/progress-bar` |
 | **Usage meter** (`usageMeter`) | off | Shows your plan's 7-day usage in the panel. On, one session per machine runs a tiny `claude -p` Haiku call every 30 minutes on your login to read it |
 | **Hide account emails** (`hideEmails`) | off | Masks account emails in the panel and the Chrome part, such as `j•••@example.com`, for screen sharing |
+| **Inline step checklist** (`inlineSteps`) | on | Shows a running job's `steps` under its row (up to 5 items, on up to 3 rows). Off shows them only in the opened card |
 
 ### Environment variables
 

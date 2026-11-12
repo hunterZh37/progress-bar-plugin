@@ -16,7 +16,7 @@ import { USAGE_CHECK, probeUsage, sessionLogin, setUsageMeter } from './usage'
 import { setHideEmails } from './privacy'
 import { macClicks, parseMacClicks } from './mac'
 import { checkpointCommand, noteStatusLine, panelCommand, registerPanel, startPanel } from './panel'
-import { FILE_FRESH_MS, FRESH_MS, closestFile, pairFile, type PairCandidate, eta, pickMeta, expandHome, rateLeft, trackJob, lines, parseProgress, parseWatch, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
+import { FILE_FRESH_MS, FRESH_MS, closestFile, pairFile, type PairCandidate, eta, pickMeta, setInlineSteps, expandHome, rateLeft, trackJob, lines, parseProgress, parseWatch, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
 import { PROJECTS_REL, gitRootOf, mainRootOf, resolveProject, sessionProject, worktreeCwd } from './project'
 import { LONG_BASH_MS, PROGRESS_TOOL, backgroundShellIds, endBackground, endShell, endShellsFor, finishedTaskIds, liveShells, mirrorTasks, startShell, taskCreated, taskList, taskUpdated, touchShells, writeReport } from './report'
 import type { Task } from './report'
@@ -943,6 +943,8 @@ export const register: Register = (on, options) => {
   setUsageMeter(usageMeter)
   // Off by default: account emails show masked in the panel and the Chrome part.
   setHideEmails(options?.hideEmails === true)
+  // On by default: a running row lists its step checklist under it without opening its card.
+  setInlineSteps(options?.inlineSteps !== false)
 
   // The status line points at the plugin's script, unless a settings file already does. A status line the person
   // had is chained inside the script (its prev= line), so it still prints below the bars.
