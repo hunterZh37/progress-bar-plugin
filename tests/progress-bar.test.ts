@@ -2220,6 +2220,19 @@ test('a subagent row whose progress file (slug of its description) has steps sho
   await ui.unmount()
 })
 
+test('a reused subagent row and its card show the title of its progress file, not the agent description', async ($, on) => {
+  const full = ['▾ ▶ RUNNING', '  ◐ Summary fills after list ██░░ 0.0% · 0/2 · 3m · 12 tools'].join('\n')
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [`${DIR}/summary-fills-after-list.json`]: JSON.stringify({ done: 0, total: 2, step: '', title: 'Cause grid: auto-scroll' }) }
+  panelWorld(on, files, full)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  await ui.press({ key: 'open-summary-fills-after-list' })
+  const lines = draw((await ui.find({ type: 'Box' })) as never)
+  expect(lines.some(l => /◐ Cause grid/.test(l))).toBe(true)
+  expect(lines.some(l => /Summary fills/i.test(l))).toBe(false)
+  await ui.unmount()
+})
+
 // ---- Step checklist inline under running rows ----
 
 test('inlineLines: at most 5 items, one before the current one and up to 3 after, then … N more', () => {

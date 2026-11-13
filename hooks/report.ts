@@ -21,7 +21,8 @@ export const PROGRESS_TOOL = {
   inputSchema: {
     type: 'object',
     properties: {
-      title: { type: 'string', description: 'Plain words for the improvement the job makes, the outcome not the mechanism. Example: Every board member counted, not just 25.' },
+      title: { type: 'string', description: 'Plain words for the improvement the job makes, the outcome not the mechanism. Example: Every board member counted, not just 25. Shown as the row\'s name in place of the agent\'s description. A new one replaces the stored title, and leaving it out keeps it. A new title with done 0 starts a new task on the row: its time, step and checklist start over.' },
+      label: { type: 'string', description: 'Same as title (title wins when both are given).' },
       done: { type: 'number', description: 'Steps finished so far.' },
       total: { type: 'number', description: 'Steps in all, above 0.' },
       step: { type: 'string', description: 'A few words on the current step.' },
@@ -39,11 +40,26 @@ export const PROGRESS_TOOL = {
       step_states: { type: 'array', items: { type: 'string', enum: ['done', 'active', 'todo', 'skipped', 'failed'] }, description: 'Optional. A state per step, same order as steps: done, active, todo, skipped or failed. Use it only to mark a step skipped or failed, or out of order. Steps without one follow done.' },
       finished: { type: 'boolean', description: 'true removes the bar once the job is over. Pass impact with it.' },
     },
-    required: ['title'],
   },
 }
 
-export type ReportInput = { title: string; done?: number; total?: number; step?: string; why?: string; parent?: string; slug?: string; reads?: string; writes?: string; impact?: string; area?: string; gains?: Gains; finished?: boolean; expectMinutes?: number; heartbeat?: string; steps?: unknown; stepStates?: unknown }
+export type ReportInput = { title: string; label?: string; done?: number; total?: number; step?: string; why?: string; parent?: string; slug?: string; reads?: string; writes?: string; impact?: string; area?: string; gains?: Gains; finished?: boolean; expectMinutes?: number; heartbeat?: string; steps?: unknown; stepStates?: unknown }
+
+/** The title a report gives: `title`, else its alias `label`, trimmed. Empty when neither is given. */
+export function titleOf(i: Pick<ReportInput, 'title' | 'label'>): string {
+  return (typeof i.title === 'string' ? i.title.trim() : '') || (typeof i.label === 'string' ? i.label.trim() : '')
+}
+
+/**
+ * Whether a report starts a new task on an existing row: it names a title unlike the stored one while nothing is done
+ * yet (done 0 or not given). Then the row's start time, step and checklist start over.
+ */
+export function isNewTask(i: Pick<ReportInput, 'title' | 'label' | 'done'>, prev: Record<string, unknown>): boolean {
+  const t = titleOf(i)
+  if (!t || !Object.keys(prev).length) return false
+  const before = typeof prev.title === 'string' ? prev.title.trim() : ''
+  return t !== before && (i.done ?? 0) === 0
+}
 
 /** The longest quiet window a report may announce: one day. */
 export const MAX_EXPECT_MIN = 24 * 60
@@ -80,7 +96,7 @@ export function reportBody(i: ReportInput, owner: Owner, startedAt: number, now 
   }
   out.step = (i.step ?? '').trim() || (out.done === undefined ? 'working' : '')
   out.startedAt = startedAt
-  out.title = i.title.trim()
+  out.title = titleOf(i)
   if (i.why?.trim()) out.why = i.why.trim()
   if (i.parent?.trim()) out.parent = slug(i.parent)
   if (i.reads?.trim()) out.reads = i.reads.trim()
@@ -127,8 +143,9 @@ export function stepsNote(steps: unknown): string {
 /** Writes (or with `finished`, removes) one progress file. Returns what the model reads. */
 export async function writeReport($: EngineInterface, h: string, i: ReportInput, owner?: Owner): Promise<string> {
   if (!h) return 'No home folder found ($HOME is unset).'
-  const name = slug(i.slug || i.title || '')
-  if (!name) return 'progress_report needs a title.'
+  const given = titleOf(i)
+  const name = slug(i.slug || given)
+  if (!name) return 'progress_report needs a title or a slug.'
   if (RESERVED.has(name)) return `"${name}" is a data file name. Pick another slug.`
   const path = `${h}/${DIR_REL}/${name}.json`
   if (i.finished) {
@@ -139,7 +156,7 @@ export async function writeReport($: EngineInterface, h: string, i: ReportInput,
     const impact = impactLines(i.impact).length ? impactLines(i.impact) : impactLines(prev.impact)
     const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
     await saveDone($, h, {
-      slug: name, title: i.title?.trim() || str(prev.title) || '', why: i.why?.trim() || str(prev.why), impact, step: str(prev.step),
+      slug: name, title: given || str(prev.title) || '', why: i.why?.trim() || str(prev.why), impact, step: str(prev.step),
       area: i.area?.trim() || str(prev.area), gains: pickGains(i.gains) ?? pickGains(prev.gains),
       started: typeof prev.startedAt === 'number' ? prev.startedAt : undefined, finished: await $.clock.now(), session: o.session || undefined, kind: 'job',
     }).catch(() => undefined)
@@ -148,7 +165,11 @@ export async function writeReport($: EngineInterface, h: string, i: ReportInput,
   }
   const now = await $.clock.now()
   const prev = await prevOf($, path)
-  const body = reportBody(i, owner ?? await ownerOf($), typeof prev.startedAt === 'number' ? prev.startedAt : now, now, prev.steps)
+  // A title left out keeps the stored one. A new title with nothing done is a new task: the clock and checklist restart.
+  const fresh = isNewTask(i, prev)
+  const title = given || (typeof prev.title === 'string' ? prev.title.trim() : '')
+  const started = !fresh && typeof prev.startedAt === 'number' ? prev.startedAt : now
+  const body = reportBody({ ...i, title, label: undefined }, owner ?? await ownerOf($), started, now, fresh ? undefined : prev.steps)
   await $.fs.write(path, JSON.stringify(body))
   const pct = typeof body.done === 'number' ? ` ${body.done}/${body.total}` : ''
   const quiet = typeof body.quietUntil === 'number' ? ` No stuck warning for ${Math.round(((body.quietUntil as number) - now) / 60_000)} min.` : ''

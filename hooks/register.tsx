@@ -357,7 +357,9 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
         if (raw && typeof raw === 'object') agentFiles.set(a.id, raw)
       } catch { p = null }
     }
-    const row: Row = { id: a.id, description: a.description, status: a.status, startedAt: s.startedAt, tools: s.tools, lastTool: s.lastTool, done: p?.done ?? null, total: p?.total ?? null, step: p?.step ?? '' }
+    // A progress file restarted for a new task (report.ts isNewTask) counts time from then, not from the agent's start.
+    const began = p?.startedAt && p.startedAt > s.startedAt ? p.startedAt : s.startedAt
+    const row: Row = { id: a.id, description: a.description, status: a.status, startedAt: began, tools: s.tools, lastTool: s.lastTool, done: p?.done ?? null, total: p?.total ?? null, step: p?.step ?? '' }
     // Signs of life: its progress file (written, a quiet window, a heartbeat file) and its own transcript written.
     const life = new Map<string, Life>()
     if (h && name) addLife(life, 'r', await fileLife($, h, `${dir}/${name}.json`, agentFiles.get(a.id)))
@@ -615,7 +617,7 @@ async function recordAgent($: EngineInterface, agentId: string, report: string, 
   try { session = await $.session.id() } catch { session = '' }
   await saveDone($, h, {
     slug: key, title: strOf(raw.title) ?? desc, why: strOf(raw.why), impact, step: strOf(raw.step), area: strOf(raw.area), gains: pickGains(raw.gains),
-    started: seen.get(agentId)?.startedAt, finished: now, session: session || undefined, kind: 'agent',
+    started: Math.max(seen.get(agentId)?.startedAt ?? 0, typeof raw.startedAt === 'number' ? raw.startedAt : 0) || undefined, finished: now, session: session || undefined, kind: 'agent',
   }).catch(() => undefined)
 }
 
@@ -963,7 +965,7 @@ export const register: Register = (on, options) => {
     const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
     // A list may arrive as JSON text. Anything else passes through, so writeReport can say it was not a list.
     const listArg = (v: unknown) => { if (typeof v !== 'string') return v; try { return JSON.parse(v) as unknown } catch { return v } }
-    const text = await writeReport($, await resolveHome($), { title: str(i.title) ?? '', done: num(i.done), total: num(i.total), step: str(i.step), why: str(i.why), parent: str(i.parent), slug: str(i.slug), reads: str(i.reads), writes: str(i.writes), impact: str(i.impact), area: str(i.area), gains: pickGains(typeof i.gains === 'string' ? (() => { try { return JSON.parse(i.gains as string) } catch { return undefined } })() : i.gains), finished: i.finished === true, expectMinutes: num(i.expect_minutes) ?? (typeof i.expect_minutes === 'string' ? num(Number(i.expect_minutes)) : undefined), heartbeat: str(i.heartbeat), steps: listArg(i.steps), stepStates: listArg(i.step_states) })
+    const text = await writeReport($, await resolveHome($), { title: str(i.title) ?? '', label: str(i.label), done: num(i.done), total: num(i.total), step: str(i.step), why: str(i.why), parent: str(i.parent), slug: str(i.slug), reads: str(i.reads), writes: str(i.writes), impact: str(i.impact), area: str(i.area), gains: pickGains(typeof i.gains === 'string' ? (() => { try { return JSON.parse(i.gains as string) } catch { return undefined } })() : i.gains), finished: i.finished === true, expectMinutes: num(i.expect_minutes) ?? (typeof i.expect_minutes === 'string' ? num(Number(i.expect_minutes)) : undefined), heartbeat: str(i.heartbeat), steps: listArg(i.steps), stepStates: listArg(i.step_states) })
     await poll($).catch(() => undefined)
     return { result: text }
   })

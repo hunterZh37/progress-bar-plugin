@@ -15,7 +15,7 @@ How jobs report progress: the progress file format, watch files for log-only job
  "steps": ["build", "render pages", "check links", "index", "publish"]}
 ```
 
-Easiest: Claude calls the plugin's `progress_report` tool (title, why, done, total, step, steps, step_states, parent, slug, reads, writes, area, gains, impact, expect_minutes, heartbeat, finished). With `finished: true` it saves the done record (below) and removes the file. It writes this file with `session`, `cwd` and `startedAt` filled in.
+Easiest: Claude calls the plugin's `progress_report` tool (title or its alias label, why, done, total, step, steps, step_states, parent, slug, reads, writes, area, gains, impact, expect_minutes, heartbeat, finished). With `finished: true` it saves the done record (below) and removes the file. It writes this file with `session`, `cwd` and `startedAt` filled in. A call without a title keeps the stored one. A new title with `done` 0 starts a new task on the same row: `startedAt` becomes now and the old `step` and `steps` are cleared, so a reused agent shows its current work and time.
 
 | Field | Does |
 | --- | --- |

@@ -100,7 +100,7 @@ progress() { mkdir -p ~/.claude-progress; printf '{"done":%s,"total":%s,"step":"
 progress nightly-import 2 5 "batch 3"
 ```
 
-Delete the file when the job ends. Add `steps` (the step names in order) and the job's row shows them as a checklist under it, its card in full. An item can carry its own `note`, shown dim after its name. The job's `step` shows once, on the step line. The full format, with `title`, `why`, `parent`, `steps`, `impact` and watch files, is in [docs/progress-files.md](docs/progress-files.md).
+Delete the file when the job ends. Add `steps` (the step names in order) and the job's row shows them as a checklist under it, its card in full. An item can carry its own `note`, shown dim after its name. The job's `step` shows once, on the step line. To give a reused agent new work, call `progress_report` with its slug, a new `title` (or `label`) and `done: 0`. Its row then shows the new task and restarts its clock. The full format, with `title`, `why`, `parent`, `steps`, `impact` and watch files, is in [docs/progress-files.md](docs/progress-files.md).
 
 ## Configuration
 

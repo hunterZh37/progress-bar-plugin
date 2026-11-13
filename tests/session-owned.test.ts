@@ -7,7 +7,7 @@ import { isProgressLine, scriptPaths } from '../hooks/chain'
 import { PANE, STATUS_OFF_REL, scriptNote, statusOffAction, statusOffReason } from '../hooks/panel'
 import { withStatusLine } from '../hooks/register'
 import { prevOf, statusScript } from '../hooks/render'
-import { reportBody, shellSlug, taskProgress, taskSlug } from '../hooks/report'
+import { PROGRESS_TOOL, isNewTask, reportBody, shellSlug, taskProgress, taskSlug } from '../hooks/report'
 import { pickOwner, routeOf, sessionKeyOf } from '../hooks/route'
 import { aliveRel, heartbeatOf, mergeLife, pickTxBase, quietUntilOf, toMs } from '../hooks/alive'
 
@@ -577,6 +577,66 @@ test('progress_report steps: stored on the first call, kept by later calls witho
   expect(files[`${P}/ship.json`]).toBe(undefined)
   await $.tool.call(report({ title: 'Ship it', slug: 'ship', done: 0, total: 2 }))
   expect(JSON.parse(files[`${P}/ship.json`]!)).not.toHaveProperty('steps')
+})
+
+test('progress_report title: label is saved, title wins over label, a left-out title keeps the stored one', { options: { openPanel: false } }, async ($, on) => {
+  const files: Record<string, string> = {}
+  world(on, files)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  const f = `${P}/summary-fills.json`
+  // label alone: saved as the title, with only a slug to name the file.
+  await $.tool.call(report({ slug: 'summary-fills', label: ' Cause grid: auto-scroll ', done: 0, total: 2 }))
+  expect(JSON.parse(files[f]!).title).toBe('Cause grid: auto-scroll')
+  // title and label both given: title wins.
+  await $.tool.call(report({ slug: 'summary-fills', title: 'Cause grid', label: 'ignored', done: 1, total: 2 }))
+  expect(JSON.parse(files[f]!).title).toBe('Cause grid')
+  // Neither given: the stored title stays, and so does the start time.
+  files[f] = JSON.stringify({ ...JSON.parse(files[f]!), startedAt: 42 })
+  await $.tool.call(report({ slug: 'summary-fills', done: 2, total: 2, step: 'wrap up' }))
+  expect(JSON.parse(files[f]!)).toMatchObject({ title: 'Cause grid', startedAt: 42, done: 2 })
+  // An empty label is the same as none.
+  await $.tool.call(report({ slug: 'summary-fills', label: '  ', done: 2, total: 2 }))
+  expect(JSON.parse(files[f]!).title).toBe('Cause grid')
+  // No title, label or slug: a clear error.
+  expect(String(((await $.tool.call(report({ done: 0, total: 1 }))) as { result?: unknown }).result)).toContain('needs a title or a slug')
+  // The registered schema lists label and does not require title.
+  expect(PROGRESS_TOOL.inputSchema.properties).toHaveProperty('label')
+  expect(PROGRESS_TOOL.inputSchema).not.toHaveProperty('required')
+  for (const k of ['steps', 'impact', 'finished', 'expect_minutes']) expect(PROGRESS_TOOL.inputSchema.properties).toHaveProperty(k)
+})
+
+test('progress_report: a new title with done 0 starts a new task on the row; an unchanged title or done > 0 does not', { options: { openPanel: false } }, async ($, on) => {
+  const files: Record<string, string> = {}
+  world(on, files)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  const f = `${P}/reused.json`
+  const old = () => { files[f] = JSON.stringify({ done: 2, total: 2, step: 'old step', startedAt: 42, title: 'Summary fills', steps: ['a', 'b'], session: SID, cwd: CWD }) }
+  // A new title at done 0: the clock, step and checklist start over.
+  old()
+  await $.tool.call(report({ slug: 'reused', label: 'Cause grid', done: 0, total: 2 }))
+  let b = JSON.parse(files[f]!)
+  expect(b).toMatchObject({ title: 'Cause grid', startedAt: NOW, step: '', done: 0 })
+  expect(b).not.toHaveProperty('steps')
+  // New steps passed with the new title are kept.
+  old()
+  await $.tool.call(report({ slug: 'reused', title: 'Cause grid', done: 0, total: 3, steps: ['x', 'y', 'z'] }))
+  expect(JSON.parse(files[f]!)).toMatchObject({ startedAt: NOW, steps: ['x', 'y', 'z'] })
+  // The same title at done 0: no reset.
+  old()
+  await $.tool.call(report({ slug: 'reused', title: 'Summary fills', done: 0, total: 2 }))
+  expect(JSON.parse(files[f]!)).toMatchObject({ startedAt: 42, steps: ['a', 'b'] })
+  // A new title with done > 0: renamed, not reset.
+  old()
+  await $.tool.call(report({ slug: 'reused', title: 'Renamed', done: 1, total: 2 }))
+  b = JSON.parse(files[f]!)
+  expect(b).toMatchObject({ title: 'Renamed', startedAt: 42, steps: ['a', 'b'] })
+  // An empty stored title (the old bug) counts as different: the new task starts now.
+  files[f] = JSON.stringify({ done: 0, total: 2, step: '', startedAt: 42, title: '', session: SID, cwd: CWD })
+  await $.tool.call(report({ slug: 'reused', label: 'Cause grid', done: 0, total: 2 }))
+  expect(JSON.parse(files[f]!)).toMatchObject({ title: 'Cause grid', startedAt: NOW })
+  expect(isNewTask({ title: 'A' }, {})).toBe(false)
+  expect(isNewTask({ title: '', label: 'B' }, { title: 'A' })).toBe(true)
+  expect(isNewTask({ title: '' }, { title: 'A' })).toBe(false)
 })
 
 test('progress_report steps: a non-list is ignored with a note and keeps the stored list, over 50 is cut to 50', { options: { openPanel: false } }, async ($, on) => {

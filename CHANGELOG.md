@@ -2,6 +2,13 @@
 
 Versions of the progress-bar plugin, newest first. Each line is the release commit. Full detail is in the git history.
 
+## 0.33.2
+
+- **Label saved:** `progress_report` saves `label` as the row's `title`. Before, a call with `label` and no `title` stored an empty title, so a reused agent's row kept its first Agent description. `title` wins when both are given, and the tool's schema now lists `label`.
+- **Title kept:** a call that leaves out `title` and `label` keeps the stored title instead of blanking it.
+- **New task on the same row:** a new title with `done` 0 starts a new task. The row's elapsed time, `step` and `steps` checklist start over, unless new `steps` are passed. An unchanged title or `done` above 0 changes nothing.
+- **Elapsed time:** a subagent row counts from its progress file's `startedAt` when that is later than the agent's start, so a reused agent shows the time on its current task.
+
 ## 0.33.1
 
 - **No repeated step:** the job's `step` shows once, on the step line. Before, every current (`◐`) item in the checklist ended with it too, inline and in the opened card.
