@@ -145,7 +145,7 @@ Each running job in the Status panel is two lines: the bold title, bar, percent 
 **Inline checklist:** a running row whose progress file has `steps` lists them under its step line, no press needed. The first dim line takes the `⎿`, the items line up under its text. It is compact:
 
 - **Window:** at most 5 items, one before the current item, the current one and up to 3 after it, then `… N more` dim when later items are cut. Earlier items fold away. Near the end of the list the window fills from earlier items.
-- **No repeats:** when the row's `step` is the current item's name, the checklist replaces the step line and the current item carries the run time (`◐ write tests · 3m`). A step that says more keeps its own line above the list.
+- **No repeats:** when the row's `step` is the current item's name, the checklist replaces the step line and that item carries the run time (`◐ write tests · 3m`). With several current items, only the one the step names gets it. An item with its own `note` shows it dim after its name. A step that says more keeps its own line above the list.
 - **Panel height:** at most 3 running rows show an inline checklist, the first 3 with `steps` in panel order. The rest show only their step line. Press one to see its list in the card.
 - **Open card:** an opened row drops the inline list and its card shows the full list (below).
 - **Option:** turn off **Inline step checklist** (`inlineSteps`) in `/config` under progress-bar to show the list only in the opened card.
@@ -161,7 +161,7 @@ Each running job in the Status panel is two lines: the bold title, bar, percent 
       … 2 more
 ```
 
-**Step checklist in the card:** a job whose progress file has `steps` lists them first in its open card, one per line under the step line, lined up under its `⎿`. Done `✓` and to do `○` items are dim, the current one `◐` is in normal weight, `✖` failed is red and `·` skipped is dim and struck through. The current item adds the job's `step` dim when it says more than the item's name. Up to 12 lines show, a longer list as a window around the current item with `… N earlier` and `… N more`. Names are cut with `…` to the card. A subagent row shows the checklist of its progress file too. See **Step checklist** in [progress-files.md](progress-files.md).
+**Step checklist in the card:** a job whose progress file has `steps` lists them first in its open card, one per line under the step line, lined up under its `⎿`. Done `✓` and to do `○` items are dim, the current one `◐` is in normal weight, `✖` failed is red and `·` skipped is dim and struck through. An item adds dim text only from its own `note`. The job's `step` shows once, on the step line, never after an item. Up to 12 lines show, a longer list as a window around the current item with `… N earlier` and `… N more`. Names are cut with `…` to the card. A subagent row shows the checklist of its progress file too. See **Step checklist** in [progress-files.md](progress-files.md).
 
 ```
   ◐ Ship it  ━━━━──────  40%

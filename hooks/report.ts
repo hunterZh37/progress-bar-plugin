@@ -60,8 +60,10 @@ export function reportSteps(i: Pick<ReportInput, 'steps' | 'stepStates'>, prev?:
   if (!states) return base
   return base.map((x, j) => {
     const name = typeof x === 'string' ? x : x.name
+    const note = typeof x === 'string' ? undefined : x.note
     const st = states[j]
-    return typeof st === 'string' && (STEP_STATES as readonly string[]).includes(st) ? { name, state: st as (typeof STEP_STATES)[number] } : name
+    const state = typeof st === 'string' && (STEP_STATES as readonly string[]).includes(st) ? st as (typeof STEP_STATES)[number] : typeof x === 'string' ? undefined : x.state
+    return state || note ? { name, ...(state ? { state } : {}), ...(note ? { note } : {}) } : name
   })
 }
 

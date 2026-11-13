@@ -2,6 +2,12 @@
 
 Versions of the progress-bar plugin, newest first. Each line is the release commit. Full detail is in the git history.
 
+## 0.33.1
+
+- **No repeated step:** the job's `step` shows once, on the step line. Before, every current (`◐`) item in the checklist ended with it too, inline and in the opened card.
+- **Item notes:** a step item can carry its own `note` (`{"name": "build", "state": "active", "note": "needs review"}`), shown dim after its name. Only items with a note show one.
+- **Run time:** when the step names a current item, only that item carries the run time, not every current one.
+
 ## 0.33.0
 
 - **Inline checklist:** a running row with `steps` shows its checklist under the step line, no press needed. The first dim line takes the `⎿`, the rest line up under it.

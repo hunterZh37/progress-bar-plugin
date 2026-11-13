@@ -310,16 +310,24 @@ export const CHECKLIST_MAX = 12
 export const STEP_STATES: readonly StepState[] = ['done', 'active', 'todo', 'skipped', 'failed']
 const isState = (x: unknown): x is StepState => typeof x === 'string' && (STEP_STATES as readonly string[]).includes(x)
 
-/** One step as stored: a name, or `{name, state}` when its state was given. Null when it has no name. */
-export type StoredStep = string | { name: string; state: StepState }
+/** A step's own note is cut to this many characters when stored. */
+export const MAX_STEP_NOTE = 200
+
+/**
+ * One step as stored: a name, or `{name, state?, note?}` when its state or its own note was given. Null when it has
+ * no name. `note` is the item's own dim text in the checklist. It never comes from the job's `step`.
+ */
+export type StoredStep = string | { name: string; state?: StepState; note?: string }
 export function storedStep(x: unknown): StoredStep | null {
-  const cut = (v: string) => { const t = v.replace(/\s+/g, ' ').trim(); return t.length > MAX_STEP_NAME ? `${t.slice(0, MAX_STEP_NAME - 1)}…` : t }
-  if (typeof x === 'string') return cut(x) || null
+  const cut = (v: string, max: number) => { const t = v.replace(/\s+/g, ' ').trim(); return t.length > max ? `${t.slice(0, max - 1)}…` : t }
+  if (typeof x === 'string') return cut(x, MAX_STEP_NAME) || null
   if (x && typeof x === 'object' && !Array.isArray(x)) {
     const o = x as Record<string, unknown>
-    const name = typeof o.name === 'string' ? cut(o.name) : ''
+    const name = typeof o.name === 'string' ? cut(o.name, MAX_STEP_NAME) : ''
     if (!name) return null
-    return isState(o.state) ? { name, state: o.state } : name
+    const note = typeof o.note === 'string' ? cut(o.note, MAX_STEP_NOTE) : ''
+    if (!isState(o.state) && !note) return name
+    return { name, ...(isState(o.state) ? { state: o.state } : {}), ...(note ? { note } : {}) }
   }
   return null
 }
@@ -331,7 +339,7 @@ export function cleanSteps(v: unknown): StoredStep[] | null {
 }
 
 /**
- * A progress file's `steps` with each item's state. A state given in the file wins. Otherwise it comes from `done`:
+ * A progress file's `steps` with each item's state and own note. A state given in the file wins. Otherwise it comes from `done`:
  * an index below it is done, the one at it is active, the rest to do. Without `done` the first item is active.
  * `total` is not used: when it differs from the list's length the bar follows `total` and the list still shows.
  */
@@ -340,9 +348,10 @@ export function stepItems(v: unknown, done?: number, total?: number): StepItem[]
   if (!list?.length) return []
   const d = typeof done === 'number' && Number.isFinite(done) ? Math.max(0, Math.floor(done)) : 0
   const finished = typeof total === 'number' && total > 0 && typeof done === 'number' && done >= total
+  const byCount = (i: number): StepState => (finished || i < d ? 'done' : i === d ? 'active' : 'todo')
   return list.map((x, i) => {
-    if (typeof x !== 'string') return { name: x.name, state: x.state }
-    return { name: x, state: finished || i < d ? 'done' : i === d ? 'active' : 'todo' }
+    if (typeof x === 'string') return { name: x, state: byCount(i) }
+    return { name: x.name, state: x.state ?? byCount(i), ...(x.note ? { note: x.note } : {}) }
   })
 }
 

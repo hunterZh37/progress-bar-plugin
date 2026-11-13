@@ -69,7 +69,7 @@ progress nightly-import 2 5 "batch 3"
       ○ publish
 ```
 
-- **Items:** each is a name (`"build"`), or `{"name": "build", "state": "done"}` to set its state. States: `done` (`✓`, dim), `active` (`◐`, normal weight), `todo` (`○`, dim), `skipped` (`·`, dim and struck through where the terminal can), `failed` (`✖`, red).
+- **Items:** each is a name (`"build"`), or `{"name": "build", "state": "done"}` to set its state. Add `"note"` for the item's own dim text (`◐ build · needs review`). Items never repeat the job's `step`. States: `done` (`✓`, dim), `active` (`◐`, normal weight), `todo` (`○`, dim), `skipped` (`·`, dim and struck through where the terminal can), `failed` (`✖`, red).
 - **States from the count:** an item with no state follows `done`. Items before index `done` are done, the one at `done` is active, the rest are to do. Once `done` reaches `total` all are done.
 - **Mismatch with `total`:** the bar always follows `done` and `total`. When the list is longer or shorter than `total`, the whole list still shows, with states from `done` as above.
 - **The current step:** `step` still shows on the row's dim line. When it says more than the active item's name, the item adds it dim: `◐ render pages · page 40 of 412`.

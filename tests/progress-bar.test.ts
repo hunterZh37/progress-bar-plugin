@@ -8,7 +8,7 @@ import { forgetLocalState } from '../hooks/chrome'
 import { closestFile, pairFile, serverOf } from '../hooks/render'
 import type { PairCandidate } from '../hooks/render'
 import { ASK_MS, LOAD_ID, askShown, askStale, controlKind, controlOptions, focusKeeps, parsePs, pidCheck, shellTree, toggleAsk } from '../hooks/control'
-import { finishedTaskIds } from '../hooks/report'
+import { finishedTaskIds, reportSteps } from '../hooks/report'
 import { loginKey, usageFileRel, usageMeterOn } from '../hooks/usage'
 import { clock } from '../hooks/done'
 import { GROUP_PY } from '../hooks/group'
@@ -2139,17 +2139,28 @@ test('stepItems: states from done, an explicit state wins, all done once done re
   expect(pickMeta({ steps: 'x' })).not.toHaveProperty('steps')
 })
 
-test('checkRows: one mark per state, the active item adds the step dim, long names cut with …', () => {
+test('checkRows: one mark per state, the job step never trails an item, long names cut with …', () => {
   const items = stepItems(['design', 'implement', 'tests', { name: 'docs', state: 'skipped' }, { name: 'deploy', state: 'failed' }], 1, 5)
-  const rows = checkRows(items, 'writing card code', 40)
-  expect(rows.map(r => `${r.mark} ${r.name}${r.suffix}`)).toEqual(['✓ design', '◐ implement · writing card code', '○ tests', '· docs', '✖ deploy'])
+  const rows = checkRows(items, 40)
+  expect(rows.map(r => `${r.mark} ${r.name}${r.suffix}`)).toEqual(['✓ design', '◐ implement', '○ tests', '· docs', '✖ deploy'])
   expect(rows.map(r => r.state)).toEqual(['done', 'active', 'todo', 'skipped', 'failed'])
-  // The step that repeats the name adds nothing.
-  expect(checkRows(items, 'Implement', 40)[1]!.suffix).toBe('')
   // Cut to the room: mark and space take 2.
-  const long = checkRows(stepItems(['a very long step name that will not fit'], 0, 1), '', 14)
+  const long = checkRows(stepItems(['a very long step name that will not fit'], 0, 1), 14)
   expect(long[0]!.name).toBe('a very long…')
   expect(long[0]!.name.length).toBe(12)
+})
+
+test('checkRows: several active items carry only their own note, never the job step', () => {
+  const items = stepItems([
+    { name: 'server', state: 'done' },
+    { name: 'latency test', state: 'active' },
+    { name: 'size filter', state: 'active', note: 'waiting on review' },
+    { name: 'drop gaps', state: 'active' },
+    { name: 'docs', note: 'after the merge' },
+  ], 1, 5)
+  expect(items.map(x => x.state)).toEqual(['done', 'active', 'active', 'active', 'todo'])
+  const rows = checkRows(items, 60)
+  expect(rows.map(r => `${r.mark} ${r.name}${r.suffix}`)).toEqual(['✓ server', '◐ latency test', '◐ size filter · waiting on review', '◐ drop gaps', '○ docs · after the merge'])
 })
 
 test('checklistLines: up to 12 lines, a window around the active item with … N earlier and … N more', () => {
@@ -2163,7 +2174,7 @@ test('checklistLines: up to 12 lines, a window around the active item with … N
   // Nothing active: the window goes to the first failed, else the first to do.
   const failed = stepItems(names.map((n, i) => (i === 20 ? { name: n, state: 'failed' } : { name: n, state: 'done' })))
   expect(checklistLines(failed).some(l => l.kind === 'item' && l.item.name === 's20')).toBe(true)
-  const rows = checkRows(stepItems(names, 15, 30), '', 40)
+  const rows = checkRows(stepItems(names, 15, 30), 40)
   expect(rows[0]).toEqual({ mark: '…', name: '13 earlier', suffix: '', state: 'more' })
   expect(rows[11]).toEqual({ mark: '…', name: '7 more', suffix: '', state: 'more' })
 })
@@ -2236,6 +2247,22 @@ test('inlineRows: a step equal to the current item replaces the step line and th
   expect(other.replaces).toBe(false)
   expect(other.rows.map(r => `${r.mark} ${r.name}${r.suffix}`)).toEqual(['✓ design', '◐ implement', '○ write tests'])
   expect(inlineRows([], 'x', '', 40)).toEqual({ rows: [], replaces: false })
+})
+
+test('inlineRows: with several active items the job step trails none, and the run time goes only to the item it names', () => {
+  const items = stepItems([{ name: 'server', state: 'done' }, { name: 'latency test', state: 'active' }, { name: 'size filter', state: 'active', note: 'needs review' }, { name: 'drop gaps', state: 'active' }])
+  const other = inlineRows(items, 'drop gaps, latency timing running', '30m', 60)
+  expect(other.replaces).toBe(false)
+  expect(other.rows.map(r => `${r.mark} ${r.name}${r.suffix}`)).toEqual(['✓ server', '◐ latency test', '◐ size filter · needs review', '◐ drop gaps'])
+  const named = inlineRows(items, 'Drop gaps', '30m', 60)
+  expect(named.replaces).toBe(true)
+  expect(named.rows.map(r => `${r.mark} ${r.name}${r.suffix}`)).toEqual(['✓ server', '◐ latency test', '◐ size filter · needs review', '◐ drop gaps · 30m'])
+})
+
+test('stepItems and reportSteps keep an item\'s own note, state from done when none is given', () => {
+  expect(stepItems([{ name: 'a', note: '  first   pass ' }, 'b'], 0, 2)).toEqual([{ name: 'a', state: 'active', note: 'first pass' }, { name: 'b', state: 'todo' }])
+  expect(stepItems([{ name: 'a', note: 3 }], 0, 1)).toEqual([{ name: 'a', state: 'active' }])
+  expect(reportSteps({ stepStates: ['done'] }, [{ name: 'a', note: 'n' }, 'b'])).toEqual([{ name: 'a', state: 'done', note: 'n' }, 'b'])
 })
 
 const inlineFile = (step: string, done: number, steps: unknown[], title: string) => JSON.stringify({ done, total: steps.length, step, title, steps })

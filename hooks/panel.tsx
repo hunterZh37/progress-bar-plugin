@@ -85,21 +85,23 @@ export type CheckRow = { mark: string; name: string; suffix: string; state: Step
 
 /**
  * An open card's checklist, `room` cells wide after the "⎿ " column: "✓ name" per item (see checklistLines for the
- * window), names cut with "…". The active item adds " · <step>" when the job's step says more than its name.
+ * window), names cut with "…". An item adds " · <note>" dim only from its own `note`. The job's `step` shows once, on
+ * the step line above, never after an item.
  */
-export function checkRows(items: readonly StepItem[], step: string, room: number): CheckRow[] {
-  const st = step.trim()
-  const more = (name: string) => st && st.toLowerCase() !== name.toLowerCase() && !name.toLowerCase().includes(st.toLowerCase())
-  return toRows(checklistLines(items), room, name => (more(name) ? ` · ${st}` : ''))
+export function checkRows(items: readonly StepItem[], room: number): CheckRow[] {
+  return toRows(checklistLines(items), room, () => '')
 }
 
-/** Checklist lines as rows `room` cells wide. `activeSuffix` gives the dim text after the active item's name. */
-function toRows(lines: CheckLine[], room: number, activeSuffix: (name: string) => string): CheckRow[] {
+/**
+ * Checklist lines as rows `room` cells wide. An item's dim suffix is its own note (" · note"), then `extra(index)`
+ * (like the run time the inline list gives one item).
+ */
+function toRows(lines: CheckLine[], room: number, extra: (index: number) => string): CheckRow[] {
   const w = Math.max(4, room - 2)
   return lines.map(l => {
     if (l.kind === 'more') return { mark: '…', name: clip(l.where === 'before' ? `${l.n} earlier` : `${l.n} more`, w), suffix: '', state: 'more' as const }
-    const { name, state } = l.item
-    const said = state === 'active' ? activeSuffix(name) : ''
+    const { name, state, note } = l.item
+    const said = `${note ? ` · ${note}` : ''}${extra(l.index)}`
     const cut = clip(name, w)
     const left = w - cut.length
     return { mark: STEP_MARK[state], name: cut, suffix: said && left > 4 ? clip(said, left) : '', state }
@@ -113,9 +115,11 @@ function toRows(lines: CheckLine[], room: number, activeSuffix: (name: string) =
  */
 export function inlineRows(items: readonly StepItem[], step: string, time: string, room: number): { rows: CheckRow[]; replaces: boolean } {
   if (!items.length) return { rows: [], replaces: false }
-  const active = items.find(x => x.state === 'active')
-  const replaces = !!active && !!step.trim() && step.trim().toLowerCase() === active.name.toLowerCase()
-  return { rows: toRows(inlineLines(items), room, () => (replaces && time ? ` · ${time}` : '')), replaces }
+  // The one active item the step names, if any. Only it carries the run time, not every active item.
+  const st = step.trim().toLowerCase()
+  const at = st ? items.findIndex(x => x.state === 'active' && x.name.toLowerCase() === st) : -1
+  const replaces = at >= 0
+  return { rows: toRows(inlineLines(items), room, i => (i === at && time ? ` · ${time}` : '')), replaces }
 }
 
 const foldedAtom = atom({ plugin: 'progress-bar', key: 'folded' } as const, [])
@@ -1458,7 +1462,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     }
     const details = (r: RunCard, k: string, pad: string, waitOn: string, tags: LensTag[] = [], machine = '', ar?: GoalArea, why = '', above = true) => tieFirst([
       waitOn ? (f: boolean) => hang(`t${k}`, pad, `waiting on: ${waitOn}`, false, f) : null,
-      ...checkRows(metaOf(r.name).steps ?? [], r.step, width - pad.length - TIE.length).map((c, j) => (f: boolean) => checkLine(`ck${k}-${j}`, pad, c, f)),
+      ...checkRows(metaOf(r.name).steps ?? [], width - pad.length - TIE.length).map((c, j) => (f: boolean) => checkLine(`ck${k}-${j}`, pad, c, f)),
       ar && ar.id !== OTHER.id ? (f: boolean) => second(`ar${k}`, pad.length, ar, why, true, f) : why ? (f: boolean) => hang(`wy${k}`, pad, why, true, f) : null,
       machine ? (f: boolean) => hang(`mc${k}`, pad, `machine: ${machine}`, true, f) : null,
       r.watchedBy ? (f: boolean) => hang(`wb${k}`, pad, `watched by ${r.watchedBy}`, true, f) : null,
