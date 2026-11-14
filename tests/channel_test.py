@@ -219,5 +219,38 @@ class Index(unittest.TestCase):
         self.assertTrue(out['path'].startswith(os.path.join(self.m.CH, 't', 'sent') + os.sep))
 
 
+class ConfRace(unittest.TestCase):
+    """A poll holds channels.json for seconds; a channel added meanwhile must survive the poll's save."""
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.m = person(os.path.join(self.tmp, 'alice'))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        os.environ.pop('PB_CHANNEL_HOME', None)
+
+    def test_channel_added_during_a_poll_is_not_wiped(self):
+        c = self.m.conf(); c['channels']['old'] = {'pins': {'me': 'a'}}; self.m.save_conf(c)
+        poll = self.m.conf()                      # the poll loads and goes to the network
+        inv = self.m.conf(); inv['channels']['new'] = {'peer': 'bob', 'pins': {'me': 'b'}}; self.m.save_conf(inv)
+        poll['channels']['old']['head'] = 'x'     # the poll finishes and saves its stale copy
+        self.m.save_conf(poll)
+        got = self.m.conf()['channels']
+        self.assertEqual(sorted(got), ['new', 'old'])
+        self.assertEqual(got['old']['head'], 'x')
+
+    def test_leave_still_removes_a_channel(self):
+        c = self.m.conf(); c['channels']['a'] = {}; c['channels']['b'] = {}; self.m.save_conf(c)
+        c = self.m.conf(); del c['channels']['a']; self.m.save_conf(c)
+        self.assertEqual(sorted(self.m.conf()['channels']), ['b'])
+
+    def test_pins_added_elsewhere_are_kept(self):
+        c = self.m.conf(); c['channels']['t'] = {'pins': {'me': 'a'}}; self.m.save_conf(c)
+        poll = self.m.conf()
+        other = self.m.conf(); other['channels']['t']['pins']['bob'] = 'fp'; self.m.save_conf(other)
+        self.m.save_conf(poll)
+        self.assertEqual(self.m.conf()['channels']['t']['pins'], {'me': 'a', 'bob': 'fp'})
+
+
 if __name__ == '__main__':
     unittest.main()

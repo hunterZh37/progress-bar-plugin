@@ -454,16 +454,42 @@ def commit_push(login, path, files, msg):
 
 # ---------- channels.json ----------
 
+class Conf(dict):
+    """channels.json as loaded. `loaded` is the channel names that were on disk at load time, so save_conf can tell a
+    channel this process removed (leave) from one another process added while this one was busy (invite, join)."""
+    loaded = frozenset()
+
+
 def conf():
-    c = read_json(CONF, {})
-    if not isinstance(c, dict):
-        c = {}
-    c.setdefault('channels', {})
+    raw = read_json(CONF, {})
+    c = Conf(raw if isinstance(raw, dict) else {})
+    if not isinstance(c.get('channels'), dict):
+        c['channels'] = {}
+    c.loaded = frozenset(c['channels'])
     return c
 
 
 def save_conf(c):
-    write_json(CONF, c)
+    """Write channels.json without losing channels added by another process since `c` was loaded.
+    A poll holds its copy for many seconds of network calls; without this merge its save wiped a channel that
+    invite or join had just created, and the new channel never showed up."""
+    import fcntl
+    os.makedirs(CH, exist_ok=True)
+    with open(os.path.join(CH, '.conf.lock'), 'w') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        disk = read_json(CONF, {})
+        disk_ch = disk.get('channels') if isinstance(disk, dict) and isinstance(disk.get('channels'), dict) else {}
+        loaded = getattr(c, 'loaded', None)
+        if loaded is not None:
+            for name, ch in disk_ch.items():
+                if name not in c['channels'] and name not in loaded:
+                    c['channels'][name] = ch
+                elif name in c['channels'] and isinstance(ch.get('pins'), dict):
+                    pins = c['channels'][name].setdefault('pins', {})
+                    for login, fp in ch['pins'].items():
+                        pins.setdefault(login, fp)
+            c.loaded = frozenset(c['channels'])
+        write_json(CONF, c)
 
 
 def pick_login(c, as_login):
