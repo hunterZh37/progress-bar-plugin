@@ -245,6 +245,7 @@ class Agent:
         self.cwd = os.path.join(WORK, aid + '-' + time.strftime('%m%d%H%M%S'))
         self.result = ''
         self.retired = False
+        self.row_done = False
 
     def public(self):
         return {'id': self.id, 'role': self.role, 'parent': self.parent, 'status': self.status,
@@ -366,17 +367,35 @@ def publish(a, impact=None):
 
 
 def retire(a):
-    """Final row with the outcome, then the file goes a few seconds later so the panel records it as done."""
-    a.retired = True
+    """Final row with the outcome, then the file goes a few seconds later so the panel records it as done. Used when an agent
+    ends, and when it finishes a turn and waits for a follow-up (it shows as running again when it is given more)."""
+    a.retired = a.status == 'ended'
+    a.row_done = True
     publish(a, clean(a.result or 'stopped', 280))
     def rm():
-        try:
-            os.remove(os.path.join(PROGRESS, slug(a) + '.json'))
-        except OSError:
-            pass
+        if a.row_done:  # not when it was given more work in the meantime
+            try:
+                os.remove(os.path.join(PROGRESS, slug(a) + '.json'))
+            except OSError:
+                pass
     t = threading.Timer(6, rm)
     t.daemon = True
     t.start()
+
+
+def sweep_rows():
+    """A restart forgets its agents, so the rows it left behind would sit in the panel as stuck jobs. Delete the ones this
+    daemon wrote (agent-*.json with "agent": true)."""
+    try:
+        names = os.listdir(PROGRESS)
+    except OSError:
+        return
+    for n in names:
+        if re.fullmatch(r'agent-[a-z0-9]+\.json', n) and read_json(os.path.join(PROGRESS, n), {}).get('agent') is True:
+            try:
+                os.remove(os.path.join(PROGRESS, n))
+            except OSError:
+                pass
 
 
 def desktop_env():
@@ -639,6 +658,7 @@ def run():
     srv = socketserver.ThreadingUnixStreamServer(SOCK, Req)
     os.chmod(SOCK, 0o600)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
+    sweep_rows()
     state = read_json(STATE, {})
     log('daemon up, channel=' + (cfg['channel'] or '(none)'))
     while True:
@@ -651,9 +671,15 @@ def run():
                         a.stop()
             with lock:
                 for a in list(agents.values()):
-                    if a.status == 'ended' and not a.retired:
-                        retire(a)
-                    elif a.status != 'ended':
+                    busy = any(w in agents and agents[w].status in ('working', 'starting') for w in a.workers)
+                    if a.status == 'ended':
+                        if not a.retired:
+                            retire(a)
+                    elif a.status == 'idle' and not busy:
+                        if not a.row_done:   # a finished turn is a done row, not a running one that looks stuck
+                            retire(a)
+                    else:
+                        a.row_done = False
                         publish(a)
             if cfg['channel']:
                 for _, text, who in inbound(state):
