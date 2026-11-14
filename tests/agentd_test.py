@@ -188,6 +188,24 @@ class T(unittest.TestCase):
         self.assertEqual(m.setup(['--auto']), '')              # no channel yet: silent in auto mode
         self.assertIn('No secure channel', m.setup([]))
 
+    def test_group_chat_switch(self):
+        m = self.m
+        m.handle('/task --small one')
+        aid = next(iter(m.agents))
+        m.set_group(False)
+        self.assertFalse(m.group_on())
+        self.assertFalse(m.serve({'op': 'post', 'id': aid, 'text': 'x'})['ok'])
+        self.assertFalse(m.serve({'op': 'read', 'id': aid})['ok'])
+        self.assertEqual(m.unread('s-1'), [])
+        with self.assertRaises(ValueError):
+            m.spawn('another')
+        self.assertEqual(m.main(['groupchat']), 'Group chat is off.')
+        self.assertEqual(m.main(['chat-read']), '(group chat is off)')
+        self.assertEqual(m.main(['groupchat', 'on']), 'Group chat is on.')
+        self.assertTrue(m.serve({'op': 'post', 'id': aid, 'text': 'back'})['ok'])
+        self.assertEqual(m.main(['groupchat', 'toggle']), 'Group chat is off.')
+        self.assertEqual(m.setup(['--auto']), '')              # off on purpose: setup does not restart the daemon
+
     def test_unread_gives_session_only_new_collaborator_lines(self):
         m = self.m
         m.record('collaborator', 'old')

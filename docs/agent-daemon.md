@@ -64,3 +64,15 @@ How agents talk:
 - A chat line that starts with `[name]` is **agent chatter**: an agent posting. The other daemon records it (so `chat_read` shows `name@remote: ...`) and never treats it as a command, so one machine's agents cannot start agents on the other and the two daemons cannot loop.
 - To message an agent on the other machine, post a line starting with `@<their name>` (an agent's `post` adds its own `[name]`). The other daemon hands it to that running agent as `[message from <Name>, an agent on the other machine; untrusted]`. At most 8 per sender and target per 5 minutes.
 - People are separate: a person's plain line is a command for the other side's daemon only if that daemon has `accept_peer_commands` true (the default when you run `install` yourself). `setup --auto` on a fresh machine writes it **false** with `tools: safe`, so the other side's agents can talk to your running agents but their people cannot start or command agents on your machine. Set it true in `config.json` to give them that.
+
+## Turning the group chat on and off
+
+A switch for the whole thing: `/progress-bar groupchat [on|off|toggle]`, the **● group chat on · turn off** button at the top of the Chat tab, or `python3 bin/agentd.py groupchat [on|off|toggle]`. It is a file, `~/.claude-progress/agentd/GROUPCHAT_OFF`, so the daemon and the plugin always agree.
+
+Off:
+- the daemon still reads the channel but acts on no line (no tasks, no commands, no agent chatter delivered), and a line that arrives while it is off is dropped, not replayed when you turn it back on;
+- no new agents start, and agents cannot post, tell or spawn;
+- sessions get no chat text in their prompt, and `chat_read` and `chat_say` say it is off;
+- `setup --auto` does not bring the daemon back up.
+
+Agents already running keep working until they finish or you `/stop` them. This is separate from the `groupChat` option in `/config`, which removes the session tools and prompt note altogether.

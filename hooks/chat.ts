@@ -9,6 +9,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
 import { CONF_REL, CH_REL, READ_REL, insideChannel, readChannel } from './channel'
+import { groupChatCommand, groupOn } from './groupchat'
 import type { ChatMsg, ChatState } from '../types'
 
 export const INDEX_REL = `${CH_REL}/index.json`
@@ -21,7 +22,7 @@ export const PAGE_LINES = 30
 const KEEP_READ = 500
 const TEXT_EXT = /\.(md|markdown|txt)$/i
 
-export const chatAtom = atom({ plugin: 'progress-bar', key: 'chat' } as const, { msgs: [], channels: [], sel: '', open: '', page: 0, full: [], sending: false, note: '', draft: '', n: 0, back: 0 } as ChatState)
+export const chatAtom = atom({ plugin: 'progress-bar', key: 'chat' } as const, { msgs: [], channels: [], sel: '', open: '', page: 0, full: [], sending: false, note: '', draft: '', n: 0, back: 0, groupOn: true } as ChatState)
 const tabAtom = atom({ plugin: 'progress-bar', key: 'tab' } as const, 'list')
 
 /** Text safe to draw: no ANSI/OSC escapes, no control or bidi-override chars (newlines kept), at most `n` chars. */
@@ -125,8 +126,9 @@ export async function readChat($: EngineInterface, h: string) {
   const sel = channels.includes(prev.sel) ? prev.sel : channels[0] ?? ''
   const shown = new Set(msgs.filter(m => m.channel === sel).slice(-40).map(m => m.id))
   msgs = await Promise.all(msgs.map(async m => (shown.has(m.id) ? { ...m, text: await previewFor($, m) } : m)))
-  if (JSON.stringify([prev.msgs, prev.channels, prev.sel]) !== JSON.stringify([msgs, channels, sel])) {
-    await update($, chatAtom, c => ({ ...c, msgs, channels, sel }))
+  const on = await groupOn($, h)
+  if (JSON.stringify([prev.msgs, prev.channels, prev.sel, prev.groupOn]) !== JSON.stringify([msgs, channels, sel, on])) {
+    await update($, chatAtom, c => ({ ...c, msgs, channels, sel, groupOn: on }))
   }
   if ((await read($, tabAtom)) === 'chat' && msgs.some(m => m.channel === sel && m.unread)) await markThreadRead($, h, sel)
 }
@@ -204,6 +206,12 @@ export function windowThread<T>(thread: T[], back: number, budget: number, rowsO
     start--
   }
   return { shown: thread.slice(start, end), older: start, newer: thread.length - end }
+}
+
+/** The Chat tab's group chat button: flips the switch with `agentd.py groupchat toggle` and redraws. */
+export async function toggleGroup($: EngineInterface, h: string): Promise<void> {
+  await groupChatCommand($, 'toggle')
+  await readChat($, h)
 }
 
 export const pageCount = (lines: number) => Math.max(1, Math.ceil(lines / PAGE_LINES))

@@ -10,7 +10,7 @@ import { GH_EVERY, openUrl, openWeb, readGh } from './github'
 import { resolveHome } from './home'
 import { ACTION_PANE, logEvent, canRun, cancelRun, closeAction, confirmRun, copyCommand, cut as cutA, ranIt, readActions, runAction } from './actions'
 import { markRead, openLocal, readChannel } from './channel'
-import { PAGE_LINES, bubbleLines, kb, msgRows, pageCount, readChat, selectChannel, sendChat, toggleOpen, when, windowThread } from './chat'
+import { PAGE_LINES, bubbleLines, kb, msgRows, pageCount, readChat, selectChannel, sendChat, toggleGroup, toggleOpen, when, windowThread } from './chat'
 import { markHandled, readInbox } from './inbox'
 import { isDarwin } from './mac'
 import { backfillAgent, clock, doneDetails, machineName, prettyName, readDone } from './done'
@@ -1732,7 +1732,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           {chat.channels.length === 0
             ? <Text dimColor>{'No channels yet. /progress-bar channel invite <github-user> [name]'}</Text>
             : [
-                <Text key="ch-title" bold color="cyan">{'CHANNELS'}</Text>,
+                <Box key="ch-head">
+                  <Text bold color="cyan">{'CHANNELS  '}</Text>
+                  <Button key="ch-group" plain onPress={() => toggleGroup($, homeDir)}>{chat.groupOn ? '● group chat on · turn off' : '○ group chat off · turn on'}</Button>
+                </Box>,
                 ...pick,
                 <Text key="ch-rule" dimColor>{'─'.repeat(Math.max(10, width - 2))}</Text>,
                 thread.length === 0 ? <Text key="ch-empty" dimColor>{'  No messages yet. Say hi below.'}</Text> : null,

@@ -98,8 +98,8 @@ export type ChanItem = { id: string; channel: string; from: string; filename: st
 export type Channel = { items: ChanItem[] }
 /** Chat tab: one message of ~/.claude-progress/channel/index.json, either direction. `sent` is epoch s, `text` the sanitized preview (a chat line whole), `chat` a say line drawn as a bubble. */
 export type ChatMsg = { id: string; channel: string; dir: 'in' | 'out'; from: string; filename: string; path: string; size: number; sent: number; chat: boolean; text: string; unread: boolean }
-/** Chat tab: messages oldest first, channel names, the one shown, the expanded message, its page and full lines, the compose state (`n` renews the field after a send), and how many messages the thread view is scrolled back from the newest (`back`). */
-export type ChatState = { msgs: ChatMsg[]; channels: string[]; sel: string; open: string; page: number; full: string[]; sending: boolean; note: string; draft: string; n: number; back: number }
+/** Chat tab: messages oldest first, channel names, the one shown, the expanded message, its page and full lines, the compose state (`n` renews the field after a send), and how many messages the thread view is scrolled back from the newest (`back`), and whether the group chat is on (`groupOn`). */
+export type ChatState = { msgs: ChatMsg[]; channels: string[]; sel: string; open: string; page: number; full: string[]; sending: boolean; note: string; draft: string; n: number; back: number; groupOn: boolean }
 
 /** Action needed: one row of ~/.claude-progress/actions.json. `created` and `closed` are epoch s. `check` is a read-only test, never the command. */
 export type Action = { id: string; title: string; command?: string; why: string; check?: string; priority: 'high'; created: number; project?: string; status: 'open' | 'done' | 'skipped'; skipReason?: string; closed?: number }

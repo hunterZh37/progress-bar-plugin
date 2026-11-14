@@ -5,7 +5,7 @@ import { ATTACH_COMMAND, ATTACH_DESCRIPTION, attachFiles } from './attach'
 import { countTool, endTurn, sessionRow, setAutoReport, startTurn, tickTurn, turn, withReportSection } from './auto'
 import { autonextCommand, ownJobs, tickAutonext } from './autonext'
 import { backfillChat, sayCommand } from './chat'
-import { CHAT_READ_TOOL, CHAT_SAY_TOOL, chatRead, chatSay, chatSectionText, ensureDaemon, withChatSection } from './groupchat'
+import { CHAT_READ_TOOL, CHAT_SAY_TOOL, chatRead, chatSay, chatSectionText, ensureDaemon, groupChatCommand, groupOn, withChatSection } from './groupchat'
 import { CHANNEL_EVERY, SEND_TOOL, channelCommand, pollChannel, sendCommand, sendFile } from './channel'
 import { inboxCommand } from './inbox'
 import { chainable } from './chain'
@@ -77,6 +77,7 @@ const USAGE = [
   '  checkpoint (or away): save the running jobs. The Status panel shows what happened since once you are back',
   '  inbox: emails that need you (~/.claude-progress/inbox.json). inbox setup: write the example Gmail checker',
   '  channel: an encrypted channel to a collaborator (invite, join, list, read, leave). send <file> to <name>: send them a file',
+  '  groupchat [on|off|toggle]: turn the agent group chat on or off (the Chat tab has a button too)',
   '  say <name> <text>: send a short chat line on that channel (the Status panel\'s Chat tab shows the thread)',
   '  setup mac-clicks [off]: click a section header to fold it (macOS)',
   '  sections: todo, running, waiting, done, problems, all',
@@ -963,7 +964,7 @@ export const register: Register = (on, options) => {
       const r = await next(e)
       let sections = r.sections
       if (autoReport) sections = withReportSection(sections, e.traits)
-      if (groupChat && e.agentId === undefined) sections = withChatSection(sections, await chatSectionText($, await sessionKeyOf($)), e.traits)
+      if (groupChat && e.agentId === undefined && await groupOn($, await resolveHome($))) sections = withChatSection(sections, await chatSectionText($, await sessionKeyOf($)), e.traits)
       return { ...r, sections }
     })
   }
@@ -1136,7 +1137,7 @@ export const register: Register = (on, options) => {
   })
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup [mac-clicks [off]] | demo | action [list|add|done|skip <reason>] | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | channel | send <file> to <name> | say <name> <text> | fold <section>]' })
+    await $.command.register({ name: 'progress-bar', description: 'Show live progress bars, or set up the status line', argumentHint: '[setup [mac-clicks [off]] | demo | action [list|add|done|skip <reason>] | clear | todo | panel [on|off] | autonext [on|off|ask] | checkpoint [label] | inbox [setup] | channel | send <file> to <name> | say <name> <text> | groupchat [on|off] | fold <section>]' })
     await $.command.register({ name: ATTACH_COMMAND, description: ATTACH_DESCRIPTION, immediate: true }).catch(() => undefined)
     await $.tool.register(SEND_TOOL).catch(() => undefined)
     if (groupChat) {
@@ -1251,6 +1252,7 @@ export const register: Register = (on, options) => {
       : /^channel\b/.test(arg) ? await channelCommand($, await resolveHome($), raw.slice(7))
       : /^send\b/.test(arg) ? await sendCommand($, await resolveHome($), raw.slice(4))
       : /^say\b/.test(arg) ? await sayCommand($, await resolveHome($), raw.slice(3))
+      : /^groupchat\b/.test(arg) ? await groupChatCommand($, arg.slice(9))
       : /^(fold|unfold|toggle)\b/.test(arg) ? await fold($, arg)
       : USAGE
     return { text }

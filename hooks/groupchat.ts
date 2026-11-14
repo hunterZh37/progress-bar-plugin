@@ -7,6 +7,23 @@
 
 import type { EngineInterface } from 'claude-code'
 
+/** The switch: this file exists while the group chat is off (bin/agentd.py groupchat on|off|toggle writes it). */
+export const GROUP_OFF_REL = '.claude-progress/agentd/GROUPCHAT_OFF'
+
+/** Is the group chat on? Anything but an existing GROUPCHAT_OFF file means on. */
+export async function groupOn($: EngineInterface, h: string): Promise<boolean> {
+  if (!h) return true
+  try { await $.fs.read(`${h}/${GROUP_OFF_REL}`); return false } catch { return true }
+}
+
+/** `/progress-bar groupchat [on|off|toggle]`: sets or shows the switch. Off, the daemon acts on no chat line, starts no
+ *  agents, agents and sessions can neither post nor read, and sessions get no chat text in their prompt. */
+export async function groupChatCommand($: EngineInterface, arg: string): Promise<string> {
+  const a = arg.trim().toLowerCase()
+  const args = a === 'on' || a === 'off' || a === 'toggle' ? [a] : []
+  return agentd($, ['groupchat', ...args])
+}
+
 export const CHAT_SECTION_ID = 'progress-bar-group-chat'
 export const CHAT_READ_TOOL = {
   name: 'chat_read',

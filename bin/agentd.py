@@ -31,7 +31,7 @@ Files, all under $PB_AGENTD_HOME (default ~/.claude-progress/agentd, folder 700)
   agentd.sock  the local socket (0600)     state.json  agents and the chat cursor     work/<id>/  each agent's cwd
   PAUSED       exists while paused         agents.log  one line per event, never message content
 
-Usage: agentd.py run | setup [--channel NAME] [--auto] | install [--now] | uninstall | status | list | pause | resume | stop-all
+Usage: agentd.py run | groupchat [on|off|toggle] | setup [--channel NAME] [--auto] | install [--now] | uninstall | status | list | pause | resume | stop-all
        | post <id> <text...> | spawn <id> <task...> | tell <id> <to-id> <text...>
 """
 import json, os, plistlib, re, secrets, shlex, shutil, socket, socketserver, subprocess, sys, threading, time
@@ -49,6 +49,7 @@ if len(SOCK.encode()) > 100:  # a unix socket path is at most 104 bytes on macOS
 CONF = os.path.join(HOME, 'config.json')
 STATE = os.path.join(HOME, 'state.json')
 PAUSED = os.path.join(HOME, 'PAUSED')
+GROUP_OFF = os.path.join(HOME, 'GROUPCHAT_OFF')
 LOG = os.path.join(HOME, 'agents.log')
 WORK = os.path.join(HOME, 'work')
 MAX_LINE = 4000
@@ -158,6 +159,8 @@ def who_of(s):
 def unread(key):
     """The collaborator's chat lines this session has not been shown, oldest first, at most 10. The first call for a key
     sets its cursor to now, so history is never replayed into a session. Each call moves the cursor on."""
+    if not group_on():
+        return []
     path = os.path.join(HOME, 'cursors', who_of(key))
     try:
         with open(CHATLOG, encoding='utf-8') as f:
@@ -177,10 +180,28 @@ def unread(key):
     return [r['who'] + ': ' + r['text'] for r in rows if r['ts'] > cur and r['who'] == 'collaborator'][-10:]
 
 
+def group_on():
+    """The group chat switch. Off (the file exists): the daemon reads the chat but acts on none of it, starts no agents, and
+    agents and sessions can neither post nor see it. Lines that arrive while it is off are consumed, never replayed."""
+    return not os.path.exists(GROUP_OFF)
+
+
+def set_group(on):
+    os.makedirs(HOME, mode=0o700, exist_ok=True)
+    if on:
+        try:
+            os.remove(GROUP_OFF)
+        except OSError:
+            pass
+    else:
+        open(GROUP_OFF, 'w').close()
+    log('group chat ' + ('on' if on else 'off'))
+
+
 def say(text, who='agentd'):
     """A chat line, prefixed with who spoke. Long text is cut, a chat line is at most 4000 characters."""
     name = cfg.get('channel')
-    if not name:
+    if not name or not group_on():
         return False
     record(who, text)
     line = '[' + who + '] ' + clean_chat(text)
@@ -425,6 +446,8 @@ def new_id(role):
 
 def spawn(task, role='agent', parent=None):
     with lock:
+        if not group_on():
+            raise ValueError('group chat is off')
         if os.path.exists(PAUSED):
             raise ValueError('paused')
         if len(live()) >= cfg['max_agents']:
@@ -596,6 +619,8 @@ def serve(req):
     me = agents.get(aid)
     if op in ('post', 'spawn', 'tell', 'read') and (not me or me.status == 'ended'):
         return {'ok': False, 'error': 'unknown or ended agent id'}
+    if op in ('post', 'tell', 'spawn', 'read') and not group_on():
+        return {'ok': False, 'error': 'group chat is off'}
     if op == 'post':
         return {'ok': say(str(req.get('text', ''))[:3500], aid)}
     if op == 'tell':
@@ -657,7 +682,8 @@ def run():
                         publish(a)
             if cfg['channel']:
                 for _, text, who in inbound(state):
-                    handle(text, who)
+                    if group_on():  # off: the line is consumed so it is not replayed when the chat is turned back on
+                        handle(text, who)
                 write_json(STATE, {**state, 'agents': [a.public() for a in agents.values()]})
         except Exception as e:  # the daemon must outlive one bad message or one gh hiccup
             log('loop error: ' + type(e).__name__ + ' ' + clean(e, 120))
@@ -752,6 +778,8 @@ def setup(args):
     --auto on a machine with no config.json creates it with tools "safe" and accept_peer_commands false: the other side's
     agents can message this machine's running agents, but people there cannot start or command agents here."""
     auto = '--auto' in args
+    if auto and not group_on():
+        return ''  # turned off on purpose: do not bring the daemon back up
     want = args[args.index('--channel') + 1] if '--channel' in args and args.index('--channel') + 1 < len(args) else ''
     mark = read_json(SETUP_MARK, {})
     if auto and mark.get('done') and running():
@@ -828,11 +856,21 @@ def main(argv):
         open(PAUSED, 'a').close()
         r = call({'op': 'stopall'})
         return 'Paused, and asked every agent to stop.' if r.get('ok') else 'Paused. The daemon is not running.'
+    if cmd == 'groupchat':
+        if a and a[0] in ('on', 'off'):
+            set_group(a[0] == 'on')
+        elif a and a[0] == 'toggle':
+            set_group(not group_on())
+        return 'Group chat is ' + ('on' if group_on() else 'off') + '.'
     if cmd == 'chat-read':
+        if not group_on():
+            return '(group chat is off)'
         return '\n'.join(recent(int(a[0]) if a and a[0].isdigit() else 30)) or '(the chat is empty)'
     if cmd == 'chat-unread' and a:
         return '\n'.join(unread(a[0]))
     if cmd == 'chat-say' and len(a) >= 2:
+        if not group_on():
+            raise SystemExit('agentd: group chat is off')
         cfg = load_config()
         if not cfg['channel']:
             raise SystemExit('agentd: no channel is set in ' + CONF)
