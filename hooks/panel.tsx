@@ -157,7 +157,7 @@ const logAtom = atom({ plugin: 'progress-bar', key: 'log' } as const, { events: 
 const recapAtom = atom({ plugin: 'progress-bar', key: 'recap' } as const, { cp: null, lastTick: 0, open: false } as Recap)
 const inboxAtom = atom({ plugin: 'progress-bar', key: 'inbox' } as const, { checked: 0, items: [] } as Inbox)
 const channelAtom = atom({ plugin: 'progress-bar', key: 'channel' } as const, { items: [] } as Channel)
-const chatAtom = atom({ plugin: 'progress-bar', key: 'chat' } as const, { msgs: [], channels: [], sel: '', open: '', page: 0, full: [], sending: false, note: '', draft: '', n: 0 } as ChatState)
+const chatAtom = atom({ plugin: 'progress-bar', key: 'chat' } as const, { msgs: [], channels: [], sel: '', open: '', page: 0, full: [], sending: false, note: '', draft: '', n: 0, back: 0 } as ChatState)
 const actionsAtom = atom({ plugin: 'progress-bar', key: 'actions' } as const, [] as Action[])
 const actionUiAtom = atom({ plugin: 'progress-bar', key: 'actionUi' } as const, { confirm: '', term: '', failId: '', fail: '' } as ActionUi)
 // Why the panel or status line may show nothing (pollPanel, noteStatusLine), drawn as a short line.
