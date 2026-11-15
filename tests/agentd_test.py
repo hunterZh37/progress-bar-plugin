@@ -224,11 +224,80 @@ class T(unittest.TestCase):
         idx = os.path.join(m.CH, 'index.json')
         json.dump([entry('old1')], open(idx, 'w'))
         m.channel_cmd = lambda *a, **k: (0, '')
+        m.cfg['accept_peer_commands'] = True  # the owner gave the peer command rights on purpose
         st = {}
         self.assertEqual(m.inbound(st), [])
         json.dump([entry('old1'), entry('new1'), entry('mine', 'out'), entry('bad', ok=False)], open(idx, 'w'))
         self.assertEqual([(t, w) for _, t, w in m.inbound(st)], [('/task hi new1', 'collaborator'), ('/task hi mine', 'owner')])
         self.assertEqual(m.inbound(st), [])
+
+
+    def _argv_of_new_agent(self):
+        m = self.m
+        seen = {}
+        def fake_popen(argv, **kw):
+            seen['argv'], seen['cwd'] = argv, kw.get('cwd')
+            raise RuntimeError('captured')
+        real = m.subprocess.Popen
+        m.subprocess.Popen = fake_popen
+        try:
+            m.Agent('bob', 'task', 'agent').start()
+        except RuntimeError:
+            pass
+        finally:
+            m.subprocess.Popen = real
+        return seen
+
+    def test_defaults_are_safe_file_tools_in_the_work_folder(self):
+        m = self.m
+        d = m.DEFAULTS
+        self.assertEqual((d['tools'], d['allow_full_access'], d['accept_peer_commands']), ('safe', False, False))
+        self.assertFalse(m.full_mode())
+        seen = self._argv_of_new_agent()
+        argv = seen['argv']
+        allowed = argv[argv.index('--allowedTools') + 1:argv.index('--disallowedTools')]
+        self.assertIn('Read(./**)', allowed)
+        self.assertIn('Edit(./**)', allowed)
+        self.assertIn('Write(./**)', allowed)
+        self.assertNotIn('Bash', allowed)
+        self.assertNotIn('Read', allowed)
+        self.assertFalse(any(t.startswith('Web') for t in allowed))
+        # Every Bash rule is one of the daemon's own client commands.
+        self.assertTrue(all(t.startswith('Bash(python3 ' + m.SELF + ' ') for t in allowed if t.startswith('Bash')))
+        denied = argv[argv.index('--disallowedTools') + 1:argv.index('--append-system-prompt')]
+        for t in ('Read(~/.ssh/**)', 'Read(~/.claude/**)', 'Read(~/.claude-progress/channel/**)', 'WebFetch', 'WebSearch'):
+            self.assertIn(t, denied)
+        self.assertEqual(argv[argv.index('--permission-mode') + 1], 'dontAsk')
+        self.assertEqual(argv[argv.index('--max-budget-usd') + 1], str(m.DEFAULTS['max_budget_usd']))
+        self.assertTrue(seen['cwd'].startswith(os.path.join(m.HOME, 'work') + os.sep))
+
+    def test_full_access_needs_two_flags_and_warns(self):
+        import io
+        m = self.m
+        m.cfg['tools'] = 'full'                          # one flag alone: still safe, and it says so
+        self.assertFalse(m.full_mode())
+        out = io.StringIO()
+        self.assertIn('without "allow_full_access": true', m.warn_full(out))
+        self.assertIn('--disallowedTools', self._argv_of_new_agent()['argv'])
+        m.cfg['allow_full_access'] = True                # both: full access, with a warning on start
+        self.assertTrue(m.full_mode())
+        out = io.StringIO()
+        self.assertIn('WARNING: agentd full access is on', m.warn_full(out))
+        self.assertIn('WARNING', out.getvalue())
+        self.assertIn('Bash', self._argv_of_new_agent()['argv'])
+        m.cfg['allow_full_access'] = 'yes'               # only a real true counts
+        self.assertFalse(m.full_mode())
+
+    def test_auto_setup_never_reinstalls_a_removed_service(self):
+        m = self.m
+        os.makedirs(m.CH, exist_ok=True)
+        json.dump({'channels': {'hunter': {}}}, open(os.path.join(m.CH, 'channels.json'), 'w'))
+        calls = []
+        m.install = lambda now: calls.append(now) or 'installed'
+        m.running = lambda: False                        # the person removed the service
+        m.write_json(m.SETUP_MARK, {'done': True, 'channel': 'hunter'})
+        self.assertEqual(m.setup(['--auto']), '')
+        self.assertEqual(calls, [])
 
 
 if __name__ == '__main__':

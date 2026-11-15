@@ -1,6 +1,6 @@
 {
   "name": "progress-bar",
-  "version": "0.34.1",
+  "version": "0.35.0",
   "description": "Live progress bars in the status line and a docked Status panel for subagents and long jobs that write ~/.claude-progress/<slug>.json",
   "license": "MIT",
   "author": {
@@ -59,8 +59,14 @@
     "groupChat": {
       "type": "boolean",
       "title": "Group chat",
-      "description": "Let this session read and post in the machine's group chat (needs the agent daemon, docs/agent-daemon.md). The collaborator's new chat lines are added to the system prompt as untrusted instructions, so anyone on your secure channel can steer your sessions. Your permission prompts still apply. Turn it off here.",
-      "default": true
+      "description": "Off by default. On, this session gets chat_read and chat_say for the machine's group chat (needs the agent daemon, docs/agent-daemon.md). The collaborator's new chat lines are attached to your own next prompt as quoted data, marked as untrusted messages, not instructions, and capped. A toast says when lines were attached. Your permission prompts still apply.",
+      "default": false
+    },
+    "agentLink": {
+      "type": "boolean",
+      "title": "Agent link",
+      "description": "Off by default. On, the plugin sets up the agent daemon (bin/agentd.py) once a secure channel exists: it installs and starts a background service (a LaunchAgent on macOS, a systemd user service on Linux) so your agents and a collaborator's agents can message each other. Off, the plugin never installs or starts a service.",
+      "default": false
     }
   }
 }

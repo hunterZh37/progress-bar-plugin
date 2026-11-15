@@ -48,7 +48,7 @@ Each one stays out of the way until you set it up.
 | **Overnight recap** | Shows what happened while you were away, from a checkpoint you save | [docs/overnight-recap.md](docs/overnight-recap.md) |
 | **Secure channel** | Sends files to a collaborator's Claude Code session, end-to-end encrypted, over a private GitHub repo | [docs/secure-channel.md](docs/secure-channel.md) |
 | **Chat** | Chat lines over a secure channel, in the panel's Chat tab | [docs/secure-channel.md](docs/secure-channel.md) |
-| **Agent daemon** | A background service that turns chat lines from a collaborator into Claude agents: tasks, pivots, coordinator and workers | [docs/agent-daemon.md](docs/agent-daemon.md) |
+| **Agent daemon** | A background service that turns chat lines from a collaborator into Claude agents: tasks, pivots, coordinator and workers. Off until you turn on **Agent link** or set it up by hand | [docs/agent-daemon.md](docs/agent-daemon.md) |
 | **herdr** | A connectors side pane for the herdr terminal workspace | [herdr/README.md](herdr/README.md) |
 | **/attach** | macOS file picker that adds files to your prompt as `@` mentions | [docs/attach.md](docs/attach.md) |
 | **Usage meter** | Your plan's 7-day usage in the panel. Off by default, see Configuration | [docs/status-panel.md](docs/status-panel.md) |
@@ -126,6 +126,8 @@ Set these in `/config`, under progress-bar.
 | **Report work automatically** (`autoReport`) | on | Tells Claude once per conversation to report multi-step work, and shows a long busy turn as a row. Off, rows come only from task lists, long commands, subagents and `progress_report` calls |
 | **Usage meter** (`usageMeter`) | off | Shows your plan's 7-day usage in the panel. On, one session per machine runs a tiny `claude -p` Haiku call every 30 minutes on your login to read it |
 | **Hide account emails** (`hideEmails`) | off | Masks account emails in the panel and the Chrome part, such as `j•••@example.com`, for screen sharing |
+| **Group chat** (`groupChat`) | off | Gives your sessions `chat_read` and `chat_say` for the agent daemon's group chat. The collaborator's new lines ride on your own next prompt as quoted data, never as instructions |
+| **Agent link** (`agentLink`) | off | Lets the plugin set up the agent daemon once a secure channel exists. It installs and starts a background service. Off, the plugin never does |
 | **Inline step checklist** (`inlineSteps`) | on | Shows a running job's `steps` under its row (up to 5 items, on up to 3 rows). Off shows them only in the opened card |
 
 ### Environment variables

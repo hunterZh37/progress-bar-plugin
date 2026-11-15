@@ -2,11 +2,21 @@
 
 Versions of the progress-bar plugin, newest first. Each line is the release commit. Full detail is in the git history.
 
-## Unreleased
+## 0.35.0
 
-- **Agent link:** `agentd.py setup` (run automatically by the plugin once a channel exists) installs the daemon on both machines and lets their agents message each other: chat lines `[name] ...` are agent chatter, never commands, and `@<name>` reaches a running agent on the other side as untrusted input, rate limited. A fresh machine accepts no commands from the other side's people.
+- **Opt-in:** group chat and the agent link are now off by default. A fresh install runs no agent daemon, installs no service, registers no chat tools and adds nothing from the chat to any prompt.
+- **Turn them on:** in `/config` under progress-bar, set **Group chat** (`groupChat`) for the chat tools in your sessions, and **Agent link** (`agentLink`) to let the plugin set up the daemon. The daemon can also be set up by hand with `python3 bin/agentd.py setup`. See `docs/agent-daemon.md`.
+- **Agent link alone sets up the service:** only `agentLink` lets the plugin run `agentd.py setup --auto`. It sets the service up once. After that a reload or an update never installs it again, even if you removed it. Only `agentd.py setup` by hand does.
+- **Chat lines are data:** with Group chat on, the collaborator's new lines are attached only to your own next prompt, never to a notice, a loop or another session's message, so a chat line cannot start a turn or a tool call by itself. They come in one fenced `<group-chat-data>` block, quoted line by line, at most 10 lines of 300 characters and 2000 in all, marked as untrusted messages, not instructions. A toast says when lines were attached. The system prompt carries only a short constant note.
+- **Full access needs two flags:** daemon agents get a shell, the network and the desktop only with both `"tools": "full"` and `"allow_full_access": true` in `config.json`, and the daemon prints a warning on start and in `setup`. One flag alone keeps the safe tools and says so.
+- **Safe agents stay in their folder:** file tools are scoped to the agent's work folder (`Read(./**)`, `Edit(./**)`, `Write(./**)`), with SSH keys, `~/.claude`, the channel keys, cloud and shell config, `.env` files and the web denied.
+- **Peer commands off:** `accept_peer_commands` now defaults to false for every new config, not only `setup --auto`.
+
+### Also new in 0.35.0 (PRs #3 to #6)
+
+- **Agent link:** `agentd.py setup` (run by the plugin once a channel exists, only with **Agent link** on) installs the daemon on both machines and lets their agents message each other: chat lines `[name] ...` are agent chatter, never commands, and `@<name>` reaches a running agent on the other side as untrusted input, rate limited. A fresh machine accepts no commands from the other side's people.
 - **Agent names:** the daemon gives each agent a random human first name (Bob, Gerald, Doris...) instead of a hex id. Use it as `@gerald ...` or start a message with `gerald, ...`.
-- **Agent daemon:** `bin/agentd.py` is a background service that takes tasks from a secure-channel collaborator. `/task` starts one agent, or a coordinator with workers for a big task. `@<id>` pivots a running agent, and every agent can post to the chat. Runs as a systemd user service (`agentd.py install`). Agents read the group chat, and plain chat lines or `@all` reach every running agent. With the new **Group chat** option, ordinary sessions get `chat_read` and `chat_say` tools and see the collaborator's new lines as untrusted instructions. See `docs/agent-daemon.md`. Agents show as Status panel rows and under their id in the Chat tab, plain text needs no command, and `"tools": "full"` in the daemon's config gives agents a shell, the network and the desktop session.
+- **Agent daemon:** `bin/agentd.py` is a background service that takes tasks from a secure-channel collaborator. `/task` starts one agent, or a coordinator with workers for a big task. `@<id>` pivots a running agent, and every agent can post to the chat. Runs as a systemd user service (`agentd.py install`). Agents read the group chat, and plain chat lines or `@all` reach every running agent. With the new **Group chat** option, ordinary sessions get `chat_read` and `chat_say` tools and see the collaborator's new lines as untrusted messages, not instructions. See `docs/agent-daemon.md`. Agents show as Status panel rows and under their id in the Chat tab, plain text needs no command, and `"tools": "full"` in the daemon's config gives agents a shell, the network and the desktop session.
 
 ## 0.34.1
 

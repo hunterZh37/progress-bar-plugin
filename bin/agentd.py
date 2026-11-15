@@ -55,7 +55,19 @@ MAX_LINE = 4000
 POLL_EVERY = 3
 DEFAULTS = {'channel': '', 'max_agents': 6, 'max_workers': 4, 'max_budget_usd': 5.0, 'idle_minutes': 30,
             'model': '', 'claude': 'claude', 'extra_tools': [], 'add_dirs': [], 'tools': 'safe',
-            'accept_peer_commands': True}
+            'allow_full_access': False, 'accept_peer_commands': False}
+# Safe agents' file tools reach only their work folder, and these never, even through add_dirs or Glob and Grep.
+SECRET_DENY = ['Read(~/.ssh/**)', 'Read(~/.claude/**)', 'Read(~/.claude.json)', 'Read(~/.claude-progress/channel/**)',
+               'Read(~/.aws/**)', 'Read(~/.config/**)', 'Read(~/.gnupg/**)', 'Read(~/.netrc)', 'Read(~/.docker/**)',
+               'Read(~/.kube/**)', 'Read(~/Library/**)', 'Read(**/.env)', 'Read(**/.env.*)', 'Read(**/*.pem)',
+               'Read(**/id_rsa*)', 'Read(**/id_ed25519*)',
+               'Edit(~/.ssh/**)', 'Edit(~/.claude/**)', 'Edit(~/.claude.json)', 'Edit(~/.config/**)', 'Edit(~/Library/**)',
+               'Edit(~/.bashrc)', 'Edit(~/.zshrc)', 'Edit(~/.profile)']
+FULL_WARNING = ('WARNING: agentd full access is on (config.json "tools": "full" and "allow_full_access": true). Agents get a '
+                'shell, the network and the desktop session, start in your home folder, and whoever can write to your '
+                'secure channel can run commands as you.')
+FULL_IGNORED = ('agentd: config.json asks for "tools": "full" without "allow_full_access": true, so agents run with file '
+                'tools only, in their work folder.')
 HELP = ('just type a request to start work, or to instruct the running agents | /task [--big|--small] <text> to force it | @<agent-id> or @all <text> |  /agents list | '
         '/stop <agent-id> | /help')
 UNTRUSTED_FULL = (
@@ -121,6 +133,12 @@ def load_config():
     c = dict(DEFAULTS)
     c.update({k: v for k, v in read_json(CONF, {}).items() if k in DEFAULTS})
     return c
+
+
+def full_mode(c=None):
+    """Full access needs two explicit config flags: "tools": "full" and "allow_full_access": true. Anything else is safe."""
+    c = cfg if c is None else c
+    return c.get('tools') == 'full' and c.get('allow_full_access') is True
 
 
 # ---------- chat (through channel.py, which signs, encrypts and verifies) ----------
@@ -219,7 +237,7 @@ def inbound(state):
             if e['dir'] == 'in':
                 if body.lstrip().startswith('['):
                     out.append((e['id'], body, 'chatter'))      # an agent on the other machine talking: never a command
-                elif cfg.get('accept_peer_commands', True):
+                elif cfg.get('accept_peer_commands') is True:
                     out.append((e['id'], body, 'collaborator'))
                 else:
                     out.append((e['id'], body, 'peer'))         # a person there, but this machine takes no commands from them
@@ -252,17 +270,18 @@ class Agent:
 
     def tools(self):
         me = 'Bash(python3 ' + SELF + ' post:*)'
-        if cfg['tools'] == 'full':  # the owner trusts the collaborator: the same tools as the owner's own session
+        if full_mode():  # the owner trusts the collaborator, set by two config flags: the same tools as the owner's own session
             t = ['Bash', 'Read', 'Glob', 'Grep', 'Edit', 'Write', 'WebFetch', 'WebSearch']
             return t + [str(x) for x in cfg['extra_tools']]
-        t = ['Read', 'Glob', 'Grep', 'Edit', 'Write', me, 'Bash(python3 ' + SELF + ' tell:*)',
+        # File tools in the agent's own work folder (its cwd) only.
+        t = ['Read(./**)', 'Glob', 'Grep', 'Edit(./**)', 'Write(./**)', me, 'Bash(python3 ' + SELF + ' tell:*)',
              'Bash(python3 ' + SELF + ' read:*)']
         if self.role == 'coordinator':
             t.append('Bash(python3 ' + SELF + ' spawn:*)')
         return t + [str(x) for x in cfg['extra_tools']]
 
     def system(self):
-        full = cfg['tools'] == 'full'
+        full = full_mode()
         s = (UNTRUSTED_FULL if full else UNTRUSTED) + POST_HELP.format(self=shlex.quote(SELF), id=self.id)
         if self.role == 'coordinator':
             s += (' You are a COORDINATOR. Split the task into at most ' + str(cfg['max_workers']) + ' independent pieces '
@@ -282,9 +301,12 @@ class Agent:
 
     def start(self):
         os.makedirs(self.cwd, mode=0o700, exist_ok=True)
-        full = cfg['tools'] == 'full'
+        full = full_mode()
         argv = [cfg['claude'], '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
-                '--permission-mode', 'dontAsk', '--allowedTools', *self.tools(),
+                '--permission-mode', 'dontAsk', '--allowedTools', *self.tools()]
+        if not full:
+            argv += ['--disallowedTools', *SECRET_DENY, 'WebFetch', 'WebSearch']
+        argv += [
                 '--append-system-prompt', self.system(),
                 '--max-budget-usd', str(cfg['max_budget_usd']), '--no-session-persistence']
         if cfg['model']:
@@ -629,6 +651,16 @@ def call(req):
 
 # ---------- run ----------
 
+def warn_full(out=None):
+    """Says on stderr (the service log) and in agents.log when full access is on, or asked for without its second flag."""
+    out = out or sys.stderr
+    msg = FULL_WARNING if full_mode() else FULL_IGNORED if cfg.get('tools') == 'full' else ''
+    if msg:
+        print(msg, file=out, flush=True)
+        log(msg)
+    return msg
+
+
 def run():
     global cfg
     os.makedirs(HOME, mode=0o700, exist_ok=True)
@@ -640,7 +672,8 @@ def run():
     os.chmod(SOCK, 0o600)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     state = read_json(STATE, {})
-    log('daemon up, channel=' + (cfg['channel'] or '(none)'))
+    log('daemon up, channel=' + (cfg['channel'] or '(none)') + ', tools=' + ('full' if full_mode() else 'safe'))
+    warn_full()
     while True:
         try:
             cfg = load_config()
@@ -748,13 +781,17 @@ def running():
 def setup(args):
     """One command that makes this machine's agents able to talk to the other side of a secure channel: picks the channel
     (--channel, the configured one, or the only one), writes config.json, installs and starts the service, and posts one
-    hello line. Safe to run again, and the plugin runs it with --auto at session start, until it has succeeded once.
+    hello line. Safe to run again. The plugin runs it with --auto at session start only when the person turned on the
+    agent link (agentLink in /config, off by default), until it has succeeded once, and never after that.
     --auto on a machine with no config.json creates it with tools "safe" and accept_peer_commands false: the other side's
     agents can message this machine's running agents, but people there cannot start or command agents here."""
+    global cfg
     auto = '--auto' in args
     want = args[args.index('--channel') + 1] if '--channel' in args and args.index('--channel') + 1 < len(args) else ''
     mark = read_json(SETUP_MARK, {})
-    if auto and mark.get('done') and running():
+    # --auto (the plugin, with the agent link on) sets the service up once. After that it never installs again, even
+    # when the service was removed: only `agentd.py setup` by hand does.
+    if auto and mark.get('done'):
         return ''
     chans = sorted((read_json(os.path.join(CH, 'channels.json'), {}).get('channels') or {}).keys())
     conf = read_json(CONF, None)
@@ -783,13 +820,15 @@ def setup(args):
             time.sleep(0.5)
     msg.append('Daemon is up.' if running() else 'The daemon did not answer yet. Check ' + LOG + '.')
     if not mark.get('hello') and running():
-        global cfg
         cfg = load_config()
         say('online and linked. Message my agents by starting a line with @<their name>.', 'agentd')
         mark['hello'] = True
     mark.update({'done': running(), 'channel': name, 'at': now()})
     write_json(SETUP_MARK, mark)
-    msg.append('Peers commands are ' + ('accepted.' if c.get('accept_peer_commands', True) else 'not accepted (only your own agents-to-agents chatter).'))
+    cfg = load_config()
+    if warn_full(sys.stdout):
+        msg.append('(see the warning above)')
+    msg.append('Peers commands are ' + ('accepted.' if c.get('accept_peer_commands') is True else 'not accepted (only your own agents-to-agents chatter).'))
     return ' '.join(msg)
 
 

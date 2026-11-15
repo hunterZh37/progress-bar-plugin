@@ -5,7 +5,7 @@ import { ATTACH_COMMAND, ATTACH_DESCRIPTION, attachFiles } from './attach'
 import { countTool, endTurn, sessionRow, setAutoReport, startTurn, tickTurn, turn, withReportSection } from './auto'
 import { autonextCommand, ownJobs, tickAutonext } from './autonext'
 import { backfillChat, sayCommand } from './chat'
-import { CHAT_READ_TOOL, CHAT_SAY_TOOL, chatRead, chatSay, chatSectionText, ensureDaemon, withChatSection } from './groupchat'
+import { CHAT_READ_TOOL, CHAT_SAY_TOOL, STATIC as CHAT_NOTE, chatContext, chatRead, chatSay, ensureDaemon, ownPrompt, withChatSection } from './groupchat'
 import { CHANNEL_EVERY, SEND_TOOL, channelCommand, pollChannel, sendCommand, sendFile } from './channel'
 import { inboxCommand } from './inbox'
 import { chainable } from './chain'
@@ -954,16 +954,18 @@ export const register: Register = (on, options) => {
   const autoReport = options?.autoReport !== false
   setAutoReport(autoReport)
 
-  // Group chat (on by default, off from /config): this session reads and posts in the machine's group chat, and the
-  // collaborator's new lines ride along in the system prompt as untrusted instructions (hooks/groupchat.ts).
-  const groupChat = options?.groupChat !== false
+  // Group chat (off by default, on from /config): this session reads and posts in the machine's group chat. The
+  // collaborator's new lines are attached to the person's own next prompt as fenced, quoted data (hooks/groupchat.ts).
+  const groupChat = options?.groupChat === true
+  // Agent link (off by default): only this lets the plugin install and start the agent daemon (agentd.py setup --auto).
+  const agentLink = options?.agentLink === true
   // One prompt.compose hook (a second without a matcher is refused): the report note, then the group chat section.
   if (autoReport || groupChat) {
     on('prompt.compose', async ($, e, next) => {
       const r = await next(e)
       let sections = r.sections
       if (autoReport) sections = withReportSection(sections, e.traits)
-      if (groupChat && e.agentId === undefined) sections = withChatSection(sections, await chatSectionText($, await sessionKeyOf($)), e.traits)
+      if (groupChat) sections = withChatSection(sections, CHAT_NOTE, e.traits)
       return { ...r, sections }
     })
   }
@@ -1166,8 +1168,9 @@ export const register: Register = (on, options) => {
     const home = await resolveHome($)
     void backfillChat($, home).then(() => pollChannel($, home)).catch(() => undefined)
     tick(CHANNEL_EVERY, () => pollChannel($, home))
-    // Agent link: set the daemon up by itself once a channel exists (hooks/groupchat.ts), checked every minute until it is.
-    if (groupChat) {
+    // Agent link, only when turned on in /config: set the daemon up once a channel exists, checked every minute until
+    // it is. Off (the default), the plugin never installs or starts a service.
+    if (agentLink) {
       void ensureDaemon($).catch(() => undefined)
       tick(60_000, () => ensureDaemon($))
     }
@@ -1213,10 +1216,20 @@ export const register: Register = (on, options) => {
   })
 
   // The gate: while an action is open, the person's prompts are held (slash commands always pass).
+  // Group chat, only when turned on: the collaborator's new lines ride only on the person's own prompt, as fenced
+  // quoted data, so a chat line never starts a turn or a tool call by itself. A toast tells the person what was attached.
+  // One prompt.submit hook (a second without a matcher is refused).
   on('prompt.submit', async ($, e, next) => {
-    if (!isGated(e)) return next(e)
-    const drop = await gatePrompt($, await resolveHome($), e.text)
-    return drop === null ? next(e) : { drop }
+    if (isGated(e)) {
+      const drop = await gatePrompt($, await resolveHome($), e.text)
+      if (drop !== null) return { drop }
+    }
+    if (!groupChat || !ownPrompt(e as never)) return next(e)
+    const block = await chatContext($, await sessionKeyOf($)).catch(() => '')
+    if (!block) return next(e)
+    const n = block.split('\n').filter(l => l.startsWith('> ')).length
+    try { void Promise.resolve($.ui.toast(`Group chat: ${n} new line${n === 1 ? '' : 's'} from your collaborator attached as quoted data (Chat tab)`)).catch(() => undefined) } catch { /* no toast */ }
+    return next({ ...e, context: [...(e.context ?? []), block] })
   })
 
   // "send this to <name>": the model calls channel_send. The engine's permission prompt asks the person first.
