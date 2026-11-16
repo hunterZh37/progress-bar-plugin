@@ -2,7 +2,7 @@
 
 Versions of the progress-bar plugin, newest first. Each line is the release commit. Full detail is in the git history.
 
-## Unreleased
+## 0.35.1
 
 - **No false stuck alarms:** a row reads `⚠ stuck` only when every sign of life is quiet. New signs: the `agent` id `progress_report` now records (its transcript counts even when the file's name pairs with no agent), `output_file` and `transcript` paths, `pid`/`pids` that still exist, and `expect_minutes` on the active step.
 - **Working note:** flat numbers with a newer sign of life keep the spinner and end `· working, step 31m`.
