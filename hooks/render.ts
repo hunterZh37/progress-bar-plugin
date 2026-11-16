@@ -317,7 +317,8 @@ export const MAX_STEP_NOTE = 200
  * One step as stored: a name, or `{name, state?, note?}` when its state or its own note was given. Null when it has
  * no name. `note` is the item's own dim text in the checklist. It never comes from the job's `step`.
  */
-export type StoredStep = string | { name: string; state?: StepState; note?: string }
+/** `expect_minutes` and `since` (alive.ts stepQuietUntil): how long the step may stay quiet, and from when. */
+export type StoredStep = string | { name: string; state?: StepState; note?: string; expect_minutes?: number; since?: number }
 export function storedStep(x: unknown): StoredStep | null {
   const cut = (v: string, max: number) => { const t = v.replace(/\s+/g, ' ').trim(); return t.length > max ? `${t.slice(0, max - 1)}…` : t }
   if (typeof x === 'string') return cut(x, MAX_STEP_NAME) || null
@@ -326,8 +327,10 @@ export function storedStep(x: unknown): StoredStep | null {
     const name = typeof o.name === 'string' ? cut(o.name, MAX_STEP_NAME) : ''
     if (!name) return null
     const note = typeof o.note === 'string' ? cut(o.note, MAX_STEP_NOTE) : ''
-    if (!isState(o.state) && !note) return name
-    return { name, ...(isState(o.state) ? { state: o.state } : {}), ...(note ? { note } : {}) }
+    const em = typeof o.expect_minutes === 'number' && Number.isFinite(o.expect_minutes) && o.expect_minutes > 0 ? o.expect_minutes : 0
+    const since = typeof o.since === 'number' && Number.isFinite(o.since) && o.since > 0 ? o.since : 0
+    if (!isState(o.state) && !note && !em) return name
+    return { name, ...(isState(o.state) ? { state: o.state } : {}), ...(note ? { note } : {}), ...(em ? { expect_minutes: em } : {}), ...(em && since ? { since } : {}) }
   }
   return null
 }

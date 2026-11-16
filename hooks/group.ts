@@ -23,9 +23,11 @@ Then a cyan "channel: N new" while ~/.claude-progress/channel/received.json list
 It ends with "recap ready" while an overnight checkpoint (.state/overnight.json) is 4 h old or the panel saw a sleep.
 RUNNING rows get a spinner, or a yellow "stuck" mark when their numbers have not moved for
 ~/.claude-progress/.state/stuck-minutes (default 10) minutes and no other sign of life is newer. Stuck rows sort first.
+A row whose numbers sat that long but shows a newer sign of life keeps its spinner and ends "· working, step 31m".
 Signs of life come from ~/.claude-progress/.state/alive-<session>.json (each session's plugin writes one): "at", the
-last one (its progress file or heartbeat file written, its agent's transcript written or background task running, a
-background shell not yet finished, a watch log), and "until", a quiet window the job announced (expect_minutes).
+last one (its progress file, heartbeat or output file written, its agent's transcript written or background task
+running, a pid it names still alive, a background shell not yet finished, a watch log), and "until", a quiet window
+the job announced (expect_minutes, on the report or on its active step).
 Job names link to their progress file, or to a URL from ~/.claude-progress/links.txt ("<regex> | <url>").
 A job with a "parent" (its progress file, or the 4th column of ~/.claude-progress/titles.txt) is that parent's child.
 A stuck parent whose child runs, or changed in the last 10 min, is not stuck: its row ends "· waiting on: <child>".
@@ -529,6 +531,10 @@ def main(stdin, now, summary=False):
     running = set(slugify(name_of(l)) for l in groups['running'])
     alive = load_alive()
 
+    def flat_for(l):
+        """Seconds since the row's numbers or step last changed."""
+        return now - (seen.get(slugify(name_of(l))) or {}).get('changed', now)
+
     def quiet_for(l):
         """Seconds since the row's last sign of life: its numbers or step changing, else a newer one from the alive
         files. A quiet window counts as life until it ends."""
@@ -570,6 +576,10 @@ def main(stdin, now, summary=False):
         by = ' · watched by: ' + ', '.join(w) if w else ''
         if d is None and not is_server(i) and quiet_for(i) >= stuck_after:
             return SPIN[int(now) % len(SPIN)] + ' ' + body + ' · waiting on: ' + waiting_on(i) + by
+        flat = flat_for(i)
+        if d is None and not is_server(i) and flat >= stuck_after:
+            # Numbers flat, but a newer sign of life: a long step, not a stalled one.
+            return SPIN[int(now) % len(SPIN)] + ' ' + body + ' · working, step ' + ago(flat) + by
         mark = '\033[33m⚠ stuck ' + ago(d) + '\033[0m' if d is not None else SPIN[int(now) % len(SPIN)]
         return mark + ' ' + body + ('' if has_step(i) else ' · in progress') + by
 

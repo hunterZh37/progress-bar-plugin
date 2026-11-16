@@ -33,6 +33,9 @@ Easiest: Claude calls the plugin's `progress_report` tool (title or its alias la
 | `gains` | Optional. What the job makes better, by lens: any of `cost`, `quality`, `speed`, each a short plain line with a number when possible. Example: `{"quality": "12K more orders matched", "speed": "import in 7h instead of 12h", "cost": "$14 of compute instead of $60"}`. Name only the ones that apply |
 | `quietUntil` | Optional, epoch ms (seconds also work). The current step is expected to stay quiet until then, so the row shows no `⚠ stuck` before it. `progress_report` writes it from `expect_minutes`, and the next report without `expect_minutes` clears it. See **Stuck and signs of life** |
 | `heartbeat` | Optional path to a local file the job keeps writing, such as its log (`~/` allowed). Each write counts as a sign of life |
+| `output_file`, `transcript` | Optional paths, same as `heartbeat`: each write counts as a sign of life |
+| `agent` | The subagent id that writes the file. `progress_report` fills it in from the calling agent. Its transcript written counts as a sign of life, whatever the file is named |
+| `pid`, `pids` | Optional process id, or a list (at most 16). While one exists and is not a zombie, the row is alive, even when the process is idle (a `psql` client waiting on its server) |
 | `impact` | Optional, set it before the job ends. How the job made things better: what the data or product now has or gets right, with the key number, one to three short lines (a string with newlines, or a list). Skip commit ids and file names. Example: `1.65M more board seats, so board links and people search see whole boards`. Shown when its DONE row is opened |
 
 - **Slug:** the job or subagent description, lowercased, each run of other characters turned into `-`. `Build docs!` becomes `build-docs`.
@@ -87,11 +90,14 @@ A running row shows `⚠ stuck Nm` when nothing about it has moved for `.state/s
 | --- | --- |
 | **Progress file written** | The job rewrote its file, even with the same numbers. A plain heartbeat works |
 | **Heartbeat file written** | The file named in `heartbeat` changed, such as a log a remote job syncs here |
-| **Quiet window** | `quietUntil` (from `progress_report` `expect_minutes`) is still ahead. The stuck clock starts when it ends |
-| **Agent activity** | The owning subagent's transcript was written, or a background shell or Monitor it started still runs |
+| **Output files written** | The file named in `heartbeat`, `output_file` or `transcript` changed |
+| **Quiet window** | `quietUntil` (from `progress_report` `expect_minutes`) is still ahead, or the active step in `steps` has `expect_minutes` (from its `since`, else the file's last write). The stuck clock starts when it ends |
+| **Agent activity** | The owning subagent's transcript was written, or a background shell or Monitor it started still runs. The owner is the agent the row is paired with, or the `agent` the file names |
+| **Process alive** | A `pid` or `pids` entry still exists (one `ps` call per poll) |
 | **Background shell** | A shell row this session runs, while its checked transcript has no finished notice for it |
 | **Watch log** | A watch file's log changed |
 
+- **Working, not stuck:** a row whose numbers sat past the threshold but has a newer sign of life keeps its spinner and ends `· working, step 31m` (how long the numbers sat).
 - **Real stalls still warn:** a row with no sign of life past the threshold, or whose quiet window ended that long ago, shows `⚠ stuck` and logs one warning to `events.jsonl`.
 - **Example:** a step that starts a remote job of about 90 minutes reports `expect_minutes: 90`. The row stays a spinner until then, and warns only 10 minutes after that if nothing else moved.
 - **How:** each session's plugin writes `.state/alive-<session>.json` every poll, one entry per row: `at` (the last sign of life, ms) and `until` (the quiet window, ms). `group.py` reads every such file written in the last 6 hours.

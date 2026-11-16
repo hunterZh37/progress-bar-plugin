@@ -28,7 +28,7 @@ import { isDarwin } from './mac'
 import { impactLines, parseDone, reportOf, saveDone, summarize, DONE_REL } from './done'
 import { pickGains } from './goal'
 import { aliveTasks, bgLaunch, scanTranscript, snapOf, toolWhat, waitSegs } from './waiting'
-import { addLife, aliveRel, heartbeatOf, pickTxBase, quietUntilOf, type Life } from './alive'
+import { addLife, agentOf, aliveRel, lifeFilesOf, livePids, pickTxBase, pidLife, pidsOf, quietUntilOf, stepQuietUntil, type Life } from './alive'
 import type { BgSnap, BgTask, Job, TxScan } from './waiting'
 
 const WATCH = '.watch.json'
@@ -464,16 +464,33 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
 }
 
 /**
- * A progress file's signs of life: its last write, the quiet window it announces (`quietUntil`) and the last write of
- * the heartbeat file it names (`heartbeat`, `~/` allowed).
+ * A progress file's signs of life (alive.ts): its last write, the quiet window it announces (`quietUntil`, or an active
+ * step's `expect_minutes`), the last write of each file it names (`heartbeat`, `output_file`, `transcript`), the
+ * transcript and running background tasks of the subagent it names (`agent`), and its processes (`pid`, `pids`).
  */
 async function fileLife($: EngineInterface, h: string, path: string, raw: unknown, mtime?: number): Promise<Life> {
   const out = new Map<string, Life>()
   let m = mtime ?? 0
   if (!m) { try { m = (await $.fs.stat(path)).mtimeMs } catch { m = 0 } }
   addLife(out, 'f', { at: m || undefined, until: quietUntilOf(raw) })
-  const hb = heartbeatOf(raw)
-  if (hb) { try { addLife(out, 'f', { at: (await $.fs.stat(expandHome(hb, h))).mtimeMs }) } catch { /* not there yet */ } }
+  addLife(out, 'f', { until: stepQuietUntil(raw, m) })
+  for (const f of lifeFilesOf(raw)) {
+    try { addLife(out, 'f', { at: (await $.fs.stat(expandHome(f, h))).mtimeMs }) } catch { /* not there yet */ }
+  }
+  const ag = agentOf(raw)
+  if (ag) {
+    const tp = txPath(ag)
+    if (tp) { try { addLife(out, 'f', { at: (await $.fs.stat(tp)).mtimeMs }) } catch { /* none yet */ } }
+    const s = seen.get(ag)
+    if (s?.bg?.length) { const now = await $.clock.now(); if (aliveTasks(s.bg, snap, now).length) addLife(out, 'f', { at: now }) }
+  }
+  const pids = pidsOf(raw)
+  if (pids.length) {
+    try {
+      const r = await $.process.run(['ps', '-o', 'pid=,stat=', '-p', pids.join(',')], { timeoutMs: 3000 })
+      addLife(out, 'f', pidLife(pids, livePids(r.stdout), await $.clock.now()))
+    } catch { /* no ps: no sign */ }
+  }
   return out.get('f') ?? {}
 }
 
@@ -1008,7 +1025,8 @@ export const register: Register = (on, options) => {
     const listArg = (v: unknown) => { if (typeof v !== 'string') return v; try { return JSON.parse(v) as unknown } catch { return v } }
     // The model reports this turn itself, so the turn's fallback row goes.
     if (!e.agentId && i.finished !== true) turn.reported = true
-    const text = await writeReport($, await resolveHome($), { title: str(i.title) ?? '', label: str(i.label), done: num(i.done), total: num(i.total), step: str(i.step), why: str(i.why), parent: str(i.parent), slug: str(i.slug), reads: str(i.reads), writes: str(i.writes), impact: str(i.impact), area: str(i.area), gains: pickGains(typeof i.gains === 'string' ? (() => { try { return JSON.parse(i.gains as string) } catch { return undefined } })() : i.gains), finished: i.finished === true, expectMinutes: num(i.expect_minutes) ?? (typeof i.expect_minutes === 'string' ? num(Number(i.expect_minutes)) : undefined), heartbeat: str(i.heartbeat), steps: listArg(i.steps), stepStates: listArg(i.step_states) })
+    // The calling subagent's id goes in the file, so its transcript keeps the row alive however the file is named.
+    const text = await writeReport($, await resolveHome($), { agent: e.agentId, title: str(i.title) ?? '', label: str(i.label), done: num(i.done), total: num(i.total), step: str(i.step), why: str(i.why), parent: str(i.parent), slug: str(i.slug), reads: str(i.reads), writes: str(i.writes), impact: str(i.impact), area: str(i.area), gains: pickGains(typeof i.gains === 'string' ? (() => { try { return JSON.parse(i.gains as string) } catch { return undefined } })() : i.gains), finished: i.finished === true, expectMinutes: num(i.expect_minutes) ?? (typeof i.expect_minutes === 'string' ? num(Number(i.expect_minutes)) : undefined), heartbeat: str(i.heartbeat), steps: listArg(i.steps), stepStates: listArg(i.step_states) })
     await poll($).catch(() => undefined)
     return { result: text }
   })

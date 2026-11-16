@@ -9,6 +9,13 @@
 //   until: a quiet window the job announced (`quietUntil` in its progress file, from progress_report expect_minutes)
 // group.py counts a row stuck only when the newest of its last change, `at` and `until` is older than the threshold.
 // A row with no sign of life at all still warns.
+//
+// A progress file can name more signs (all optional, all cheap: a stat or one ps call):
+//   agent:          the subagent that writes it (progress_report fills it in). Its transcript written counts, and its
+//                   background shells still running.
+//   output_file / transcript / heartbeat: files the job keeps writing. Each write counts.
+//   pid / pids:     processes doing the work. One that exists (not a zombie) counts as alive this poll, idle or not.
+//   steps[].expect_minutes on the active step: no stuck mark until N minutes after the file's last write.
 
 export const ALIVE_PREFIX = 'alive-'
 export const aliveRel = (key: string) => `.state/${ALIVE_PREFIX}${key}.json`
@@ -31,6 +38,84 @@ export function heartbeatOf(raw: unknown): string {
   if (!raw || typeof raw !== 'object') return ''
   const h = (raw as Record<string, unknown>).heartbeat
   return typeof h === 'string' ? h.trim() : ''
+}
+
+/** Files a progress file names whose writes count as life: `heartbeat`, `output_file`, `transcript` (`~/` allowed). */
+export function lifeFilesOf(raw: unknown): string[] {
+  if (!raw || typeof raw !== 'object') return []
+  const r = raw as Record<string, unknown>
+  const out: string[] = []
+  for (const k of ['heartbeat', 'output_file', 'outputFile', 'transcript']) {
+    const v = r[k]
+    if (typeof v === 'string' && v.trim() && !out.includes(v.trim())) out.push(v.trim())
+  }
+  return out
+}
+
+/** The subagent id a progress file names (`agent`, else `agent_id`), or ''. Only id characters, so it is safe in a path. */
+export function agentOf(raw: unknown): string {
+  if (!raw || typeof raw !== 'object') return ''
+  const r = raw as Record<string, unknown>
+  const v = typeof r.agent === 'string' ? r.agent : typeof r.agent_id === 'string' ? r.agent_id : ''
+  return /^[A-Za-z0-9_-]{1,64}$/.test(v) ? v : ''
+}
+
+/** At most this many pids per progress file are checked. */
+export const MAX_PIDS = 16
+
+/** The pids a progress file names (`pid` and `pids`), positive whole numbers above 1, at most MAX_PIDS. */
+export function pidsOf(raw: unknown): number[] {
+  if (!raw || typeof raw !== 'object') return []
+  const r = raw as Record<string, unknown>
+  const all = [r.pid, ...(Array.isArray(r.pids) ? r.pids : [])]
+  const out: number[] = []
+  for (const v of all) {
+    const n = typeof v === 'string' && /^\d+$/.test(v.trim()) ? Number(v) : v
+    if (typeof n === 'number' && Number.isInteger(n) && n > 1 && n < 2 ** 31 && !out.includes(n)) out.push(n)
+  }
+  return out.slice(0, MAX_PIDS)
+}
+
+/**
+ * The pids alive in `ps -o pid=,stat= -p <pids>` output: listed (ps prints only processes that exist) and not a zombie
+ * (stat Z). A process that exists counts even when idle: a client such as psql sleeps while its server does the work,
+ * so CPU time is no test of life.
+ */
+export function livePids(text: string): Set<number> {
+  const out = new Set<number>()
+  for (const l of text.split('\n')) {
+    const m = /^\s*(\d+)\s+(\S+)/.exec(l)
+    if (m && !m[2]!.startsWith('Z')) out.add(Number(m[1]))
+  }
+  return out
+}
+
+/** Life from a file's pids: `at: now` while any of them is alive, none when all are gone. */
+export function pidLife(pids: readonly number[], live: Set<number>, now: number): Life {
+  return pids.some(p => live.has(p)) ? { at: now } : {}
+}
+
+/**
+ * The quiet window the file's active step declares: `expect_minutes` on an active step of `steps`, counted from the
+ * step's `since` (epoch ms or s) when given, else from the file's last write `mtime`. Capped at a day. undefined when none.
+ */
+export function stepQuietUntil(raw: unknown, mtime: number): number | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const steps = (raw as Record<string, unknown>).steps
+  if (!Array.isArray(steps)) return undefined
+  let out: number | undefined
+  for (const x of steps) {
+    if (!x || typeof x !== 'object') continue
+    const o = x as Record<string, unknown>
+    if (o.state !== 'active') continue
+    const n = typeof o.expect_minutes === 'number' ? o.expect_minutes : o.expectMinutes
+    if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) continue
+    const from = toMs(o.since) ?? mtime
+    if (!from) continue
+    const u = from + Math.min(n, 24 * 60) * 60_000
+    if (out === undefined || u > out) out = u
+  }
+  return out
 }
 
 /** Two lives in one: the newer `at`, the later `until`. */

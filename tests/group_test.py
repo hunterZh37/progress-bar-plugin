@@ -294,6 +294,49 @@ class Group(unittest.TestCase):
         self.run_('▶ lonely ██░░ 1/2 · step\n', now=T0)
         self.assertIn('⚠ stuck 11m', self.run_('▶ lonely ██░░ 1/2 · step\n', now=T0 + 11 * 60)[1])
 
+    # Liveness: a row is stuck only when every sign of life (numbers, progress file, agent transcript, output file,
+    # pids, a step's expect_minutes) has been quiet for the threshold. The plugin folds those into the alive file.
+
+    def test_healthy_long_step_shows_working_not_stuck(self):
+        # One long SQL step: 3/11 for 31 min, while the agent's transcript and the pid it names keep the alive file fresh.
+        row = '▶ grant-links ████░░ 27.3% · 3/11 · rematch candidates\n'
+        self.run_(row, now=T0)
+        for m in (5, 15, 25, 31):
+            self.alive({'grant-links': {'at': (T0 + m * 60 - 20) * 1000}})
+            out = self.run_(row, now=T0 + m * 60)[1]
+            self.assertNotIn('stuck', out)
+        self.assertEqual(out, '  ◐ grant-links ████░░ 27.3% · 3/11 · rematch candidates · working, step 31m')
+
+    def test_working_note_waits_for_the_threshold(self):
+        self.run_('▶ j ██░░ 1/2 · s\n', now=T0)
+        self.alive({'j': {'at': (T0 + 5 * 60) * 1000}})
+        self.assertNotIn('working', self.run_('▶ j ██░░ 1/2 · s\n', now=T0 + 6 * 60)[1])
+
+    def test_dead_process_alarms(self):
+        # The pid died at 2 min: the plugin stopped writing life for it, and nothing else moved. Stuck from then.
+        self.alive({'etl': {'at': (T0 + 2 * 60) * 1000}})
+        self.run_('▶ etl ██░░ 1/4 · load\n', now=T0)
+        self.assertNotIn('stuck', self.run_('▶ etl ██░░ 1/4 · load\n', now=T0 + 11 * 60)[1])
+        out = self.run_('▶ etl ██░░ 1/4 · load\n', now=T0 + 12 * 60)[1]
+        self.assertIn('⚠ stuck 10m', out)
+        self.assertNotIn('working', out)
+
+    def test_silent_agent_alarms_after_the_threshold(self):
+        # The agent's transcript was last written at 1 min; its numbers never moved. No alarm before 11 min, then one.
+        self.alive({'cause-boards': {'at': (T0 + 60) * 1000}})
+        row = '▶ cause-boards ██░░ 2/8 · reading board code\n'
+        self.run_(row, now=T0)
+        self.assertNotIn('stuck', self.run_(row, now=T0 + 10 * 60)[1])
+        self.assertIn('⚠ stuck 10m', self.run_(row, now=T0 + 11 * 60)[1])
+
+    def test_working_row_is_not_sorted_with_stuck_rows(self):
+        self.run_('▶ a ██░░ 1/2 · s\n▶ b ██░░ 1/2 · s\n', now=T0)
+        self.alive({'a': {'at': (T0 + 30 * 60) * 1000}})
+        out = self.run_('▶ a ██░░ 1/2 · s\n▶ b ██░░ 1/2 · s\n', now=T0 + 31 * 60)
+        self.assertIn('⚠ stuck 31m', out[1])
+        self.assertIn(' b ', out[1])
+        self.assertTrue(out[2].endswith('a ██░░ 1/2 · s · working, step 31m'), out[2])
+
     def test_alive_files_from_long_closed_sessions_are_ignored(self):
         self.alive({'j': {'until': (T0 + 3600) * 1000}}, key='old')
         p = os.path.join(self.root, '.state', 'alive-old.json')

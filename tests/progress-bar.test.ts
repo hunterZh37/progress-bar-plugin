@@ -12,6 +12,7 @@ import { finishedTaskIds, reportSteps } from '../hooks/report'
 import { loginKey, usageFileRel, usageMeterOn } from '../hooks/usage'
 import { clock } from '../hooks/done'
 import { GROUP_PY } from '../hooks/group'
+import { agentOf, lifeFilesOf, livePids, pidLife, pidsOf, stepQuietUntil } from '../hooks/alive'
 import { LSREGISTER, NOT_MAC, TOGGLE_APPLESCRIPT, parseMacClicks } from '../hooks/mac'
 import { draw } from './render'
 import { checkRows, inlineRows, fitChrome, glanceParts, nowLine, verbSplit, TIE, tieFirst } from '../hooks/panel'
@@ -2356,4 +2357,52 @@ test('the active checklist step turns with the row spinner; a stuck, paused or f
   }
   // Without a frame (a waiting card), the still mark.
   expect(checkRows(items, 60).find(r => r.state === 'active')!.mark).toBe('◐')
+})
+
+// ---- Stuck only when every sign of life is quiet (alive.ts) ----
+
+test('pidsOf: pid and pids, whole numbers above 1, no repeats, at most 16', () => {
+  expect(pidsOf({ pid: 4242, pids: [4242, 77, '88', 1, 0, -3, 2.5, 'x', null] })).toEqual([4242, 77, 88])
+  expect(pidsOf({ pids: Array.from({ length: 40 }, (_, i) => i + 2) })).toHaveLength(16)
+  expect(pidsOf(null)).toEqual([])
+  expect(pidsOf({ pids: 'nope' })).toEqual([])
+})
+
+test('livePids and pidLife: a healthy long step\'s process is alive, idle or busy; a dead one or a zombie is not', () => {
+  const live = livePids('  4242 S+  \n 77 Z\n garbage\n 88 R\n')
+  expect([...live].sort()).toEqual([4242, 88])
+  // A psql client sleeping while its server works still counts.
+  expect(pidLife([4242], live, NOW)).toEqual({ at: NOW })
+  // Dead (not listed) or a zombie: no life, so only older signs remain and the row alarms after the threshold.
+  expect(pidLife([77, 999], live, NOW)).toEqual({})
+  expect(pidLife([], live, NOW)).toEqual({})
+})
+
+test('agentOf: the subagent id a file names, only id characters', () => {
+  expect(agentOf({ agent: 'a65f9c0550697b0f4' })).toBe('a65f9c0550697b0f4')
+  expect(agentOf({ agent_id: 'ag7' })).toBe('ag7')
+  expect(agentOf({ agent: '../../etc/passwd' })).toBe('')
+  expect(agentOf({ agent: 5 })).toBe('')
+})
+
+test('lifeFilesOf: heartbeat, output_file and transcript, trimmed, no repeats', () => {
+  expect(lifeFilesOf({ heartbeat: ' ~/a.log ', output_file: '/tmp/out', transcript: '/tmp/out', outputFile: 3 })).toEqual(['~/a.log', '/tmp/out'])
+  expect(lifeFilesOf('x')).toEqual([])
+})
+
+test('stepQuietUntil: an active step\'s expect_minutes holds off the stuck mark, from its since or the last write', () => {
+  const m = NOW - 60_000
+  expect(stepQuietUntil({ steps: ['a', { name: 'sql', state: 'active', expect_minutes: 90 }] }, m)).toBe(m + 90 * 60_000)
+  expect(stepQuietUntil({ steps: [{ name: 'sql', state: 'active', expect_minutes: 30, since: 1_800_000_000 }] }, m)).toBe(1_800_000_000_000 + 30 * 60_000)
+  // A step not active, a bad number, or no steps: no window. Capped at a day.
+  expect(stepQuietUntil({ steps: [{ name: 'sql', state: 'todo', expect_minutes: 90 }] }, m)).toBe(undefined)
+  expect(stepQuietUntil({ steps: [{ name: 'sql', state: 'active', expect_minutes: -1 }] }, m)).toBe(undefined)
+  expect(stepQuietUntil({}, m)).toBe(undefined)
+  expect(stepQuietUntil({ steps: [{ name: 'x', state: 'active', expect_minutes: 1e9 }] }, m)).toBe(m + 24 * 3_600_000)
+})
+
+test('a step\'s expect_minutes survives a later report that rewrites the checklist', () => {
+  const prev = [{ name: 'sql', state: 'active', expect_minutes: 90, since: 1_800_000_000_000 }, 'commit']
+  expect(reportSteps({}, prev)).toEqual([{ name: 'sql', state: 'active', expect_minutes: 90, since: 1_800_000_000_000 }, 'commit'])
+  expect(reportSteps({ stepStates: ['done', 'active'] }, prev)).toEqual([{ name: 'sql', state: 'done', expect_minutes: 90, since: 1_800_000_000_000 }, { name: 'commit', state: 'active' }])
 })

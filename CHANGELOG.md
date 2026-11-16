@@ -2,6 +2,11 @@
 
 Versions of the progress-bar plugin, newest first. Each line is the release commit. Full detail is in the git history.
 
+## Unreleased
+
+- **No false stuck alarms:** a row reads `⚠ stuck` only when every sign of life is quiet. New signs: the `agent` id `progress_report` now records (its transcript counts even when the file's name pairs with no agent), `output_file` and `transcript` paths, `pid`/`pids` that still exist, and `expect_minutes` on the active step.
+- **Working note:** flat numbers with a newer sign of life keep the spinner and end `· working, step 31m`.
+
 ## 0.35.0
 
 - **Opt-in:** group chat and the agent link are now off by default. A fresh install runs no agent daemon, installs no service, registers no chat tools and adds nothing from the chat to any prompt.

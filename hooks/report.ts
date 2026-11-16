@@ -43,7 +43,7 @@ export const PROGRESS_TOOL = {
   },
 }
 
-export type ReportInput = { title: string; label?: string; done?: number; total?: number; step?: string; why?: string; parent?: string; slug?: string; reads?: string; writes?: string; impact?: string; area?: string; gains?: Gains; finished?: boolean; expectMinutes?: number; heartbeat?: string; steps?: unknown; stepStates?: unknown }
+export type ReportInput = { agent?: string; title: string; label?: string; done?: number; total?: number; step?: string; why?: string; parent?: string; slug?: string; reads?: string; writes?: string; impact?: string; area?: string; gains?: Gains; finished?: boolean; expectMinutes?: number; heartbeat?: string; steps?: unknown; stepStates?: unknown }
 
 /** The title a report gives: `title`, else its alias `label`, trimmed. Empty when neither is given. */
 export function titleOf(i: Pick<ReportInput, 'title' | 'label'>): string {
@@ -79,7 +79,9 @@ export function reportSteps(i: Pick<ReportInput, 'steps' | 'stepStates'>, prev?:
     const note = typeof x === 'string' ? undefined : x.note
     const st = states[j]
     const state = typeof st === 'string' && (STEP_STATES as readonly string[]).includes(st) ? st as (typeof STEP_STATES)[number] : typeof x === 'string' ? undefined : x.state
-    return state || note ? { name, ...(state ? { state } : {}), ...(note ? { note } : {}) } : name
+    const em = typeof x === 'string' ? undefined : x.expect_minutes
+    const since = typeof x === 'string' ? undefined : x.since
+    return state || note || em ? { name, ...(state ? { state } : {}), ...(note ? { note } : {}), ...(em ? { expect_minutes: em } : {}), ...(em && since ? { since } : {}) } : name
   })
 }
 
@@ -108,6 +110,8 @@ export function reportBody(i: ReportInput, owner: Owner, startedAt: number, now 
   if (gains) out.gains = gains
   if (typeof i.expectMinutes === 'number' && Number.isFinite(i.expectMinutes) && i.expectMinutes > 0) out.quietUntil = Math.round(now + Math.min(i.expectMinutes, MAX_EXPECT_MIN) * 60_000)
   if (i.heartbeat?.trim()) out.heartbeat = i.heartbeat.trim()
+  // The subagent that reports (filled in by the plugin from the tool call): its transcript counts as the row's life.
+  if (i.agent && /^[A-Za-z0-9_-]{1,64}$/.test(i.agent)) out.agent = i.agent
   const steps = reportSteps(i, prevSteps)
   if (steps) out.steps = steps
   if (owner.session) out.session = owner.session

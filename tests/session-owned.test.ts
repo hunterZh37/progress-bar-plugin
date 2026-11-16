@@ -524,6 +524,58 @@ test('a progress_report with expect_minutes and a heartbeat file writes this ses
   await settle($ as never)
 })
 
+test('a subagent\'s progress_report records its id, and its transcript keeps an unpaired file row alive', { options: { openPanel: false } }, async ($, on) => {
+  // The grant-links case: the agent "Data gap fixes" reports under slug grant-links, a name no pairing links to it.
+  const T = NOW + 9 * 86_400_000
+  const live = `${HOME}/.claude/projects/-home-u-code-shop/${SID}`
+  const file = `${P}/grant-links.json`
+  const files: Record<string, string> = {
+    [`${P}/.state/bg-${KEY}.json`]: JSON.stringify({ snap: { at: T - 60_000, tasks: [] }, txBase: live }),
+    [`${live}.jsonl`]: '{}\n',
+    [`${live}/subagents/agent-ag7.jsonl`]: '{}\n',
+  }
+  world(on, files, { now: T, mtimes: { [file]: T - 20 * 60_000, [`${live}.jsonl`]: T - 5_000, [`${live}/subagents/agent-ag7.jsonl`]: T - 30_000 } })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.tool.call({ ...(report({ title: 'More grants linked', slug: 'grant-links', done: 3, total: 11, step: 'rematch' }) as object), agentId: 'ag7' } as never)
+  expect(JSON.parse(files[file]!).agent).toBe('ag7')
+  // The file was last written 20 min ago, the agent's transcript 30 s ago: the row's life is the transcript.
+  const alive = JSON.parse(files[`${P}/${aliveRel(KEY)}`]!) as Record<string, { at?: number }>
+  expect(alive['grant-links']?.at).toBe(T - 30_000)
+  // The main session's own reports carry no agent.
+  await $.tool.call(report({ title: 'Mine', slug: 'mine', done: 1, total: 2 }))
+  expect(JSON.parse(files[`${P}/mine.json`]!)).not.toHaveProperty('agent')
+  await settle($ as never)
+})
+
+test('a progress file\'s pids: alive while ps lists one, no sign once all are gone or zombies', { options: { openPanel: false } }, async ($, on) => {
+  const T = NOW + 11 * 86_400_000
+  const file = `${P}/rematch.json`
+  const out = `${HOME}/logs/rematch.out`
+  const files: Record<string, string> = {
+    [file]: JSON.stringify({ done: 3, total: 11, step: 'cand17.sql', session: SID, cwd: CWD, pids: [4242, 'x', 1], output_file: '~/logs/rematch.out' }),
+    [out]: 'NOTICE\n',
+  }
+  let ps = '4242 S+\n'
+  const asked: string[][] = []
+  world(on, files, {
+    now: T,
+    mtimes: { [file]: T - 20 * 60_000, [out]: T - 15 * 60_000 },
+    onRun: argv => { if (argv[0] !== 'ps' || argv[1] !== '-o') return undefined; asked.push([...argv]); return { exitCode: ps ? 0 : 1, stdout: ps } },
+  })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await settle($ as never)
+  const aliveOf = () => (JSON.parse(files[`${P}/${aliveRel(KEY)}`]!) as Record<string, { at?: number }>).rematch
+  expect(asked.at(-1)).toEqual(['ps', '-o', 'pid=,stat=', '-p', '4242'])
+  expect(aliveOf()?.at).toBe(T)
+  // The process died: the newest sign is the output file, 15 min ago, so group.py marks the row stuck.
+  ps = ''
+  await settle($ as never)
+  expect(aliveOf()?.at).toBe(T - 15 * 60_000)
+  ps = '4242 Z\n'
+  await settle($ as never)
+  expect(aliveOf()?.at).toBe(T - 15 * 60_000)
+})
+
 test('a shell row whose finish is only in the live transcript clears, though the saved path names an old copy', { options: { openPanel: false } }, async ($, on) => {
   const T = NOW + 7 * 86_400_000 // its own clock, so no earlier test's once-a-minute check holds this one back
   const stale = `${HOME}/.claude-work/projects/-home-u-code-shop-api/${SID}`
