@@ -126,12 +126,15 @@ Each project has its own list: `~/.claude-progress/todos/<project>.txt` (the slu
 ```
 [you]
 Review the deploy PR | https://github.com/org/repo/pull/12
+[decisions]
+1. Keep the 40-board cap or raise it
 [mac]
 Load the 2026 batch (after import)
 x Rebuild the index
 ```
 
 - **Add an item** when work is queued for later, or handed to the person (a review, a decision).
+- **Decisions go under `[decisions]`:** a choice only the person can make (pick an option, approve a write, OK a deploy) goes there, one line each, naming the options. Things they must do go under `[you]`. Both are never auto-started and show under NEEDS YOU, decisions as "Decide:". Mark a decision `x ` once they answer.
 - **Blocked on the person?** When work cannot go on until they run something (a blocked command, a deploy swap, a login, deleting a repo), add an action with the `action_add` tool instead (see the `action-needed` skill). It pops up and holds their next prompt until done.
 - **Mark it done** when finished: prefix `x ` (hidden from the status line). Don't delete other people's items.
 - **Short items:** a few words, the action first. Add ` | <url>` to make it clickable.

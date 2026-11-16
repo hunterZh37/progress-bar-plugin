@@ -4,6 +4,8 @@ Versions of the progress-bar plugin, newest first. Each line is the release comm
 
 ## 0.35.2
 
+- **Skill:** the progress-reporting skill files a person's choices under `[decisions]` and their own tasks under `[you]`.
+
 - **Decisions are yours:** `[decisions]` to-dos are treated like `[you]`. Auto-next never sends "Next up from the to-do list" for them, and the Status panel never marks one with the green `▶` or offers `▶ Start`. They show under NEEDS YOU as **Decide:** lines, and the status line never says `next` on them.
 - **Human headings:** `~/.claude-progress/.state/human-headings` lists the headings that hold your own items, one per line. Missing or empty, it is `you` and `decisions`. A human heading is also never taken for a machine.
 
