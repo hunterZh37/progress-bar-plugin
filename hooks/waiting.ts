@@ -9,7 +9,7 @@ import { keyWords } from './priority'
 import { ago, slug } from './render'
 
 /** A background task an agent started: a shell (Bash run_in_background, or moved there) or a Monitor. */
-export type BgTask = { id: string; desc: string; kind: 'shell' | 'monitor'; at: number; until?: number }
+export type BgTask = { id: string; desc: string; kind: 'shell' | 'monitor'; at: number; until?: number; cmd?: string }
 
 /** The session's in-flight background tasks as the last Stop or SubagentStop listed them, and when. */
 export type BgSnap = { at: number; tasks: { id: string; desc: string; kind: string }[] }
@@ -33,15 +33,18 @@ export function toolWhat(input: Record<string, unknown>): string {
   return oneLine(what, 60)
 }
 
+/** The start of a call's command, kept to match its process later (alive.ts taskProc), '' when none. */
+const cmdOf = (input: Record<string, unknown>) => s(input.command).slice(0, 400)
+
 /** The background task a tool call started, from its input and result, or null. */
 export function bgLaunch(tool: string, input: Record<string, unknown>, result: unknown, now: number): BgTask | null {
   const r = (result && typeof result === 'object' ? result : {}) as Record<string, unknown>
   if (tool === 'Bash' && s(r.backgroundTaskId)) {
-    return { id: s(r.backgroundTaskId), desc: oneLine(s(input.description) || s(input.command).split('\n')[0]!, 80), kind: 'shell', at: now }
+    return { id: s(r.backgroundTaskId), desc: oneLine(s(input.description) || s(input.command).split('\n')[0]!, 80), kind: 'shell', at: now, cmd: cmdOf(input) }
   }
   if (tool === 'Monitor' && s(r.taskId)) {
     const ms = r.persistent === true ? 0 : typeof r.timeoutMs === 'number' ? r.timeoutMs : typeof input.timeout_ms === 'number' ? input.timeout_ms : 0
-    const t: BgTask = { id: s(r.taskId), desc: oneLine(s(input.description) || s(input.command).split('\n')[0]!, 80), kind: 'monitor', at: now }
+    const t: BgTask = { id: s(r.taskId), desc: oneLine(s(input.description) || s(input.command).split('\n')[0]!, 80), kind: 'monitor', at: now, cmd: cmdOf(input) }
     if (ms > 0) t.until = now + Math.min(ms, MONITOR_MAX_MS)
     return t
   }
@@ -136,25 +139,43 @@ export function waitSegs(w: WaitFacts, now: number): string[] {
   return out
 }
 
-/** What an agent's transcript tells: its background tasks still running, its last tool call, the progress files it names. */
-export type TxScan = { running: { id: string; desc: string; kind: string }[]; lastTool: string; lastWhat: string; lastAt: number; files: string[] }
+/** What an agent's transcript tells: its background tasks still running, the ones the engine said ended, its last tool call, the progress files it names. */
+export type TxScan = {
+  running: { id: string; desc: string; kind: string; cmd?: string; at?: number }[]
+  /** Tasks the engine reported over (a notice with completed, failed, killed or stopped, an expired Monitor, a TaskStop). */
+  ended: string[]
+  lastTool: string
+  lastWhat: string
+  lastAt: number
+  files: string[]
+}
 
-const ENDED = /<task-id>([\w-]+)<\/task-id>[\s\S]{0,800}?(<status>(completed|failed|killed|stopped)<\/status>|Monitor expired)/g
+// A notice's task id, then its status before any other notice's id: a Monitor event (no status) never borrows the
+// status of the notice after it.
+const ENDED = /<task-id>([\w-]+)<\/task-id>(?:(?!<task-id>)[\s\S]){0,800}?(<status>(completed|failed|killed|stopped)<\/status>|Monitor expired)/g
+const STARTED = /running in background with ID: ([\w-]+)|Monitor started \(task ([\w-]+)/g
+/** Tool calls and results are parsed from this much of the transcript's end; ids and notices from all of it. */
+export const TX_PARSE = 4 * 1024 * 1024
 
 /**
  * Reads a transcript's JSON lines (a tail is fine: a cut first line is skipped). A background task is one whose tool
- * result says "running in background with ID: X" or "Monitor started (task X", with its call's description. It is over
- * once a task notice for X says completed, failed, killed or stopped, a Monitor expired, or a TaskStop named it.
+ * result says "running in background with ID: X" or "Monitor started (task X". It is over once a task notice for X
+ * says completed, failed, killed or stopped, a Monitor expired, or a TaskStop named it. Ids and notices are found in
+ * the whole text (a cheap regex), so a task started long ago is not taken for running because its notice fell out
+ * of the parsed tail; calls (description, command, launch time) are parsed from the last TX_PARSE characters.
  */
 export function scanTranscript(text: string): TxScan {
-  const calls = new Map<string, { name: string; input: Record<string, unknown> }>()
-  const started = new Map<string, { desc: string; kind: string }>()
+  const calls = new Map<string, { name: string; input: Record<string, unknown>; at: number }>()
+  const started = new Map<string, { desc: string; kind: string; cmd?: string; at?: number }>()
   const ended = new Set<string>()
   const files = new Set<string>()
   let lastTool = '', lastWhat = '', lastAt = 0
   for (const m of text.matchAll(/\.claude-progress\/([a-z0-9-]+)\.json/g)) files.add(m[1]!)
   for (const m of text.matchAll(ENDED)) ended.add(m[1]!)
-  for (const l of text.split('\n')) {
+  for (const m of text.matchAll(STARTED)) { const id = (m[1] ?? m[2])!; if (!started.has(id)) started.set(id, { desc: '', kind: m[2] ? 'monitor' : 'shell' }) }
+  for (const m of text.matchAll(/"name":"TaskStop","input":\{[^}]*?"(?:task_id|shell_id)":"([\w-]+)"/g)) ended.add(m[1]!)
+  const body0 = text.length > TX_PARSE ? text.slice(text.length - TX_PARSE) : text
+  for (const l of body0.split('\n')) {
     if (!l.startsWith('{')) continue
     let d: { message?: { content?: unknown }; timestamp?: unknown }
     try { d = JSON.parse(l) } catch { continue }
@@ -163,19 +184,74 @@ export function scanTranscript(text: string): TxScan {
     for (const x of c as Record<string, unknown>[]) {
       if (x.type === 'tool_use' && typeof x.id === 'string') {
         const input = (x.input && typeof x.input === 'object' ? x.input : {}) as Record<string, unknown>
-        calls.set(x.id, { name: s(x.name), input })
-        lastTool = s(x.name); lastWhat = toolWhat(input)
         const at = Date.parse(s(d.timestamp))
+        calls.set(x.id, { name: s(x.name), input, at: at || 0 })
+        lastTool = s(x.name); lastWhat = toolWhat(input)
         if (at) lastAt = at
         if (x.name === 'TaskStop') ended.add(s(input.task_id) || s(input.shell_id))
       } else if (x.type === 'tool_result') {
         const body = typeof x.content === 'string' ? x.content : JSON.stringify(x.content ?? '')
         const m = /running in background with ID: ([\w-]+)/.exec(body) ?? /Monitor started \(task ([\w-]+)/.exec(body)
         const call = calls.get(s(x.tool_use_id))
-        if (m) started.set(m[1]!, { desc: oneLine(s(call?.input.description) || s(call?.input.command).split('\n')[0]!, 80), kind: call?.name === 'Monitor' ? 'monitor' : 'shell' })
+        if (m) {
+          const at = Date.parse(s(d.timestamp)) || call?.at
+          started.set(m[1]!, { desc: oneLine(s(call?.input.description) || s(call?.input.command).split('\n')[0]!, 80), kind: call?.name === 'Monitor' ? 'monitor' : 'shell', cmd: s(call?.input.command).slice(0, 400) || undefined, at: at || undefined })
+        }
       }
     }
   }
   const running = [...started].filter(([id]) => !ended.has(id)).map(([id, v]) => ({ id, ...v }))
-  return { running, lastTool, lastWhat, lastAt, files: [...files] }
+  return { running, ended: [...ended], lastTool, lastWhat, lastAt, files: [...files] }
+}
+
+/**
+ * Where an agent row stands (0.35.3):
+ * - `running`: its turn is going (tool calls now).
+ * - `background`: its turn is over, but a background task of its own (a shell, a Monitor) is still alive. The row
+ *   stays under RUNNING with the live job's name and time, never the word "waiting".
+ * - `blocked`: waiting on something else: not started yet, a child agent, a job it watches, a plan approval.
+ * - `done`: it reported (SubagentHandback, a SendMessage as its last call, or a done record written after its last
+ *   call) and nothing of it is alive. The row leaves; the grouper shows it under DONE.
+ * - `idle`: its turn is over with nothing alive and no report: under RUNNING, marked stuck once quiet past the threshold.
+ */
+export type Phase = 'running' | 'background' | 'blocked' | 'done' | 'idle'
+
+export type PhaseFacts = { status: string; live: readonly BgTask[]; kids: readonly string[]; watching: boolean; reported: boolean; lastTool: string }
+
+export function phaseOf(f: PhaseFacts): Phase {
+  if (f.status === 'pending') return 'blocked'
+  if (f.status !== 'waiting') return 'running'
+  if (f.live.length) return 'background'
+  if (f.reported) return 'done'
+  if (f.kids.length || f.watching || f.lastTool === 'ExitPlanMode') return 'blocked'
+  return 'idle'
+}
+
+/** True when the agent's last act was its report: SubagentHandback, a SendMessage, or a done record at least as new as its last call (a minute's slack). */
+export function reportedBy(lastTool: string, lastAt: number, doneAt: number): boolean {
+  if (lastTool === 'SubagentHandback' || lastTool === 'SendMessage') return true
+  return !!doneAt && !!lastAt && doneAt >= lastAt - 60_000
+}
+
+/**
+ * A background row's segments: `background: <the live job's short name>` (plus `+N more` when several run, and
+ * `(left running after its report)` when the agent already reported), then how long it has run as its own segment (so
+ * the grouper never counts the clock as progress). The oldest live job is shown.
+ */
+export function bgSegs(live: readonly BgTask[], now: number, name: (t: BgTask) => string, reported = false): string[] {
+  if (!live.length) return []
+  const t = [...live].sort((a, b) => (a.at || now) - (b.at || now))[0]!
+  const more = live.length > 1 ? ` +${live.length - 1} more` : ''
+  // It already reported: the job outlived its agent (often a wait loop nobody reads now). Said, so it can be stopped.
+  const left = reported ? ' (left running after its report)' : ''
+  const segs = [`background: ${t.kind === 'monitor' ? 'monitor: ' : ''}${oneLine(name(t), 60)}${more}${left}`]
+  if (t.at && t.at <= now) segs.push(ago(now - t.at))
+  return segs
+}
+
+/** An idle row's segments: no "waiting", and no clock that changes each minute (it would hide a stall). */
+export function idleSegs(lastTool: string, lastWhat: string): string[] {
+  const out = ['idle: no live background job']
+  if (lastTool) out.push(`last action: ${lastTool}${lastWhat ? `, ${oneLine(lastWhat, 60)}` : ''}`)
+  return out
 }

@@ -35,7 +35,7 @@ Easiest: Claude calls the plugin's `progress_report` tool (title or its alias la
 | `heartbeat` | Optional path to a local file the job keeps writing, such as its log (`~/` allowed). Each write counts as a sign of life |
 | `output_file`, `transcript` | Optional paths, same as `heartbeat`: each write counts as a sign of life |
 | `agent` | The subagent id that writes the file. `progress_report` fills it in from the calling agent. Its transcript written counts as a sign of life, whatever the file is named |
-| `pid`, `pids` | Optional process id, or a list (at most 16). While one exists and is not a zombie, the row is alive, even when the process is idle (a `psql` client waiting on its server) |
+| `pid`, `pids` | Optional process id, or a list (at most 16). While one exists and is not a zombie, the row is alive, even when the process is idle (a `psql` client waiting on its server). A pid whose process started after the file was last written is a reused one and does not count. One batched `ps` per poll checks every file |
 | `impact` | Optional, set it before the job ends. How the job made things better: what the data or product now has or gets right, with the key number, one to three short lines (a string with newlines, or a list). Skip commit ids and file names. Example: `1.65M more board seats, so board links and people search see whole boards`. Shown when its DONE row is opened |
 
 - **Slug:** the job or subagent description, lowercased, each run of other characters turned into `-`. `Build docs!` becomes `build-docs`.

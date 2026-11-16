@@ -22,6 +22,9 @@ Then a yellow "inbox: N need you" while ~/.claude-progress/inbox.json lists item
 (the full view, outside the Status panel, starts with that line too).
 Then a cyan "channel: N new" while ~/.claude-progress/channel/received.json lists files not in .state/channel-read.txt (secure channel).
 It ends with "recap ready" while an overnight checkpoint (.state/overnight.json) is 4 h old or the panel saw a sleep.
+An agent whose turn is over while its own background job runs says "working · background: <job> · 46m" and stays under
+RUNNING; one that finished and reported leaves (shown under DONE); only a blocked one says waiting (0.35.3).
+Only the row's state and segments count for WAITING, never words in its name.
 RUNNING rows get a spinner, or a yellow "stuck" mark when their numbers have not moved for
 ~/.claude-progress/.state/stuck-minutes (default 10) minutes and no other sign of life is newer. Stuck rows sort first.
 A row whose numbers sat that long but shows a newer sign of life keeps its spinner and ends "· working, step 31m".
@@ -118,7 +121,7 @@ def ours(lines):
 def name_of(l):
     l = STUCK.sub('', plain(l))
     s = re.sub(r'^[▶✔✖■]\s*(error\s*|stopped\s*)?', '', l)
-    n = re.split(r'\s+[█░]|\s+·\s+', s, 1)[0].strip()
+    n = re.split(r'\s+[█░]|\s+·\s+', s, maxsplit=1)[0].strip()
     # A status word is not part of the name: "job starting…" and "job" are one job.
     return re.sub(r'\s+(working|pending|waiting|running|starting)(…|\.\.\.)?$', '', n)
 
@@ -151,7 +154,14 @@ def kind(l):
     # "100% CPU" is a busy process, not a finished job.
     if l.startswith('✔') or re.search(r'\b100(\.0)?%(?!\s*CPU)', l) or re.search(r'· done(:|\s*$)', l):
         return 'done'
-    if re.search(r'\b(waiting|pending)\b|\bwaits for\b', l):
+    # A row that states its own state after its name ("<name> working · ...", an agent's) is waiting only when its
+    # state or segments say so: an agent named "Fix waiting labels" that is working is not waiting.
+    n = name_of(l)
+    rest = plain(l)
+    if n and re.search(re.escape(n) + r'\s+(working|running|starting)(…|\.\.\.)?(\s|$)', rest):
+        i = rest.find(n)
+        rest = rest[:i] + rest[i + len(n):]
+    if re.search(r'\b(waiting|pending)\b|\bwaits for\b', rest):
         return 'waiting'
     return 'running'
 

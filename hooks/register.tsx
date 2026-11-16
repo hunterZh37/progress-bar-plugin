@@ -27,8 +27,8 @@ import type { Progress, Row, Track } from './render'
 import { isDarwin } from './mac'
 import { impactLines, parseDone, reportOf, saveDone, summarize, DONE_REL } from './done'
 import { pickGains } from './goal'
-import { aliveTasks, bgLaunch, scanTranscript, snapOf, toolWhat, waitSegs } from './waiting'
-import { addLife, agentOf, aliveRel, lifeFilesOf, livePids, pickTxBase, pidLife, pidsOf, quietUntilOf, stepQuietUntil, type Life } from './alive'
+import { aliveTasks, bgLaunch, bgSegs, idleSegs, phaseOf, reportedBy, scanTranscript, snapOf, toolWhat, waitSegs, watchedJob } from './waiting'
+import { PS_ARGVS, addLife, agentOf, aliveRel, jobName, lifeFilesOf, livePidsIn, parseProcs, pickTxBase, pidLife, pidsOf, quietUntilOf, stepQuietUntil, taskProc, type Life, type Proc } from './alive'
 import type { BgSnap, BgTask, Job, TxScan } from './waiting'
 
 const WATCH = '.watch.json'
@@ -127,7 +127,8 @@ const SHELL_TRUST_MS = 2 * 60_000
 const txOf = new Map<string, string>()
 // Each waiting agent's transcript scan, kept while the transcript does not change.
 const scans = new Map<string, { mtime: number; scan: TxScan }>()
-const TX_TAIL = 4 * 1024 * 1024
+// Ids and task notices are scanned in this much of a transcript's end (calls in its last 4 MB, waiting.ts TX_PARSE).
+const TX_TAIL = 32 * 1024 * 1024
 
 /** Removes a stopped task from every agent. */
 function dropTask(id: string) {
@@ -137,21 +138,56 @@ function dropTask(id: string) {
 /** An agent's transcript path, or '' when no Stop or SubagentStop has named one yet. */
 const txPath = (id: string) => txOf.get(id) ?? (txBase ? `${txBase}/subagents/agent-${id}.jsonl` : '')
 
-/** Why each waiting or pending agent waits (waiting.ts waitSegs). */
-async function explainWaits($: EngineInterface, agents: Awaited<ReturnType<EngineInterface['agent']['list']>>, rows: Row[], jobs: Job[], now: number) {
+/** The process list for this poll: one batched ps, run only when something needs it, shared by every row. collect() clears it. */
+let procsDone = false
+let procsList: Proc[] | null = null
+async function procsNow($: EngineInterface, _now: number): Promise<Proc[] | null> {
+  if (procsDone) return procsList
+  procsDone = true
+  procsList = null
+  for (const argv of PS_ARGVS) {
+    try {
+      const r = await $.process.run(argv, { timeoutMs: 5000 })
+      if (r.exitCode === 0 && r.stdout.trim()) { procsList = parseProcs(r.stdout); break }
+    } catch { /* try the next form */ }
+  }
+  return procsList
+}
+
+// Each agent's background tasks alive at the last poll (explainWaits): a progress file naming the agent counts them as life.
+const liveBgOf = new Map<string, BgTask[]>()
+// A task launched this recently may not be in ps yet.
+const LAUNCH_GRACE_MS = 30_000
+
+/** When the agent's done record was written (done.ts), 0 when none. */
+async function doneAtOf($: EngineInterface, h: string, desc: string): Promise<number> {
+  if (!h) return 0
+  try { return parseDone(String(await $.fs.read(`${h}/${DONE_REL}/${slug(desc)}.json`)))?.finished ?? 0 } catch { return 0 }
+}
+
+/**
+ * Where each agent row stands (waiting.ts phaseOf) and what its row says. Background tasks are alive by the engine's
+ * word first (a newer Stop snapshot, a task notice in its transcript, a TaskStop), then, for a shell the engine still
+ * counts, by one batched ps: its shell process gone means it is over. Rows of done agents are removed from `rows`.
+ */
+async function explainWaits($: EngineInterface, agents: Awaited<ReturnType<EngineInterface['agent']['list']>>, rows: Row[], jobs: Job[], now: number, h = '') {
+  const gone = new Set<string>()
   for (const r of rows) {
     const a = agents.find(x => x.id === r.id)
     const s = seen.get(r.id)
     if (!a || !s) continue
     // Tasks past a Monitor's deadline, or missing from a newer snapshot, are over.
     let alive = aliveTasks(s.bg ?? [], snap, now)
-    if (s.bg) s.bg = alive
-    // A background task it started (a shell, a Monitor) still running is a sign of life for its row.
-    if (alive.length) r.life = { ...r.life, at: now }
-    if (a.status !== 'waiting') { s.waitSince = undefined; if (a.status !== 'pending') continue }
+    if (a.status !== 'waiting') {
+      s.waitSince = undefined
+      if (alive.length) r.life = { ...r.life, at: now }
+      if (s.bg) s.bg = alive
+      liveBgOf.set(r.id, alive)
+      if (a.status !== 'pending') { r.phase = 'running'; continue }
+    }
     const path = txPath(a.id)
-    // Its transcript, read again only when it changed: background tasks still running (a reload forgets the ones
-    // seen at tool calls), its last call when not seen since a reload, and the progress files it names.
+    // Its transcript, read again only when it changed: tasks the engine said ended, ones still running (a reload
+    // forgets the ones seen at tool calls), its last call when not seen since a reload, and the progress files it names.
     let scan: TxScan | null = null
     if (a.status === 'waiting' && path) {
       try {
@@ -165,10 +201,33 @@ async function explainWaits($: EngineInterface, agents: Awaited<ReturnType<Engin
       } catch { scan = null }
     }
     if (scan) {
-      alive = [...alive, ...scan.running.filter(x => !alive.some(y => y.id === x.id)).map(x => ({ ...x, kind: x.kind === 'monitor' ? 'monitor' as const : 'shell' as const, at: 0 }))]
-      if (scan.running.length) r.life = { ...r.life, at: now }
+      const ended = new Set(scan.ended)
+      alive = alive.filter(t => !ended.has(t.id))
+      for (const x of scan.running) {
+        const had = alive.find(y => y.id === x.id)
+        if (had) { if (!had.cmd && x.cmd) had.cmd = x.cmd; if (!had.at && x.at) had.at = x.at; continue }
+        alive.push({ id: x.id, desc: x.desc, kind: x.kind === 'monitor' ? 'monitor' : 'shell', at: x.at ?? 0, cmd: x.cmd })
+      }
       if (!s.lastWhat && scan.lastWhat && scan.lastTool === s.lastTool) { s.lastWhat = scan.lastWhat; if (scan.lastAt) s.lastAt = scan.lastAt }
     }
+    // A shell the engine still counts, launched a while ago, whose process is gone: over (its notice never came).
+    const check = alive.filter(t => t.kind === 'shell' && t.cmd && !(t.at && now - t.at < LAUNCH_GRACE_MS))
+    if (check.length) {
+      const procs = await procsNow($, now)
+      if (procs) {
+        const dead = new Set<string>()
+        for (const t of check) {
+          const p = taskProc(t.cmd!, procs, t.at, now)
+          if (!p) dead.add(t.id)
+          else if (!t.at) t.at = now - p.ageMs
+        }
+        alive = alive.filter(t => !dead.has(t.id))
+      }
+    }
+    if (s.bg) s.bg = s.bg.filter(t => alive.some(x => x.id === t.id))
+    liveBgOf.set(r.id, alive)
+    // A background task it started (a shell, a Monitor) still running is a sign of life for its row.
+    if (alive.length) r.life = { ...r.life, at: now }
     if (a.status === 'waiting' && !s.waitSince) {
       // Unknown after a reload: the agent's transcript was last written when its turn ended.
       let at = s.lastAt ?? 0
@@ -177,8 +236,18 @@ async function explainWaits($: EngineInterface, agents: Awaited<ReturnType<Engin
       s.waitSince = at || now
     }
     const kids = agents.filter(k => k.parentId === a.id && LIVE.has(k.status) && seen.get(k.id)?.lastTool !== 'SubagentHandback').map(k => k.description)
-    r.wait = waitSegs({ desc: a.description, status: a.status, tasks: alive, kids, jobs, step: r.step, lastTool: s.lastTool, lastWhat: s.lastWhat ?? '', lastAt: s.lastAt ?? 0, waitSince: s.waitSince ?? 0, files: scan?.files }, now)
+    const lastTool = s.lastTool || scan?.lastTool || ''
+    const own = slug(a.description)
+    const watching = !!(jobs.find(j => j.name !== own && scan?.files.includes(j.name)) ?? jobs.find(j => j.parent && j.parent === own) ?? watchedJob(a.description, jobs))
+    const reported = a.status === 'waiting' && reportedBy(lastTool, s.lastAt ?? 0, await doneAtOf($, h, a.description))
+    const phase = phaseOf({ status: a.status, live: alive, kids, watching, reported, lastTool })
+    r.phase = phase
+    if (phase === 'background') r.wait = bgSegs(alive, now, t => jobName(t.desc, t.cmd), reported)
+    else if (phase === 'blocked') r.wait = waitSegs({ desc: a.description, status: a.status, tasks: [], kids, jobs, step: r.step, lastTool: s.lastTool, lastWhat: s.lastWhat ?? '', lastAt: s.lastAt ?? 0, waitSince: s.waitSince ?? 0, files: scan?.files }, now)
+    else if (phase === 'idle') r.wait = idleSegs(lastTool, s.lastWhat ?? '')
+    else if (phase === 'done') gone.add(r.id)
   }
+  if (gone.size) for (let i = rows.length - 1; i >= 0; i--) if (gone.has(rows[i]!.id)) rows.splice(i, 1)
 }
 
 /** job-track.json: each job's real start and rate base (render.ts Track). Shared by every session on this machine. */
@@ -246,6 +315,7 @@ async function saveKnown($: EngineInterface, dir: string, key: string, now: numb
  * that go to the shared jobs.txt; the other file rows belong to this session (see route.ts).
  */
 async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; shared: Set<string> }> {
+  procsDone = false
   const h = await resolveHome($)
   const dir = dirOf(h)
   const now = await $.clock.now()
@@ -457,7 +527,7 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
     const pct = p.done !== null && p.total ? (100 * p.done) / p.total : null
     if (pct === null || pct < 100) jobs.push({ name, title: m.title ?? '', pct, parent: m.parent ? slug(m.parent) : '' })
   }
-  await explainWaits($, agents, rows, jobs, now)
+  await explainWaits($, agents, rows, jobs, now, h)
   await trackRows($, dir, rows, now)
   await recordFinished($, h, dir, fileNow, now)
   return { rows, now, shared }
@@ -481,15 +551,15 @@ async function fileLife($: EngineInterface, h: string, path: string, raw: unknow
   if (ag) {
     const tp = txPath(ag)
     if (tp) { try { addLife(out, 'f', { at: (await $.fs.stat(tp)).mtimeMs }) } catch { /* none yet */ } }
-    const s = seen.get(ag)
-    if (s?.bg?.length) { const now = await $.clock.now(); if (aliveTasks(s.bg, snap, now).length) addLife(out, 'f', { at: now }) }
+    // Its background tasks alive at the last check (explainWaits), not every task it ever started.
+    if (liveBgOf.get(ag)?.length) addLife(out, 'f', { at: await $.clock.now() })
   }
   const pids = pidsOf(raw)
   if (pids.length) {
-    try {
-      const r = await $.process.run(['ps', '-o', 'pid=,stat=', '-p', pids.join(',')], { timeoutMs: 3000 })
-      addLife(out, 'f', pidLife(pids, livePids(r.stdout), await $.clock.now()))
-    } catch { /* no ps: no sign */ }
+    // The poll's one batched ps. A pid whose process started after the file was written is a reused one.
+    const now = await $.clock.now()
+    const procs = await procsNow($, now)
+    if (procs) addLife(out, 'f', pidLife(pids, livePidsIn(pids, procs, m, now), now))
   }
   return out.get('f') ?? {}
 }

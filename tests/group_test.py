@@ -482,6 +482,177 @@ class Group(unittest.TestCase):
         self.assertEqual(self.run_('', now=T0 + 60), [])
 
 
+
+class AgentStates(unittest.TestCase):
+    """0.35.3: an agent working on its own background job stays under RUNNING, a finished one leaves for DONE, only a
+    blocked one waits. Lines as the plugin writes them (render.ts line)."""
+    BG = '▶ Data gap fixes working · background: db/refresh.sql · {bg} · 29h37m · 637 tools · Bash\n'
+    IDLE = '▶ Data gap fixes working · idle: no live background job · last action: Bash, Refresh derived views · 29h37m · 637 tools · Bash\n'
+    REG = '▶ Load CO, CA, CT state registries waiting · waiting on: Link registrations to orgs in background, Wait until matcher reports linked counts · waiting 56m · 2h08m · 150 tools · SendMessage\n'
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.lib = tempfile.mkdtemp()
+        os.makedirs(os.path.join(self.root, '.state'))
+        self.g = load(self.root, self.lib)
+
+    def tearDown(self):
+        shutil.rmtree(self.root)
+        shutil.rmtree(self.lib)
+
+    def write(self, rel, text):
+        with open(os.path.join(self.root, rel), 'w') as f:
+            f.write(text)
+
+    def alive(self, life, key='abcd'):
+        self.write('.state/alive-' + key + '.json', json.dumps(life))
+
+    def run_(self, text, now):
+        return [re.sub(r'\033\[[0-9;]*m', '', strip_links(l)) for l in self.g.main(io.StringIO(text), now)]
+
+    def events(self):
+        try:
+            with open(os.path.join(self.root, 'events.jsonl')) as f:
+                return [json.loads(l) for l in f]
+        except FileNotFoundError:
+            return []
+
+    def test_background_job_row_runs_with_a_spinner_never_waits(self):
+        self.alive({'data-gap-fixes': {'at': T0 * 1000}})
+        out = self.run_(self.BG.format(bg='46m'), T0)
+        self.assertEqual(out, ['▾ ▶ RUNNING', '  ◐ Data gap fixes working · background: db/refresh.sql · 46m · 29h37m · 637 tools · Bash'])
+        self.assertNotIn('⏸ WAITING', '\n'.join(out))
+
+    def test_running_to_background_to_done(self):
+        self.run_('▶ Data gap fixes working · 29h00m · 630 tools · Edit\n', T0)
+        # 60 minutes on its job: the job's clock is not progress, but the plugin writes life while the job lives.
+        for m in range(0, 61, 5):
+            self.alive({'data-gap-fixes': {'at': (T0 + 60 + m * 60) * 1000}})
+            out = self.run_(self.BG.format(bg=str(m) + 'm'), T0 + 60 + m * 60)
+            self.assertNotIn('stuck', out[1])
+            self.assertEqual(out[0], '▾ ▶ RUNNING')
+        # Reported and nothing alive: the plugin drops the row. It lingers a minute as just finished, then DONE.
+        out = self.run_('', T0 + 61 * 60 + 30)
+        self.assertEqual(out, ['▾ ▶ RUNNING', '  ✔ Data gap fixes ██████████ 100.0% · just finished'])
+        out = self.run_('', T0 + 64 * 60)
+        self.assertEqual(out[0], '▾ ✔ DONE')
+        self.assertTrue(out[1].startswith('  Data gap fixes · finished '), out)
+        self.run_('', T0 + 65 * 60)
+        done = [e for e in self.events() if e['level'] == 'success']
+        self.assertEqual([e['title'] for e in done], ['Data gap fixes done'])
+        self.assertEqual([e for e in self.events() if e['level'] == 'warning'], [])
+
+    def test_running_to_background_to_stuck_when_the_job_dies_and_the_agent_is_silent(self):
+        self.alive({'data-gap-fixes': {'at': T0 * 1000}})
+        self.run_(self.BG.format(bg='40m'), T0)
+        self.run_(self.BG.format(bg='45m'), T0 + 5 * 60)
+        # The job died at +5 min with no notice: the plugin now writes the idle row and no more life.
+        self.alive({'data-gap-fixes': {'at': (T0 + 5 * 60) * 1000}})
+        for m in (6, 10, 15):
+            out = self.run_(self.IDLE, T0 + m * 60)
+            self.assertNotIn('stuck', out[1])
+            self.assertNotIn('WAITING', '\n'.join(out))
+        out = self.run_(self.IDLE, T0 + 16 * 60)
+        self.assertIn('⚠ stuck 10m', out[1])
+        self.run_(self.IDLE, T0 + 20 * 60)
+        warn = [e['title'] for e in self.events() if e['level'] == 'warning']
+        self.assertEqual(warn, ['Data gap fixes stuck'])
+
+    def test_old_reported_row_is_waiting_but_the_new_build_drops_it(self):
+        # Before: the 0.35.2 line for the state registries agent sat under WAITING with its stale task list.
+        before = self.run_(self.REG, T0)
+        self.assertEqual(before[0], '▾ ⏸ WAITING')
+        # After: the plugin writes no row for it (done); it shows under DONE, never WAITING.
+        self.run_('', T0 + 2 * 60)
+        after = self.run_('', T0 + 3 * 60)
+        self.assertEqual(after[0], '▾ ✔ DONE')
+        self.assertNotIn('WAITING', '\n'.join(after))
+
+    def test_a_working_agent_named_waiting_is_running(self):
+        out = self.run_('▶ Fix progress-bar waiting labels working · 3m · 32 tools · Bash\n', T0)
+        self.assertEqual(out[0], '▾ ▶ RUNNING')
+        # A job with no state word whose name says it waits still waits, and a blocked agent waits.
+        out = self.run_('▶ deploy waits for build · 1m\n', T0 + 120)
+        self.assertEqual(out[out.index('▾ ⏸ WAITING') + 1], '  deploy waits for build · 1m')
+        out = self.run_('▶ Release prep waiting · waiting on: agent: Grade it · waiting 3m · 10m · 3 tools · Agent\n', T0 + 240)
+        self.assertEqual(out[out.index('▾ ⏸ WAITING') + 1], '  Release prep waiting · waiting on: agent: Grade it · waiting 3m · 10m · 3 tools · Agent')
+
+    def test_after_x_is_blocked_while_a_background_job_runs_and_decisions_are_unaffected(self):
+        self.write('todo.txt', '[decisions]\n1. pick a host\n[mac]\n1. merge fixes (after data gap fixes)\n2. other\n')
+        self.alive({'data-gap-fixes': {'at': T0 * 1000}})
+        out = self.run_(self.BG.format(bg='46m'), T0)
+        self.assertEqual(out[:3], ['▾ ☐ TO-DO', '  DECISIONS: 1. pick a host', '  MAC: 1. merge fixes (waits for Data gap fixes) · next 2. other'])
+
+    def test_twenty_agents_in_mixed_states_group_and_sort(self):
+        rows = []
+        for i in range(5):
+            rows.append('▶ bg agent %d working · background: job%d.sql · %dm · 1h00m · %d tools · Bash' % (i, i, 10 + i, 50 + i))
+        for i in range(5):
+            rows.append('▶ run agent %d working · 5m · %d tools · Edit' % (i, i))
+        for i in range(4):
+            rows.append('▶ blocked agent %d waiting · waiting on: agent: kid %d · waiting 2m · 9m · 3 tools · Agent' % (i, i))
+        for i in range(3):
+            rows.append('▶ idle agent %d working · idle: no live background job · last action: Bash · 2h00m · 9 tools · Bash' % i)
+        for i in range(3):
+            rows.append('▶ bar agent %d ██░░ 50.0%% · %d/8 · step · background: load.py · 3m · 1h00m · 9 tools' % (i, i + 1))
+        text = '\n'.join(rows) + '\n'
+        life = {'bg-agent-%d' % i: {'at': (T0 + 15 * 60) * 1000} for i in range(5)}
+        life.update({'bar-agent-%d' % i: {'at': (T0 + 15 * 60) * 1000} for i in range(3)})
+        self.alive(life)
+        self.run_(text, T0)
+        out = self.run_(text, T0 + 15 * 60)
+        heads = [l for l in out if l.startswith('▾')]
+        self.assertEqual(heads, ['▾ ▶ RUNNING', '▾ ⏸ WAITING'])
+        run = out[1:out.index('▾ ⏸ WAITING')]
+        wait = out[out.index('▾ ⏸ WAITING') + 1:]
+        self.assertEqual(len(run), 16)
+        self.assertEqual(len(wait), 4)
+        self.assertTrue(all('blocked agent' in l for l in wait))
+        # Stuck rows sort first: the idle agents and the plain runners (no life, quiet 15 min), then the live ones.
+        stuck = [l for l in run if '⚠ stuck' in l]
+        self.assertEqual(len(stuck), 8)
+        self.assertEqual(run[:8], stuck)
+        self.assertFalse(any('stuck' in l for l in run if 'background:' in l))
+        self.assertFalse(any('background' in l or 'idle' in l for l in wait))
+
+    def test_malformed_alive_files_and_clock_skew(self):
+        self.write('.state/alive-broken.json', '{not json')
+        self.write('.state/alive-list.json', '[1, 2]')
+        self.write('.state/alive-bad.json', json.dumps({'data-gap-fixes': 'x', 'other': {'at': 'soon', 'until': None}}))
+        self.write('.state/alive-empty.json', '')
+        self.run_(self.IDLE, T0)
+        self.assertIn('⚠ stuck 11m', self.run_(self.IDLE, T0 + 11 * 60)[1])
+        # A sign of life stamped in the future (another machine's clock): no negative time, no crash, not stuck.
+        self.alive({'data-gap-fixes': {'at': (T0 + 3600) * 1000}}, key='skew')
+        out = self.run_(self.IDLE, T0 + 12 * 60)
+        self.assertNotIn('stuck', out[1])
+        self.assertNotIn('-', re.sub(r'[^\d-]', '', out[1].split('·')[0]))
+
+    def test_a_progress_file_without_agent_is_a_plain_job(self):
+        self.write('grant-links.json', json.dumps({'done': 5, 'total': 12, 'step': 'Apply locally', 'title': 'More grants linked'}))
+        out = self.run_('▶ grant-links ████████░░░░░░░░░░░░ 41.7% · 5/12 · Apply locally · 2h00m\n', T0)
+        self.assertEqual(out[0], '▾ ▶ RUNNING')
+
+    def test_grouper_time_per_poll_50_rows_200_alive_entries(self):
+        rows = []
+        for i in range(50):
+            k = i % 4
+            rows.append(['▶ bg agent %d working · background: job%d.sql · 12m · 1h00m · %d tools · Bash',
+                         '▶ run agent %d working · 5m · %d tools · Edit',
+                         '▶ blocked agent %d waiting · waiting on: agent: kid · waiting 2m · 9m · %d tools · Agent',
+                         '▶ job %d ██░░ 50.0%% · %d/8 · step · 1h00m'][k] % ((i, i, i) if k == 0 else (i, i)))
+        text = '\n'.join(rows) + '\n'
+        for f in range(4):
+            self.alive({'bg-agent-%d' % (j + 50 * f): {'at': (T0 + 60) * 1000, 'until': (T0 + 600) * 1000} for j in range(50)}, key='s%d' % f)
+        self.run_(text, T0)
+        n = 20
+        t = time.perf_counter()
+        for k in range(n):
+            self.g.main(io.StringIO(text), T0 + 60 + k)
+        ms = (time.perf_counter() - t) * 1000 / n
+        print('\n  grouper: 50 rows, 200 alive entries: %.1f ms per poll' % ms, file=sys.stderr)
+        self.assertLess(ms, 50)
+
 class Events(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp()

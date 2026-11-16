@@ -359,7 +359,7 @@ test('the panel offers Turn on status line, which writes the settings file holdi
   await ui.unmount()
 })
 
-test('a waiting agent says what it waits on: its background task, else its last action', { options: { openPanel: false } }, async ($, on) => {
+test('an agent idle on its own background task is working: the live job, then idle once the engine drops it', { options: { openPanel: false } }, async ($, on) => {
   const agents = [{ id: 'ag1', description: 'Mac Map first pass for labels', status: 'running' }]
   const files: Record<string, string> = { [`${P}/mac-label-top-ups-2021-23.json`]: JSON.stringify({ done: 90, total: 100, step: 'batch 9', title: 'Mac label top-ups 2021-23', session: SID }) }
   world(on, files, { agents })
@@ -369,12 +369,12 @@ test('a waiting agent says what it waits on: its background task, else its last 
   agents[0]!.status = 'waiting'
   await settle($ as never)
   const row = () => files[`${L}/agents-${KEY}.txt`]!.split('\n')[0]
-  // Its background task, and the running job the task's words name.
-  expect(row()).toBe('▶ Mac Map first pass for labels waiting · waiting on: Wait for the top-up run to finish (Mac label top-ups 2021-23 90%) · waiting 0m · 0m · 1 tools · Bash')
-  // A stop that no longer lists the task: it is over, so the row falls back to the agent's last action.
+  // Its own background task still runs: working, the live job's name (a pgrep pattern is not the job's script) and time.
+  expect(row()).toBe('▶ Mac Map first pass for labels working · background: Wait for the top-up run to finish · 0m · 0m · 1 tools · Bash')
+  // A stop that no longer lists the task: it is over. No report and nothing alive: idle, never "waiting".
   await $.classic.Stop({ stop_hook_active: false, background_tasks: [] } as never)
   await settle($ as never)
-  expect(row()).toBe('▶ Mac Map first pass for labels waiting · last action 0m ago: Bash, Wait for the top-up run to finish · waiting 0m · 0m · 1 tools · Bash')
+  expect(row()).toBe('▶ Mac Map first pass for labels working · idle: no live background job · last action: Bash, Wait for the top-up run to finish · 0m · 1 tools · Bash')
   // The tasks and times are saved, so a reload keeps them.
   expect(JSON.parse(files[`${P}/.state/seen-${KEY}.json`]!).ag1).toMatchObject({ lastWhat: 'Wait for the top-up run to finish', lastAt: NOW, waitSince: NOW })
 })
@@ -397,7 +397,7 @@ test('after a reload: the waiting agent transcript gives its running task, its l
   // A Stop with no task list changes nothing.
   await $.classic.Stop({ stop_hook_active: false } as never)
   await settle($ as never)
-  expect(files[`${L}/agents-${KEY}.txt`]!.split('\n')[0]).toBe('▶ Mac Map first pass for labels waiting · waiting on: One long wait with tighter error pattern, 10 min checks (Mac label top-ups 2021-23 90%) · waiting 25m · 1h00m · 54 tools · Bash')
+  expect(files[`${L}/agents-${KEY}.txt`]!.split('\n')[0]).toBe('▶ Mac Map first pass for labels working · background: One long wait with tighter error pattern, 10 min checks · 25m · 1h00m · 54 tools · Bash')
   // Saved at the next poll, so a reload keeps them.
   await settle($ as never)
   expect(JSON.parse(files[`${P}/.state/seen-${KEY}.json`]!).ag2).toMatchObject({ lastWhat: 'One long wait with tighter error pattern, 10 min checks', lastAt: NOW - 25 * 60_000 })
@@ -547,7 +547,7 @@ test('a subagent\'s progress_report records its id, and its transcript keeps an 
   await settle($ as never)
 })
 
-test('a progress file\'s pids: alive while ps lists one, no sign once all are gone or zombies', { options: { openPanel: false } }, async ($, on) => {
+test('a progress file\'s pids: alive while the batched ps lists one, no sign once all are gone, zombies or reused', { options: { openPanel: false } }, async ($, on) => {
   const T = NOW + 11 * 86_400_000
   const file = `${P}/rematch.json`
   const out = `${HOME}/logs/rematch.out`
@@ -555,23 +555,29 @@ test('a progress file\'s pids: alive while ps lists one, no sign once all are go
     [file]: JSON.stringify({ done: 3, total: 11, step: 'cand17.sql', session: SID, cwd: CWD, pids: [4242, 'x', 1], output_file: '~/logs/rematch.out' }),
     [out]: 'NOTICE\n',
   }
-  let ps = '4242 S+\n'
+  // pid ppid stat etime command: the job's psql has run an hour (the file was written 20 min ago).
+  let ps = '  4242     1 S+   01:00:00 psql -f cand17.sql\n   77     1 S    10-02:00:00 /sbin/launchd\n'
   const asked: string[][] = []
   world(on, files, {
     now: T,
     mtimes: { [file]: T - 20 * 60_000, [out]: T - 15 * 60_000 },
-    onRun: argv => { if (argv[0] !== 'ps' || argv[1] !== '-o') return undefined; asked.push([...argv]); return { exitCode: ps ? 0 : 1, stdout: ps } },
+    onRun: argv => { if (argv[0] !== 'ps') return undefined; asked.push([...argv]); return { exitCode: ps ? 0 : 1, stdout: ps } },
   })
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
   await settle($ as never)
   const aliveOf = () => (JSON.parse(files[`${P}/${aliveRel(KEY)}`]!) as Record<string, { at?: number }>).rematch
-  expect(asked.at(-1)).toEqual(['ps', '-o', 'pid=,stat=', '-p', '4242'])
+  // One batched list for the whole poll, never a ps per row.
+  expect(asked.at(-1)).toEqual(['ps', '-x', '-ww', '-o', 'pid=,ppid=,stat=,etime=,command='])
   expect(aliveOf()?.at).toBe(T)
   // The process died: the newest sign is the output file, 15 min ago, so group.py marks the row stuck.
-  ps = ''
+  ps = '   77     1 S    10-02:00:00 /sbin/launchd\n'
   await settle($ as never)
   expect(aliveOf()?.at).toBe(T - 15 * 60_000)
-  ps = '4242 Z\n'
+  ps = '  4242     1 Z    01:00:00 (psql)\n'
+  await settle($ as never)
+  expect(aliveOf()?.at).toBe(T - 15 * 60_000)
+  // The pid now belongs to a process that started 5 s ago, after the file named it: a reused pid, no sign.
+  ps = '  4242     1 S    00:05 /usr/bin/some-other-tool\n'
   await settle($ as never)
   expect(aliveOf()?.at).toBe(T - 15 * 60_000)
 })
@@ -891,4 +897,137 @@ test('agent link on: only then does the plugin run agentd setup --auto', { optio
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
   await settle($ as never)
   expect(agentdRuns(runs).map(r => r.slice(2))).toEqual([['setup', '--auto']])
+})
+
+// Agent states (0.35.3): running, working on its own background job, blocked, done. Real-shaped transcripts and ps.
+const TXD = `${HOME}/.claude/projects/${CWD.replace(/[^A-Za-z0-9]/g, '-')}/${SID}/subagents`
+const iso = (ms: number) => new Date(ms).toISOString()
+const tUse = (id: string, name: string, input: Record<string, unknown>, at: number) => JSON.stringify({ timestamp: iso(at), message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } })
+const tBg = (useId: string, task: string, at: number) => JSON.stringify({ timestamp: iso(at), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: useId, content: `Command running in background with ID: ${task}. Output is being written to: /private/tmp/claude/x/tasks/${task}.output. You will be notified when it completes.` }] } })
+const tEnd = (task: string, status: string, at: number) => JSON.stringify({ timestamp: iso(at), message: { role: 'user', content: `<task-notification>\n<task-id>${task}</task-id>\n<tool-use-id>toolu_x</tool-use-id>\n<output-file>/private/tmp/claude/x/tasks/${task}.output</output-file>\n<status>${status}</status>\n<summary>Background command "x" ${status}</summary>\n</task-notification>` } })
+/** A zsh wrapper as the Bash tool starts it (eval of the command, quotes escaped), and its child. */
+const wrap = (pid: number, cmd: string, etime: string) => `${pid}  9000 S    ${etime} /bin/zsh -c source /home/u/.claude/shell-snapshots/snapshot-zsh-1.sh 2>/dev/null || true && eval '${cmd.replace(/'/g, `'"'"'`)}' < /dev/null && pwd -P >| /tmp/claude-eeb9-cwd`
+const REFRESH = `cd /home/u/code/data && (time psql -d appdb -X -q -v ON_ERROR_STOP=1 -f db/refresh.sql && time psql -d appdb -c "SET work_mem = '1GB'; SELECT refresh_funder_prospects();") > /tmp/refresh.log 2>&1; echo exit $?`
+
+test('agent states: running, then working on its own background job (only the live one), then done once it reports', { options: { openPanel: false } }, async ($, on) => {
+  const T = NOW + 20 * 86_400_000
+  const agents = [{ id: 'gap', description: 'Data gap fixes', status: 'running' }]
+  const tx = (extra: string[] = []) => [
+    'cut',
+    // Three tasks started hours ago, each with its finish notice, then the long refresh still running.
+    tUse('u1', 'Bash', { command: 'python3 eval/run.py --threads 5', description: 'Re-run five affected eval threads', run_in_background: true }, T - 5 * 3_600_000),
+    tBg('u1', 'bznfuopfw', T - 5 * 3_600_000), tEnd('bznfuopfw', 'completed', T - 4 * 3_600_000),
+    tUse('u2', 'Bash', { command: 'until grep -q done eval.log; do sleep 5; done', description: 'Wait for eval to finish', run_in_background: true }, T - 4 * 3_600_000),
+    tBg('u2', 'b4ksd0uwf', T - 4 * 3_600_000), tEnd('b4ksd0uwf', 'completed', T - 3 * 3_600_000),
+    tUse('u3', 'Bash', { command: 'python3 eval/run.py --round 3', description: 'Run round 3 eval threads', run_in_background: true }, T - 3 * 3_600_000),
+    tBg('u3', 'bubvh1hn6', T - 3 * 3_600_000), tEnd('bubvh1hn6', 'failed', T - 2 * 3_600_000),
+    tUse('u4', 'Bash', { command: REFRESH, description: 'Refresh derived views after linking', run_in_background: true }, T - 46 * 60_000),
+    tBg('u4', 'b3ru338y4', T - 46 * 60_000),
+    ...extra,
+  ].join('\n')
+  const files: Record<string, string> = { [`${TXD}/agent-gap.jsonl`]: tx() }
+  let ps = [wrap(26063, REFRESH, '46:00'), '26064 26063 S    46:00 psql -d appdb -X -q -v ON_ERROR_STOP=1 -f db/refresh.sql', wrap(500, 'python3 eval/run.py --threads 5', '05:00:00')].join('\n')
+  const psCalls: string[][] = []
+  const mtimes: Record<string, number> = { [`${TXD}/agent-gap.jsonl`]: T - 46 * 60_000 }
+  world(on, files, { agents, now: T, mtimes, onRun: argv => argv[0] === 'tail' ? { exitCode: 0, stdout: files[argv.at(-1)!] ?? '' } : argv[0] === 'ps' ? (psCalls.push([...argv]), { exitCode: 0, stdout: ps }) : undefined })
+  on('tool.call', () => ({ result: 'queued' as never }))
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.classic.Stop({ stop_hook_active: false } as never)
+  const row = () => files[`${L}/agents-${KEY}.txt`]!.split('\n')[0]
+  await settle($ as never)
+  // Running: making tool calls.
+  expect(row()).toMatch(/^▶ Data gap fixes working · \d+m · 0 tools$/)
+  // Its turn ends with the refresh still running: the live job only, by its script, with its time. Never "waiting".
+  agents[0]!.status = 'waiting'
+  await settle($ as never)
+  expect(row()).toMatch(/^▶ Data gap fixes working · background: db\/refresh\.sql · 46m · /)
+  expect(row()).not.toMatch(/waiting|Re-run five|Wait for eval|round 3/)
+  // One ps for the poll, not one per task.
+  expect(psCalls.length).toBe(1)
+  expect(JSON.parse(files[`${P}/${aliveRel(KEY)}`]!)['data-gap-fixes'].at).toBe(T)
+  // The refresh ends (its notice), the agent wakes, reports, and its turn ends: done, so the row leaves.
+  ps = ''
+  files[`${TXD}/agent-gap.jsonl`] = tx([tEnd('b3ru338y4', 'completed', T), tUse('u5', 'SendMessage', { to: 'main', message: 'done' }, T)])
+  mtimes[`${TXD}/agent-gap.jsonl`] = T
+  agents[0]!.status = 'running'
+  await $.tool.call({ tool: 'SendMessage', agentId: 'gap', to: 'main', message: 'Refreshed.' } as never)
+  agents[0]!.status = 'waiting'
+  await settle($ as never)
+  expect(files[`${L}/agents-${KEY}.txt`]).not.toContain('Data gap fixes')
+})
+
+test('agent states: its background job dies with no notice and it never reports: idle under RUNNING, never waiting', { options: { openPanel: false } }, async ($, on) => {
+  const T = NOW + 21 * 86_400_000
+  const agents = [{ id: 'imp', description: 'Import the 2025 filings', status: 'waiting' }]
+  const cmd = 'python3 scripts/load_filings.py --year 2025'
+  const files: Record<string, string> = {
+    [`${TXD}/agent-imp.jsonl`]: ['cut', tUse('u1', 'Bash', { command: cmd, description: 'Load the 2025 filings', run_in_background: true }, T - 20 * 60_000), tBg('u1', 'bload0001', T - 20 * 60_000)].join('\n'),
+    [`${P}/.state/seen-${KEY}.json`]: JSON.stringify({ imp: { startedAt: T - 3_600_000, tools: 30, lastTool: 'Bash', lastAt: T - 20 * 60_000 } }),
+  }
+  let ps = wrap(700, cmd, '20:00')
+  world(on, files, { agents, now: T, onRun: argv => argv[0] === 'tail' ? { exitCode: 0, stdout: files[argv.at(-1)!] ?? '' } : argv[0] === 'ps' ? { exitCode: 0, stdout: ps } : undefined })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.classic.Stop({ stop_hook_active: false } as never)
+  await settle($ as never)
+  const row = () => files[`${L}/agents-${KEY}.txt`]!.split('\n')[0]
+  expect(row()).toBe('▶ Import the 2025 filings working · background: scripts/load_filings.py · 20m · 1h00m · 30 tools · Bash')
+  // The loader died (no notice, the engine still counts it): no live job, no report. Idle, and no life is written
+  // past the transcript's last write, so the grouper marks it stuck once quiet past the threshold.
+  ps = '   77     1 S    10-02:00:00 /sbin/launchd'
+  await settle($ as never)
+  expect(row()).toBe('▶ Import the 2025 filings working · idle: no live background job · last action: Bash, Load the 2025 filings · 1h00m · 30 tools · Bash')
+  expect(JSON.parse(files[`${P}/${aliveRel(KEY)}`]!)['import-the-2025-filings'].at).toBe(T)
+})
+
+test('agent states: a reported agent with a stale task list is done, never waiting (the state registries case)', { options: { openPanel: false } }, async ($, on) => {
+  const T = NOW + 22 * 86_400_000
+  const agents = [{ id: 'reg', description: 'Load CO, CA, CT state registries', status: 'waiting' }]
+  const link = 'cd /home/u/code/data && python3 scripts/link_registrations.py > /tmp/sr/link.log 2>&1'
+  const waitCmd = 'until grep -qE "linked|failed|Traceback" /tmp/sr/link.log; do sleep 5; done; cat /tmp/sr/link.log'
+  // The task list saved by an older poll: every task it ever started, with no command (as 0.35.2 saved them).
+  const bg = [
+    { id: 'bhbfd1syd', desc: 'Link registrations to orgs in background', kind: 'shell', at: T - 2 * 3_600_000 },
+    { id: 'bnstouerf', desc: 'Wait until matcher reports linked counts', kind: 'shell', at: T - 2 * 3_600_000 + 36_000 },
+    { id: 'bx3nvoudh', desc: 'Full reload and relink with guards', kind: 'shell', at: T - 90 * 60_000 },
+  ]
+  const files: Record<string, string> = {
+    [`${TXD}/agent-reg.jsonl`]: ['cut',
+      tUse('u1', 'Bash', { command: link, description: bg[0]!.desc, run_in_background: true }, bg[0]!.at), tBg('u1', 'bhbfd1syd', bg[0]!.at),
+      tUse('u2', 'Bash', { command: waitCmd, description: bg[1]!.desc, run_in_background: true }, bg[1]!.at), tBg('u2', 'bnstouerf', bg[1]!.at),
+      tEnd('bhbfd1syd', 'completed', T - 100 * 60_000),
+      tUse('u3', 'Bash', { command: 'python3 scripts/reload.py', description: bg[2]!.desc, run_in_background: true }, bg[2]!.at), tBg('u3', 'bx3nvoudh', bg[2]!.at),
+      tEnd('bx3nvoudh', 'completed', T - 70 * 60_000),
+      tUse('u4', 'SendMessage', { to: 'main', summary: 'Final report', message: 'Loaded.' }, T - 56 * 60_000),
+    ].join('\n'),
+    [`${P}/.state/seen-${KEY}.json`]: JSON.stringify({ reg: { startedAt: T - 2 * 3_600_000, tools: 150, lastTool: 'SendMessage', lastAt: T - 56 * 60_000, bg } }),
+    [`${P}/.state/bg-${KEY}.json`]: JSON.stringify({ snap: { at: T - 9 * 86_400_000, tasks: [] } }),
+  }
+  // bnstouerf never got a notice. Its wait loop still polls (the real case): the one live job, flagged as outliving
+  // the report, and none of the finished ones. A process that only mentions the command (a grep) is not it.
+  let ps = [wrap(67086, waitCmd, '02:00:00'), `  555  554 S    00:01 grep -n ${waitCmd}`].join('\n')
+  world(on, files, { agents, now: T, onRun: argv => argv[0] === 'tail' ? { exitCode: 0, stdout: files[argv.at(-1)!] ?? '' } : argv[0] === 'ps' ? { exitCode: 0, stdout: ps } : undefined })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await $.classic.Stop({ stop_hook_active: false } as never)
+  await settle($ as never)
+  expect(files[`${L}/agents-${KEY}.txt`]!.split('\n')[0]).toBe('▶ Load CO, CA, CT state registries working · background: Wait until matcher reports linked counts (left running after its report) · 1h59m · 2h00m · 150 tools · SendMessage')
+  // The loop is stopped: nothing alive, it reported, so it is done and its row leaves.
+  ps = `  555  554 S    00:01 grep -n ${waitCmd}`
+  await settle($ as never)
+  expect(files[`${L}/agents-${KEY}.txt`] ?? '').not.toContain('state registries')
+  // The saved list keeps no finished task (it is written at the start of the next poll).
+  await settle($ as never)
+  expect(JSON.parse(files[`${P}/.state/seen-${KEY}.json`]!).reg.bg).toEqual([])
+})
+
+test('agent states: a waiting-on-child agent is blocked (the only state that says waiting); no ps without a shell to check', { options: { openPanel: false } }, async ($, on) => {
+  const T = NOW + 23 * 86_400_000
+  const agents = [{ id: 'par', description: 'Release prep', status: 'waiting' }, { id: 'kid', description: 'Grade the sample', status: 'running', parentId: 'par' }]
+  const files: Record<string, string> = { [`${P}/.state/seen-${KEY}.json`]: JSON.stringify({ par: { startedAt: T - 600_000, tools: 3, lastTool: 'Agent', lastAt: T - 300_000 } }) }
+  const ps: string[][] = []
+  world(on, files, { agents, now: T, onRun: argv => (argv[0] === 'ps' ? (ps.push([...argv]), { exitCode: 0, stdout: '' }) : undefined) })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await settle($ as never)
+  const lines = files[`${L}/agents-${KEY}.txt`]!.split('\n')
+  expect(lines.find(l => l.includes('Release prep'))).toBe('▶ Release prep waiting · waiting on: agent: Grade the sample · waiting 5m · 10m · 3 tools · Agent')
+  expect(ps).toEqual([])
 })

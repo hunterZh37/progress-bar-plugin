@@ -23,6 +23,8 @@ export type Row = {
   wait?: string[]
   /** Signs of life beyond its numbers (alive.ts), written to .state/alive-<session>.json for the stuck mark. */
   life?: Life
+  /** Agents only: where it stands (waiting.ts phaseOf). background and idle rows say "working", never "waiting". */
+  phase?: 'running' | 'background' | 'blocked' | 'done' | 'idle'
 }
 
 /**
@@ -450,10 +452,14 @@ export function line(r: Row, now: number): string {
   const left = r.eta && r.state !== 'done' ? ` · ETA ${r.eta}` : ''
   if (r.done !== null && r.total !== null) {
     const frac = r.done / r.total
-    return `${mark} ${r.description} ${bar(frac)} ${(frac * 100).toFixed(1)}% · ${r.done}/${r.total}${step}${meta}${left}`
+    // A background job of the agent's own still running: its name and time after the step (never "waiting").
+    const bg = (r.phase === 'background' || r.phase === 'idle') && r.wait?.length ? ` · ${r.wait.join(' · ')}` : ''
+    return `${mark} ${r.description} ${bar(frac)} ${(frac * 100).toFixed(1)}% · ${r.done}/${r.total}${step}${bg}${meta}${left}`
   }
   if (r.state && r.state !== 'running') return `${mark} ${r.description}${step}${meta}`
-  const state = r.status === 'running' ? 'working' : r.status
+  // An agent whose turn is over but whose own background job runs (or that sits idle with nothing alive) is working,
+  // under RUNNING; only a blocked one (a child, a job it watches, not started) says waiting.
+  const state = r.status === 'running' || r.phase === 'background' || r.phase === 'idle' ? 'working' : r.status
   const wait = r.wait?.length ? ` · ${r.wait.join(' · ')}` : ''
   return `▶ ${r.description} ${state}${wait}${step}${meta}${r.lastTool ? ` · ${r.lastTool}` : ''}`
 }

@@ -330,6 +330,8 @@ export type RunCard = {
   watchedBy: string
   /** A waiting agent's "waiting 12m": how long it has waited. */
   waited: string
+  /** An agent's own background job still running, "db/refresh.sql · 46m" (from "background: X · 46m"). */
+  bg: string
   /** A waiting agent's "last action 4m ago: Bash, check log", or a pending one's "not started yet". */
   note: string
   /** Time left (from "X left", "ETA X" or "done in X"), ps run time and time so far, for the one-line view. */
@@ -360,14 +362,18 @@ export function runCard(row: string): RunCard {
     : host ? { text: `on ${host}` }
     : isAgent ? { text: 'Claude agent' }
     : { text: 'job' }
-  let count = '', step = '', elapsed = '', left = '', speed = '', actions = '', last = '', cores = '', ran = '', waitOn = '', watchedBy = '', waited = '', note = ''
+  let count = '', step = '', elapsed = '', left = '', speed = '', actions = '', last = '', cores = '', ran = '', waitOn = '', watchedBy = '', waited = '', note = '', bg = ''
+  let bgTime = false
   let maxUsed: number | null = null
   for (const x of parts) {
     let m: RegExpExecArray | null
-    if ((m = /^waiting on: (.+)$/.exec(x))) waitOn = m[1]!
+    if (bgTime && /^(\d+h)?\d+m$/.test(x)) { bg = `${bg} · ${x}`; bgTime = false; continue }
+    bgTime = false
+    if ((m = /^background: (.+)$/.exec(x))) { bg = m[1]!; bgTime = true }
+    else if ((m = /^waiting on: (.+)$/.exec(x))) waitOn = m[1]!
     else if ((m = /^watched by: (.+)$/.exec(x))) watchedBy = m[1]!
     else if ((m = /^waiting ((?:\d+h)?\d+m)$/.exec(x))) waited = m[1]!
-    else if (/^last action\b.+$|^not started yet$/.test(x)) note = x
+    else if (/^last action\b.+$|^not started yet$|^idle: .+$/.test(x)) note = note ? `${note} · ${x}` : x
     else if ((m = /^(\d+(?:\.\d+)?)% CPU$/.exec(x))) cores = `${(Number(m[1]) / 100).toFixed(1)} cores busy`
     else if (/^(\d+-)?\d+:\d\d(:\d\d)?$/.test(x)) ran = x
     else if ((m = /^Max 7-day used (\d+)%$/.exec(x)) || (m = /^7d (\d+)%$/.exec(x))) maxUsed = Math.max(maxUsed ?? 0, Number(m[1]))
@@ -395,6 +401,7 @@ export function runCard(row: string): RunCard {
     waitOn,
     watchedBy,
     waited,
+    bg,
     note,
     left,
     ran,
@@ -564,8 +571,10 @@ export function verbSplit(text: string): [string, string] {
 
 /** A running row's dim second line: the current step (or the count), then the time it has run, when line one does
  * not already say it. "scoring · 42m". */
-export function nowLine(r: Pick<RunCard, 'step' | 'count' | 'elapsed' | 'ran' | 'pct'>, waitOn = ''): string {
-  const what = r.step || r.count || (waitOn ? `waiting on ${waitOn}` : '')
+export function nowLine(r: Pick<RunCard, 'step' | 'count' | 'elapsed' | 'ran' | 'pct'> & Partial<Pick<RunCard, 'bg' | 'note'>>, waitOn = ''): string {
+  // An agent's own background job: its name and how long it has run take the time's place.
+  if (r.bg) return [r.step || r.count, `background: ${r.bg}`].filter(Boolean).join(' · ')
+  const what = r.step || r.count || (waitOn ? `waiting on ${waitOn}` : '') || r.note || ''
   return [what, nowTime(r)].filter(Boolean).join(' · ')
 }
 

@@ -150,3 +150,118 @@ export function pickTxBase(cands: readonly { base: string; mtime: number }[], se
   }
   return best
 }
+
+// ---- Background tasks: alive or over (0.35.3) ----
+//
+// The engine's own word wins: a task-notification in the agent's transcript (`<status>completed|failed|killed`), a
+// Monitor that expired, a TaskStop, or a newer Stop/SubagentStop `background_tasks` list that leaves it out. When the
+// engine still counts a shell task as in flight (no notice), one batched `ps` per poll says whether its shell is
+// still there: a process whose command line holds the task's command, not a zombie, and started no earlier than the
+// task (a process older than the launch is another one, whatever its command). A task whose shell is gone without a
+// notice is over too.
+
+/** One process as PS_COLS lists it: its age comes from etime, so a wrong or changed wall clock does not move it. */
+export type Proc = { pid: number; ppid: number; stat: string; ageMs: number; command: string }
+
+/** Columns for the one batched ps call: pid, parent, state (Z = zombie), elapsed time, full command. */
+export const PS_COLS = 'pid=,ppid=,stat=,etime=,command='
+/** The ps argument lists to try in order: macOS takes -x (this user's processes, with or without a terminal), procps -e. */
+export const PS_ARGVS = [['ps', '-x', '-ww', '-o', PS_COLS], ['ps', '-e', '-ww', '-o', PS_COLS]]
+
+/** ps etime `[[dd-]hh:]mm:ss` in ms, or -1 when it does not parse. */
+export function etimeMs(t: string): number {
+  const m = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/.exec(t.trim())
+  if (!m) return -1
+  return (((Number(m[1] ?? 0) * 24 + Number(m[2] ?? 0)) * 60 + Number(m[3])) * 60 + Number(m[4])) * 1000
+}
+
+/** `ps -o pid=,ppid=,stat=,etime=,command=` lines. A line that does not parse (a command's own newline) is skipped. */
+export function parseProcs(text: string): Proc[] {
+  const out: Proc[] = []
+  for (const l of text.split('\n')) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(.*)$/.exec(l)
+    if (!m) continue
+    const age = etimeMs(m[4]!)
+    if (age < 0) continue
+    out.push({ pid: Number(m[1]), ppid: Number(m[2]), stat: m[3]!, ageMs: age, command: m[5]! })
+  }
+  return out
+}
+
+/** A command line for matching: no quotes or backslashes (a shell wrapper's `eval '...'` escapes them), one space. */
+export const normCmd = (s: string) => s.replace(/['"\\]/g, '').replace(/\s+/g, ' ').trim()
+
+/** How much of a task's command must appear in a process's command line. */
+const CMD_KEY = 120
+/** Slack for the start-time guard: a process may be listed a little before the plugin stamped the launch. */
+export const START_SLACK_MS = 120_000
+
+/**
+ * The live process running a background shell task, or null: the Bash tool's shell for it (`eval '<command>'`) or a
+ * process that is the command itself, matched on the command's first line (up to 120 characters), not a zombie, and that started no earlier than the task's
+ * launch less START_SLACK_MS (an older process with the same command is not this task's; a reused pid starts later
+ * than whatever it replaced, so it is never mistaken for an earlier launch). `launchedAt` 0 skips the time guard.
+ * The innermost match wins (the real command under its shell wrapper), for its name and start.
+ */
+export function taskProc(cmd: string, procs: readonly Proc[], launchedAt: number, now: number): Proc | null {
+  const key = normCmd(cmd.split('\n')[0] ?? '').slice(0, CMD_KEY)
+  if (key.length < 4) return null
+  // Only the shell Claude's Bash tool starts (`... && eval '<command>'`) or a process that is the command itself: a
+  // process whose arguments merely mention the command (an editor, a grep, another Claude's prompt) is not the task.
+  const runs = (c: string) => { const n = normCmd(c); return n.startsWith(key) || n.includes(`eval ${key}`) }
+  const hits = procs.filter(p => !p.stat.startsWith('Z') && runs(p.command) && (!launchedAt || now - p.ageMs >= launchedAt - START_SLACK_MS))
+  if (!hits.length) return null
+  return hits.find(p => !hits.some(q => q.ppid === p.pid)) ?? hits[0]!
+}
+
+/**
+ * The pids still alive from a batched process list: listed, not a zombie, and started no later than `writtenAt` (the
+ * progress file's last write) plus START_SLACK_MS. A pid named in a file must exist when the file is written, so a
+ * process that started after that is a reused pid, not the job's. `writtenAt` 0 skips the guard.
+ */
+export function livePidsIn(pids: readonly number[], procs: readonly Proc[], writtenAt: number, now: number): Set<number> {
+  const out = new Set<number>()
+  for (const pid of pids) {
+    const p = procs.find(x => x.pid === pid)
+    if (!p || p.stat.startsWith('Z')) continue
+    if (writtenAt && now - p.ageMs > writtenAt + START_SLACK_MS) continue
+    out.add(pid)
+  }
+  return out
+}
+
+const SCRIPT = /^(\/?(?:[\w.~@+-]+\/)*[\w.@+-]+\.(?:sql|py|sh|bash|zsh|ts|tsx|js|mjs|cjs|rb|pl|R|ipynb|go|rs))$/
+/** Commands that run the script they are given: its file is the job's name. */
+const RUNS = new Set(['python', 'python3', 'bash', 'sh', 'zsh', 'node', 'bun', 'deno', 'ruby', 'perl', 'Rscript', 'tsx', 'ts-node', 'psql', 'uv', 'poetry', 'npx', 'source', '.'])
+/** Words before the command itself: a timer, a wrapper, a loop's keyword. */
+const LEAD = new Set(['time', 'nohup', 'exec', 'caffeinate', 'sudo', 'env', 'command', 'do', 'then', 'else', '!', '{'])
+
+/**
+ * A background job's short name: the script it runs (`db/refresh.sql`, last two path parts), else the call's
+ * description, else the command's start. A script counts only as the command itself (`./load.sh`) or given to a
+ * command that runs scripts (`psql -f x.sql`, `python3 x.py`), never a redirect target or a pattern (`pgrep -f x.sh`).
+ */
+export function jobName(desc: string, cmd = ''): string {
+  const c = (cmd.split('\n')[0] ?? '').replace(/\d*>>?\s*&?\s*\S+/g, ' ').replace(/(&&|\|\||[;|()])/g, ' $1 ')
+  let first = '', runs = false
+  for (const raw of c.split(/\s+/)) {
+    if (!raw) continue
+    if (/^(&&|\|\||[;|()])$/.test(raw)) { first = ''; runs = false; continue }
+    const t = raw.replace(/^['"]+|['"]+$/g, '')
+    if (!first) {
+      if (LEAD.has(t) || /^[A-Za-z_]\w*=/.test(t) || /^(while|until|if|for)$/.test(t)) {
+        if (/^(while|until|if)$/.test(t)) { first = t; runs = false }
+        continue
+      }
+      first = t
+      runs = RUNS.has(t.split('/').pop() ?? '')
+      if (SCRIPT.test(t)) return t.split('/').slice(-2).join('/')
+      continue
+    }
+    if (runs && SCRIPT.test(t)) return t.split('/').slice(-2).join('/')
+  }
+  const d = desc.replace(/\s+/g, ' ').trim()
+  if (d) return d.length > 60 ? `${d.slice(0, 59)}…` : d
+  const t = cmd.replace(/\s+/g, ' ').trim()
+  return t.length > 40 ? `${t.slice(0, 39)}…` : t
+}

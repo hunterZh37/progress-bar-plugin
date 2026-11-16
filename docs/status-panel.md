@@ -173,18 +173,27 @@ Each running job in the Status panel is two lines: the bold title, bar, percent 
       ✖ commit
 ```
 
-Waiting jobs draw no bar: `⏸ <title>`, then a dim line with why it waits and for how long, cut with `…`. Press the title to read the whole reason with how long it has waited (`last action 4m ago: Bash, check log · for 12m`), then the same details card. `· waiting` shows only when nothing is known.
+An agent row is in one of four states (0.35.3). Only a blocked one is a waiting row.
 
-- **Why a waiting agent waits:** the best source it has, in this order.
-  1. Its background tasks still running: a background Bash, a Monitor (`monitor: deploy goes green`) or a child agent (`agent: Grade the sample`), by their descriptions. When a task's words name a running job, its percent shows too: `waiting on Wait for the top-up run to finish (Mac import 2021-23 90%)`.
-  2. A running job it watches: its transcript names the job's progress file (it writes or reads `~/.claude-progress/<job>.json`), the job's `parent` is the agent, or its name's key words name the job. `waiting on Mac import 2021-23 (90%)`. A background task of an agent that watches a job shows that job's percent too.
-  3. Its own progress file's step.
-  4. Its last tool call and when it ended: `last action 4m ago: Bash, check log`.
-- **Where that comes from:** each tool call an agent makes (a background Bash's task id and description, a Monitor's task id and deadline), the child agents the harness lists, and the waiting agent's own transcript, read again only when it changes. In the transcript a task runs from its "running in background with ID" or "Monitor started" result until a task notice says completed, failed, killed or stopped, a Monitor expired, or a TaskStop names it. The transcript also gives the last call's description after a plugin reload, so `last action` always names what it did. A stop that lists the in-flight tasks also ends the ones it no longer lists.
-- **Other waits say why too:** a pending agent reads `not started yet`, a step about a rate limit reads `paused by a rate limit: <step>`, a job's own `waiting on X` or `waits for X` reads `waiting on X`, and any other step reads `last step: <step>`. To-dos that wait on a job keep their `waits for <job>` line, and open actions show in the Action needed pane.
-- **Status line:** the full view prints the same reason on the row, `Mac first pass for labels waiting · waiting on: <task> · waiting 12m`.
+| State | When | Shows |
+| --- | --- | --- |
+| **Running** | its turn is going (tool calls now) | RUNNING, spinner |
+| **Working · background job** | its turn is over, but a background shell or Monitor of its own is still alive | RUNNING, spinner, line two `background: db/refresh.sql · 46m`: the live job only, never the ones that finished |
+| **Blocked** | not started, a child agent, a job it watches, a plan approval | WAITING, `⏸`, the only state that says waiting |
+| **Done** | it reported (`SubagentHandback`, a `SendMessage` as its last call, or a done record written after its last call) and nothing of it is alive | leaves the list: `just finished`, then DONE |
 
-- **Finished agents leave:** an agent that handed its report back never shows as waiting, even after a plugin reload (the plugin remembers it). An agent the harness still lists as waiting with no tool call seen for 30 minutes is over too.
+An agent with nothing alive and no report reads `idle: no live background job` under RUNNING, and is marked `⚠ stuck` once quiet past the threshold. A job still running after its agent reported says so: `background: Wait until matcher reports linked counts (left running after its report)`.
+
+- **Alive or over:** the engine's word first. A Stop or SubagentStop lists the in-flight tasks (`background_tasks`); a task notice in the agent's transcript says completed, failed, killed or stopped; a Monitor expired; a TaskStop named it. Ids and notices are read from the whole transcript (up to 32 MB), so an old task never counts as running because its notice fell out of view. When the engine still counts a shell that has no notice, one batched `ps` per poll checks it: the Bash tool's shell for that command (`eval '<command>'`) or the command itself, not a zombie, started no earlier than the launch. A task whose shell is gone is over.
+- **Job names:** the script the command runs (`psql -f db/refresh.sql` reads `db/refresh.sql`, `python3 scripts/load.py` reads `scripts/load.py`), else the call's description. A pattern (`pgrep -f x.sh`) or a redirect target is never the name. Several live jobs read `<oldest> +N more`.
+
+Waiting (blocked) jobs draw no bar: `⏸ <title>`, then a dim line with why it waits and for how long, cut with `…`. Press the title to read the whole reason with how long it has waited, then the same details card. `· waiting` shows only when nothing is known.
+
+- **Why a blocked agent waits:** a child agent still live (`agent: Grade the sample`), else a running job it watches: its transcript names the job's progress file (it writes or reads `~/.claude-progress/<job>.json`), the job's `parent` is the agent, or its name's key words name the job (`waiting on Mac import 2021-23 (90%)`). A pending agent reads `not started yet`.
+- **Other waits say why too:** a step about a rate limit reads `paused by a rate limit: <step>`, a job's own `waiting on X` or `waits for X` reads `waiting on X`, and any other step reads `last step: <step>`. To-dos that wait on a job keep their `waits for <job>` line, and open actions show in the Action needed pane.
+- **Status line:** the full view prints the same text on the row: `Data gap fixes working · background: db/refresh.sql · 46m` under RUNNING, `Release prep waiting · waiting on: agent: Grade the sample · waiting 12m` under WAITING. Words in a row's name never make it waiting: `Fix waiting labels working` is running.
+
+- **Finished agents leave:** an agent that reported and has nothing alive never shows as waiting, even after a plugin reload (the plugin remembers a handback). An agent the harness still lists as waiting with no tool call seen for 30 minutes is over too.
 - **Watchers fold in:** a waiting agent whose name says `watcher`, `watch` or `monitor`, and whose other words name a running job (`Mac import watcher` and `mac-import-2021-23`), leaves WAITING. Its job's card says `watched by Mac import watcher`.
 
 ```

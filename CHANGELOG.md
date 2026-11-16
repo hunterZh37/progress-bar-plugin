@@ -2,6 +2,15 @@
 
 Versions of the progress-bar plugin, newest first. Each line is the release commit. Full detail is in the git history.
 
+## 0.35.3
+
+- **Agent states:** an agent row is running, working on a background job, blocked or done. Only blocked says waiting.
+- **Background job:** an agent whose turn is over while its own background shell or Monitor runs stays under RUNNING with the spinner and the live job alone: `background: db/refresh.sql · 46m`. Finished tasks are never listed. Before, it sat under WAITING listing every task it had started, finished ones included.
+- **Done:** an agent that reported (`SubagentHandback`, a `SendMessage` as its last call, or a done record after its last call) with nothing alive leaves for DONE. A job that outlives the report says `(left running after its report)`. One with nothing alive and no report reads `idle` under RUNNING and is marked stuck once quiet.
+- **Alive by the engine's word:** task notices are read from the whole transcript (up to 32 MB, was 4 MB), a newer `background_tasks` list or a TaskStop ends a task, and a shell the engine still counts is checked against one batched `ps` per poll (the Bash tool's `eval` shell for its command, not a zombie, not older than the launch).
+- **One ps per poll:** progress-file `pid`/`pids` use the same batched list, and a pid whose process started after the file was written (a reused pid) no longer counts.
+- **Names never wait:** a row that states `working` after its name is waiting only when its segments say so, so `Fix waiting labels working` stays under RUNNING.
+
 ## 0.35.2
 
 - **Skill:** the progress-reporting skill files a person's choices under `[decisions]` and their own tasks under `[you]`.

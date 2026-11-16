@@ -328,8 +328,9 @@ test('finished agents never linger as waiting: a handback is remembered across r
   on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const { text } = await run($, '')
-  // No task, job or step known, and no time saved by the old build: its last tool, and waiting since now.
-  expect(text.split('\n')[0]).toBe('▶ Label top-ups watcher waiting · last action: Bash · waiting 0m · 9h00m · 9 tools · Bash')
+  // No task, job, report or step known: its turn is over with nothing alive, so it is idle under RUNNING (never
+  // "waiting"), and the grouper marks it stuck once quiet past the threshold.
+  expect(text.split('\n')[0]).toBe('▶ Label top-ups watcher working · idle: no live background job · last action: Bash · 9h00m · 9 tools · Bash')
   expect(text).not.toContain('Rebuild')
   // The saved list keeps the finished one, so the next reload still knows it handed back.
   const saved = Object.entries(written).find(([k]) => /\.state\/seen-[^/]*\.json$/.test(k))![1]
@@ -527,7 +528,7 @@ test('the panel parser: sections, counts, folded headers and trailing lines', as
   expect(other).toEqual(['opus 4 · main'])
   expect(runCard(sections[1]!.rows[0]!)).toEqual({
     mark: '⚠', stuck: '12m', name: 'nightly-import', pct: 80, count: '4 of 5 steps', kind: { text: 'job' },
-    step: 'batch 4', facts: '12m so far', maxUsed: null, waitOn: '', watchedBy: '', waited: '', note: '', left: '', ran: '', elapsed: '12m',
+    step: 'batch 4', facts: '12m so far', maxUsed: null, waitOn: '', watchedBy: '', waited: '', bg: '', note: '', left: '', ran: '', elapsed: '12m',
   })
   expect(runCard(sections[1]!.rows[1]!).mark).toBe('◐')
 })
@@ -1562,9 +1563,9 @@ test('the Max meter keeps the last reading when no job reports one', () => {
 
 test('why an agent waits: its tasks, a job it watches, its step, then its last action', () => {
   const sh = bgLaunch('Bash', { command: 'sleep 9', description: 'Wait for the top-up run to finish', run_in_background: true }, { backgroundTaskId: 'b1' }, NOW)!
-  expect(sh).toEqual({ id: 'b1', desc: 'Wait for the top-up run to finish', kind: 'shell', at: NOW })
+  expect(sh).toEqual({ id: 'b1', desc: 'Wait for the top-up run to finish', kind: 'shell', at: NOW, cmd: 'sleep 9' })
   const mon = bgLaunch('Monitor', { description: 'deploy goes green', timeout_ms: 300_000, command: 'until x; do sleep 5; done' }, { taskId: 'm1', timeoutMs: 300_000 }, NOW)!
-  expect(mon).toEqual({ id: 'm1', desc: 'deploy goes green', kind: 'monitor', at: NOW, until: NOW + 300_000 })
+  expect(mon).toEqual({ id: 'm1', desc: 'deploy goes green', kind: 'monitor', at: NOW, until: NOW + 300_000, cmd: 'until x; do sleep 5; done' })
   expect(bgLaunch('Monitor', { description: 'd', timeout_ms: 0 }, { taskId: 'm2', timeoutMs: 0, persistent: true }, NOW)!.until).toBe(undefined)
   expect(bgLaunch('Bash', { command: 'ls' }, { stdout: '' }, NOW)).toBe(null)
   // Alive: before a Monitor's deadline, and listed by any snapshot taken after it began.
@@ -1635,7 +1636,8 @@ test('a transcript tells a waiting agent: background tasks still running, its la
     txRes('t4', 'Command running in background with ID: b9g4q9ufq. Output is being written to: /tmp/y'),
   ].join('\n')
   const sc = scanTranscript(text)
-  expect(sc.running).toEqual([{ id: 'b9g4q9ufq', desc: 'One long wait with tighter error pattern, 10 min checks', kind: 'shell' }])
+  expect(sc.running).toEqual([{ id: 'b9g4q9ufq', desc: 'One long wait with tighter error pattern, 10 min checks', kind: 'shell', cmd: 'while pgrep x; do sleep 600; done', at: Date.parse('2026-11-05T19:09:25.100Z') }])
+  expect(sc.ended.sort()).toEqual(['b64ssxvum', 'bqz17syay'])
   expect([sc.lastTool, sc.lastWhat, sc.lastAt]).toEqual(['Bash', 'One long wait with tighter error pattern, 10 min checks', Date.parse('2026-11-05T19:09:25.100Z')])
   expect(sc.files).toEqual(['mac-label-top-ups-2021-23'])
   // The real case: the agent's name shares no key words with the job, but its transcript writes the job's file.
