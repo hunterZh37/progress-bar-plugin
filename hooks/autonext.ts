@@ -14,7 +14,7 @@ import type { EngineInterface } from 'claude-code'
 
 import { resolveHome } from './home'
 import { sessionProject } from './project'
-import { blocker, doneEvents, isRunningRow, jobMachine, nextPrompt, openItems, parseCaps, parseMode, ranked, rowName } from './priority'
+import { HUMAN_REL, blocker, doneEvents, isHuman, isRunningRow, jobMachine, nextPrompt, openItems, parseCaps, parseHuman, parseMode, ranked, rowName } from './priority'
 import type { Mode } from './priority'
 import { FILE_FRESH_MS, parseTitles, pickMeta, slug } from './render'
 
@@ -149,8 +149,12 @@ export async function tickAutonext($: EngineInterface) {
   const proj = await sessionProject($, h)
   let todo = ''
   try { todo = String(await $.fs.read(proj.path)) } catch { return }
+  // Human headings ([you], [decisions] or .state/human-headings) are never started.
+  let humanText = ''
+  try { humanText = String(await $.fs.read(`${h}/${HUMAN_REL}`)) } catch { humanText = '' }
+  const human = parseHuman(humanText)
   const heads = [...new Set(openItems(todo).map(i => i.heading))]
-  if (!heads.some(x => x.toLowerCase() !== 'you')) return
+  if (!heads.some(x => !isHuman(x, human))) return
 
   let raw = ''
   try { raw = String(await $.fs.read(`${dir}/events.jsonl`)) } catch { raw = '' }
@@ -158,8 +162,8 @@ export async function tickAutonext($: EngineInterface) {
     const key = `${slug(ev.source)}-${Math.floor(ev.ts)}`
     if (pending.has(key)) continue
     // Its machine, plus any machine with an item waiting for it.
-    const mine = jobMachine(ev.source, ev.title, heads)
-    const freed = openItems(todo).filter(i => i.after && i.heading.toLowerCase() !== 'you' && blocker(i.after, [ev.source, ev.title].filter(Boolean))).map(i => i.heading)
+    const mine = jobMachine(ev.source, ev.title, heads, human)
+    const freed = openItems(todo).filter(i => i.after && !isHuman(i.heading, human) && blocker(i.after, [ev.source, ev.title].filter(Boolean))).map(i => i.heading)
     pending.set(key, { key, source: ev.source, title: ev.title, ts: ev.ts, machines: [...new Set([mine, ...freed].filter(Boolean))] })
   }
   if (!pending.size) return
@@ -171,16 +175,17 @@ export async function tickAutonext($: EngineInterface) {
   const caps = parseCaps(capsText)
   const rows = await runningRows($, dir, nowMs)
   const running = rows.flatMap(r => [r.name, r.title].filter(Boolean))
-  const busy = (m: string) => rows.filter(r => jobMachine(r.name, r.title, heads).toLowerCase() === m.toLowerCase()).length
+  const busy = (m: string) => rows.filter(r => jobMachine(r.name, r.title, heads, human).toLowerCase() === m.toLowerCase()).length
 
   for (const p of [...pending.values()]) {
     if (now - p.ts > PENDING_MAX_S) { pending.delete(p.key); continue }
     if (!ownJobs.has(slug(p.source)) && now - p.ts < OWN_DELAY_S) continue
     const left: string[] = []
     for (const m of p.machines) {
+      if (isHuman(m, human)) continue
       const cap = caps[m.toLowerCase()]
       if (cap !== undefined && busy(m) >= cap) { left.push(m); continue }
-      const ready = ranked(todo, running).filter(i => i.heading.toLowerCase() === m.toLowerCase() && !i.blockedBy)
+      const ready = ranked(todo, running, human).filter(i => i.heading.toLowerCase() === m.toLowerCase() && !i.blockedBy)
       if (!ready.length) continue
       // One session acts per finish and machine; one start per item (the top one another finish took is skipped).
       if (!(await claim($, `${claims}/${p.key}-${slug(proj.slug)}-${slug(m)}`))) continue

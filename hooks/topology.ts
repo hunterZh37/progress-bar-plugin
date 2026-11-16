@@ -1,5 +1,6 @@
 import type { EngineInterface } from 'claude-code'
 import type { TopoConfig, TopoHealth, TopoMachine, TopoService } from '../types'
+import { DEFAULT_HUMAN, isHuman } from './priority'
 
 export type { TopoConfig, TopoHealth, TopoMachine, TopoService }
 
@@ -160,11 +161,11 @@ export function flowsOf(c: TopoConfig, placed: Map<string, TopoJob[]>): Flow[] {
 }
 
 /** Open to-dos per machine: how many and the top one (by priority, its "(after X)" left out). */
-export function queuesOf(c: TopoConfig, todos: { owner: string; text: string }[], self: string): Map<string, TopoQueue> {
+export function queuesOf(c: TopoConfig, todos: { owner: string; text: string }[], self: string, human: string[] = DEFAULT_HUMAN): Map<string, TopoQueue> {
   const out = new Map<string, TopoQueue>()
   for (const t of todos) {
     const o = t.owner.toLowerCase()
-    if (o === 'you') continue
+    if (isHuman(o, human)) continue
     const id = resolveMachine(c, o) || (o === 'todo' ? self : o)
     const top = t.text.replace(/^\d+\.\s+/, '').replace(/\s*\(after\s+[^)]+\)\s*$/i, '').split(' | ')[0]!.trim()
     const q = out.get(id)

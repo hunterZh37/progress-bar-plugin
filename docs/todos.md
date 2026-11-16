@@ -11,6 +11,8 @@ This project's list (see Per-project to-dos below), shown first in the status li
 [you]
 Review the deploy PR | https://github.com/org/repo/pull/12
 x Rotate the token
+[decisions]
+Pick the hosting region
 [mac]
 1. Verify and load the arts labels (after classify)
 2. Review the Dependabot alerts
@@ -24,7 +26,8 @@ Load the 2026 batch
 - **Links:** `text | url` makes the text clickable in terminals that support links.
 - **Priority:** a leading `N. ` sets an item's place under its heading, `1.` first. Unnumbered items come after the numbered ones, in file order. The status line and the Status panel list items in this order. The panel numbers every item by its place, `1.` to `N.` in bold cyan, whether or not the file numbers it.
 - **Blocked items:** an item ending `(after X)` waits while any RUNNING job's name or title holds every key word of X (case does not matter, small words like "the" are skipped). `(after 2019-20 load)` waits on `Load 2019-20 filings`. A blocked item shows dim. The Status panel hides the `(after X)` text and adds one dim `waits for <job>` line under the items that wait on that job.
-- **Next:** the top ready item of each machine heading (any heading but `[you]`) is marked: `next` in the status line, a green `▶` in the Status panel.
+- **Human headings:** `[you]` and `[decisions]` hold items for you, not a machine. They are never marked next and never start on their own. In the Status panel they show under NEEDS YOU: `[you]` items verb first (**Review** the deploy PR), `[decisions]` items as **Decide:** Pick the hosting region. To change the list, write one heading per line in `~/.claude-progress/.state/human-headings` (it replaces the defaults, so list `you` and `decisions` too if you want them kept).
+- **Next:** the top ready item of each machine heading (any heading but a human one) is marked: `next` in the status line, a green `▶` in the Status panel.
 - **Move up and Move down:** in the Status panel, press an item and pick `↑ Up` or `↓ Down`. Every open item under that heading is renumbered `1.` to `N.` in the new order. The item is found by its text, never by line number.
 
 ### Auto-next
@@ -36,7 +39,7 @@ Next up from the to-do list: <item>. Start it with a progress bar, and mark it d
 ```
 
 - **Still running:** a blocker counts as running while its progress file is fresh and has not reached `done` equal to `total`, even when its row says starting or its bar rounds to 100% during a last step. So an `(after X)` item never starts early.
-- **Machine:** a `<host>: name` job, or a title that starts with a heading name (`Server-1 CPU batch`), belongs to that heading. Any other job belongs to `[mac]` or `[local]`. `[you]` items never start on their own.
+- **Machine:** a `<host>: name` job, or a title that starts with a heading name (`Server-1 CPU batch`), belongs to that heading. Any other job belongs to `[mac]` or `[local]`. Items under a human heading (`[you]`, `[decisions]`, or `.state/human-headings`) never start on their own.
 - **Mode:** `/progress-bar autonext on|off|ask`, saved in `~/.claude-progress/.state/autonext`. `on` sends the prompt. `ask` (the default) shows a toast and puts the prompt in the prompt box as a suggestion, so Tab starts it. `off` does nothing. The panel menu's `▶ Start` sends the same prompt for any ready item.
 - **Caps:** `~/.claude-progress/.state/caps` holds one `machine=N` per line (default `local=3`, other machines have no cap until listed, such as `server-1=2`). A machine with N or more RUNNING rows waits, and the next one starts once a row finishes.
 - **Once:** every open session checks every 5 seconds, and only one acts on a finish. It claims the finish with a folder under `~/.claude-progress/.state/autonext-claims/`, and holds the item for 6 hours so two finishes never start the same to-do. The session that ran the finished agent goes first. Others wait 20 seconds.

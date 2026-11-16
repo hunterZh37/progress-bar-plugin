@@ -2,7 +2,9 @@
 //
 // todo.txt items may start with "N. " (1 = highest, per heading). Unnumbered items sort after numbered ones, in file order.
 // An item ending "(after X)" is blocked while a running row's name or title holds every key word of X.
-// When a job finishes, autonext.ts starts the top ready item under that job's machine (never [you]).
+// When a job finishes, autonext.ts starts the top ready item under that job's machine (never a human heading).
+// Human headings (default [you] and [decisions], or the lines of .state/human-headings) hold items for the person:
+// never started on their own, never marked next, shown under NEEDS YOU in the Status panel.
 
 export type PItem = {
   heading: string
@@ -17,6 +19,22 @@ export type PItem = {
 }
 
 const HEADING = /^\[(.+)\]$/
+
+/** Headings whose items are the person's own, when .state/human-headings is missing or empty. */
+export const DEFAULT_HUMAN = ['you', 'decisions']
+export const HUMAN_REL = '.claude-progress/.state/human-headings'
+
+/** .state/human-headings: one heading per line ("decisions" or "[decisions]"), # comments. Empty: the defaults. */
+export function parseHuman(s: string): string[] {
+  const out = s.split('\n').map(l => l.trim().replace(/^\[(.*)\]$/, '$1').trim().toLowerCase()).filter(l => l && !l.startsWith('#'))
+  return out.length ? [...new Set(out)] : [...DEFAULT_HUMAN]
+}
+
+/** A heading for the person, not a machine: never auto-started, never next. */
+export const isHuman = (heading: string, human: string[] = DEFAULT_HUMAN) => human.includes(heading.trim().toLowerCase())
+
+/** A decisions heading: its NEEDS YOU lines read "Decide: <item>". */
+export const isDecision = (heading: string) => /^decisions?$/i.test(heading.trim())
 const NUM = /^(\d+)\.\s+/
 const AFTER = /\s*\(after\s+([^)]+)\)\s*$/i
 const STOP = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'for', 'to', 'in', 'on', 'with', 'is', 'it', 'its', 'job', 'run', 'done', 'finish', 'finishes', 'after'])
@@ -72,26 +90,26 @@ export type Ranked = PItem & { blockedBy: string; next: boolean }
 
 /**
  * Every open item, by heading in file order and by priority within it, each marked blocked or ready.
- * The first ready item of each machine heading (not [you]) is `next`.
+ * The first ready item of each machine heading (not a human one) is `next`.
  */
-export function ranked(text: string, running: string[]): Ranked[] {
+export function ranked(text: string, running: string[], human: string[] = DEFAULT_HUMAN): Ranked[] {
   const items = openItems(text)
   const heads = [...new Set(items.map(i => i.heading))]
   return heads.flatMap(h => {
     let found = false
     return byPriority(items.filter(i => i.heading === h)).map(i => {
       const blockedBy = i.after ? blocker(i.after, running) : ''
-      const next = !found && !blockedBy && h.toLowerCase() !== 'you'
+      const next = !found && !blockedBy && !isHuman(h, human)
       if (next) found = true
       return { ...i, blockedBy, next }
     })
   })
 }
 
-/** The top ready item under a heading (case-insensitive), or null. Never [you]. */
-export function nextReady(text: string, heading: string, running: string[]): Ranked | null {
-  if (!heading || heading.toLowerCase() === 'you') return null
-  return ranked(text, running).find(i => i.next && i.heading.toLowerCase() === heading.toLowerCase()) ?? null
+/** The top ready item under a heading (case-insensitive), or null. Never a human heading. */
+export function nextReady(text: string, heading: string, running: string[], human: string[] = DEFAULT_HUMAN): Ranked | null {
+  if (!heading || isHuman(heading, human)) return null
+  return ranked(text, running, human).find(i => i.next && i.heading.toLowerCase() === heading.toLowerCase()) ?? null
 }
 
 /**
@@ -120,8 +138,8 @@ export function moveItem(text: string, body: string, dir: 'up' | 'down'): string
 }
 
 /** The heading a finished job belongs to: a "host: name" prefix or a title starting with a heading, else the local one. */
-export function jobMachine(name: string, title: string, headings: string[]): string {
-  const heads = [...new Set(headings)].filter(h => h.toLowerCase() !== 'you')
+export function jobMachine(name: string, title: string, headings: string[], human: string[] = DEFAULT_HUMAN): string {
+  const heads = [...new Set(headings)].filter(h => !isHuman(h, human))
   const find = (w: string) => heads.find(h => h.toLowerCase() === w.toLowerCase())
   const pre = /^([A-Za-z0-9_.-]+):\s/.exec(name)?.[1]
   const lead = /^([A-Za-z0-9_.]+)/.exec(title || name)?.[1] ?? ''
@@ -190,16 +208,16 @@ export type RankedTodo<T> = T & { num: number | null; body: string; blockedBy: s
 
 /**
  * The panel's open to-dos ({ owner, text, line }, text without its link) per owner in file order, each owner's items
- * by priority, marked blocked (by a running name or title) or next (the first ready item of a machine, never [you]).
+ * by priority, marked blocked (by a running name or title) or next (the first ready item of a machine, never a human heading).
  */
-export function rankTodos<T extends { owner: string; text: string; line: number }>(todos: T[], running: string[]): RankedTodo<T>[] {
+export function rankTodos<T extends { owner: string; text: string; line: number }>(todos: T[], running: string[], human: string[] = DEFAULT_HUMAN): RankedTodo<T>[] {
   const owners = [...new Set(todos.map(t => t.owner))]
   return owners.flatMap(o => {
     let found = false
     const items = todos.filter(t => t.owner === o).map(t => ({ ...t, ...parseItem(t.text) }))
     return byPriority(items).map(i => {
       const blockedBy = i.after ? blocker(i.after, running) : ''
-      const next = !found && !blockedBy && o.toLowerCase() !== 'you'
+      const next = !found && !blockedBy && !isHuman(o, human)
       if (next) found = true
       const { url: _u, ...rest } = i
       return { ...rest, blockedBy, next } as RankedTodo<T>

@@ -19,7 +19,7 @@ import { checkRows, inlineRows, fitChrome, glanceParts, nowLine, verbSplit, TIE,
 import { PANE, rowCol, maxReading, noteShows, NOTE_MS, sameName, waitPhrase, waitReason, badge, evId, fitLabel, labelCol, machineTitle, machines, maxMeter, nestRows, runCount, shortTitle, parseSections, runCard, shortAge, timeTail, slide, stripAnsi } from '../hooks/panel'
 import { EVENTS_PY, hhmm, insideDirs, parseEvents, parseLogDirs, unseenErrors } from '../hooks/events'
 import { REPOS_REL, parseBranches, parseCommits, webUrl } from '../hooks/github'
-import { blocker, clip, doneEvents, isRunningRow, jobMachine, keyWords, moveItem, nextPrompt, nextReady, parseCaps, parseItem, parseMode, rankTodos, ranked, rowName, shortJob, todoRows } from '../hooks/priority'
+import { DEFAULT_HUMAN, blocker, clip, doneEvents, isDecision, isHuman, isRunningRow, jobMachine, keyWords, moveItem, nextPrompt, nextReady, parseCaps, parseHuman, parseItem, parseMode, rankTodos, ranked, rowName, shortJob, todoRows } from '../hooks/priority'
 import { fileOf, mainOfGitFile, parseProjects, projectSlug, resolveProject, worktreeCwd } from '../hooks/project'
 import { aliveTasks, bgLaunch, jobText, oneLine, scanTranscript, snapOf, toolWhat, waitSegs, watchedJob } from '../hooks/waiting'
 import { CHECKLIST_MAX, INLINE_MAX, INLINE_ROWS, SPIN, STEP_MARK, activeMark, checklistLines, inlineLines, spinFrame, stepItems } from '../hooks/render'
@@ -967,6 +967,40 @@ test('the panel lists to-dos by priority with next and waits for, and Move up re
   await ui.unmount()
 })
 
+test('[decisions] items are NEEDS YOU lines labeled Decide:, never ▶ next or ▶ Start; [you] and machines unchanged', async ($, on) => {
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [TODO_FILE]: '[you]\nreview PR\n[decisions]\n1. pick a host\n2. name the app\n[mac]\n1. run import\n' }
+  panelWorld(on, files, DONE_FULL)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  expect((await ui.find({ type: 'Text', text: /^NEEDS YOU/ }))?.text).toBe('NEEDS YOU  3')
+  expect((await ui.find({ type: 'Button', text: /Review PR/ }))?.text).toBe('Review PR')
+  expect((await ui.find({ type: 'Button', key: 't-3' }))?.text).toBe('Decide: pick a host')
+  expect((await ui.find({ type: 'Text', text: /^Decide:$/ }) as { props?: { bold?: boolean } } | undefined)?.props?.bold).toBe(true)
+  // TO-DO holds only the machine: one green ▶ on its top item, no Decisions heading.
+  expect((await ui.find({ type: 'Button', text: /TO-DO/ }))?.text).toBe('▾ TO-DO  1')
+  expect(await ui.find({ type: 'Text', text: /^    Decisions$/ })).toBe(undefined)
+  const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  expect(texts.filter(t => t === '  ▶ ')).toHaveLength(1)
+  // A decision's menu has no ▶ Start; a machine item's does.
+  await ui.press({ key: 't-3' })
+  expect(await ui.find({ type: 'Button', key: 'a-go-3' })).toBe(undefined)
+  expect(await ui.find({ type: 'Button', key: 'a-done-3' })).not.toBe(undefined)
+  await ui.press({ key: 't-6' })
+  expect(await ui.find({ type: 'Button', key: 'a-go-6' })).not.toBe(undefined)
+  await ui.unmount()
+})
+
+test('human headings come from .state/human-headings, replacing you and decisions', async ($, on) => {
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n', [`${DIR}/.state/human-headings`]: 'ops\n', [TODO_FILE]: '[ops]\nrotate keys\n[decisions]\npick a host\n' }
+  panelWorld(on, files, DONE_FULL)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: PANE_PROPS })
+  expect((await ui.find({ type: 'Text', text: /^NEEDS YOU/ }))?.text).toBe('NEEDS YOU  1')
+  expect((await ui.find({ type: 'Button', text: /Rotate keys/ }))?.text).toBe('Rotate keys')
+  expect((await ui.find({ type: 'Button', text: /TO-DO/ }))?.text).toBe('▾ TO-DO  1')
+  await ui.unmount()
+})
+
 const SEP = '\x1f'
 test('GitHub parsing: web URLs without credentials, branches and commits', async () => {
   expect(webUrl('git@github.com:acme/app.git\n')).toBe('https://github.com/acme/app')
@@ -1381,6 +1415,9 @@ test('running rows name their machine', () => {
   expect(machineTitle('big-batch', 'Linux CPU batch: checks', m)).toBe('Linux: CPU batch')
   expect(machineTitle('hc', 'Health care: classify', m)).toBe('Mac: Health care')
   expect(machineTitle('x', 'Big batch', machines([], []))).toBe('Big batch')
+  // A [decisions] heading is never the local machine.
+  expect(machines([], ['decisions', 'mac'])).toEqual({ local: 'Mac', remote: [] })
+  expect(machines([], ['decisions'])).toEqual({ local: '', remote: [] })
 })
 
 test('connectors open their web page as the connected account', () => {
@@ -1414,6 +1451,28 @@ test('priority: blocked while a running name or title holds every key word', asy
   expect(nextReady(PTODO, 'mac', [])!.body).toBe('Arts: verify (after classify)')
   expect(nextReady(PTODO, 'linux', ['Load 2019-20 filings'])).toBe(null)
   expect(nextReady(PTODO, 'you', [])).toBe(null)
+})
+
+test('priority: [decisions] is human like [you]: never next, never auto-started, never a machine', async () => {
+  const T = '[you]\n1. reply Sam\n[decisions]\n1. pick a host\n2. name it\n[mac]\n1. load\n'
+  const r = ranked(T, [])
+  expect(r.filter(i => i.next).map(i => i.heading)).toEqual(['mac'])
+  expect(nextReady(T, 'decisions', [])).toBe(null)
+  expect(nextReady(T, 'Decisions', [])).toBe(null)
+  expect(nextReady(T, 'you', [])).toBe(null)
+  expect(nextReady(T, 'mac', [])!.body).toBe('load')
+  expect(jobMachine('decisions: x', 'Decisions batch', ['decisions', 'mac'])).toBe('mac')
+  expect(jobMachine('x', '', ['you', 'decisions'])).toBe('')
+  const todos = [{ owner: 'decisions', text: '1. pick', line: 1 }, { owner: 'you', text: 'reply', line: 2 }, { owner: 'mac', text: 'load', line: 3 }]
+  expect(rankTodos(todos, []).map(t => [t.owner, t.next])).toEqual([['decisions', false], ['you', false], ['mac', true]])
+  expect(todoRows(rankTodos(todos, []), 60).flatMap(x => (x.kind === 'item' ? [x.marker] : []))).toEqual([' ', ' ', '▶'])
+  // .state/human-headings: one per line, brackets and case ignored, # comments; empty means the defaults.
+  expect(parseHuman('# who\n[Ops]\nyou\n')).toEqual(['ops', 'you'])
+  expect(parseHuman('\n')).toEqual(DEFAULT_HUMAN)
+  expect(nextReady(T, 'decisions', [], ['you'])!.body).toBe('pick a host')
+  expect(isHuman(' Decisions ')).toBe(true)
+  expect(isDecision('decisions')).toBe(true)
+  expect(isDecision('you')).toBe(false)
 })
 
 test('priority: panel to-dos rank the same way', async () => {

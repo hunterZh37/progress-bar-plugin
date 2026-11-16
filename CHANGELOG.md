@@ -2,6 +2,11 @@
 
 Versions of the progress-bar plugin, newest first. Each line is the release commit. Full detail is in the git history.
 
+## 0.35.2
+
+- **Decisions are yours:** `[decisions]` to-dos are treated like `[you]`. Auto-next never sends "Next up from the to-do list" for them, and the Status panel never marks one with the green `▶` or offers `▶ Start`. They show under NEEDS YOU as **Decide:** lines, and the status line never says `next` on them.
+- **Human headings:** `~/.claude-progress/.state/human-headings` lists the headings that hold your own items, one per line. Missing or empty, it is `you` and `decisions`. A human heading is also never taken for a machine.
+
 ## 0.35.1
 
 - **No false stuck alarms:** a row reads `⚠ stuck` only when every sign of life is quiet. New signs: the `agent` id `progress_report` now records (its transcript counts even when the file's name pairs with no agent), `output_file` and `transcript` paths, `pid`/`pids` that still exist, and `expect_minutes` on the active step.

@@ -13,7 +13,8 @@ A machine status row ("<host> ✓ helper healthy · load 0.22 on 12 cores · idl
 "machine <host> ..." line after RUNNING. While a "<host>: ..." job runs or waits, its "idle" reads "busy: N jobs running".
 Duplicate rows of one job are merged. A trailing status word (working, starting…) is not part of a job's name.
 A stopped row (■) whose job log ends with a finish line counts as done, not a problem.
-To-dos sort by a leading "N. " (1 first). One ending "(after X)" is dim while a running job matches X. The top ready one per machine says next.
+To-dos sort by a leading "N. " (1 first). One ending "(after X)" is dim while a running job matches X. The top ready one per machine says next,
+never under a human heading ([you], [decisions], or the lines of ~/.claude-progress/.state/human-headings).
 Folded sections (~/.claude-progress/.state/folded.txt) show as one line with a count, unless PB_UNFOLD=1.
 With --summary it prints one count line instead (the status line does this while the Status panel is on).
 It starts with a red "! N actions needed" while ~/.claude-progress/actions.json has open actions for this project or none.
@@ -394,6 +395,19 @@ def action_label(n):
     return '\033[1;31m! ' + str(n) + ' action' + ('' if n == 1 else 's') + ' needed\033[0m'
 
 
+HUMAN_DEFAULT = ('you', 'decisions')
+
+
+def human_headings():
+    """Headings for the person, never marked next: .state/human-headings, one per line, else you and decisions."""
+    out = []
+    for l in (read(os.path.join(ROOT, '.state', 'human-headings')) or '').splitlines():
+        l = re.sub(r'^\[(.*)\]$', r'\1', l.strip()).strip().lower()
+        if l and not l.startswith('#') and l not in out:
+            out.append(l)
+    return out or list(HUMAN_DEFAULT)
+
+
 def parse_todo(text, running=()):
     """{heading: [rendered item]} for open items. "x " = done (hidden), "text | url" = clickable.
     "N. " = priority (1 first, unnumbered after). "(after X)" is dim with "waits for" while X runs.
@@ -419,11 +433,12 @@ def parse_todo(text, running=()):
         a = AFTER.search(text_)
         todo[cur].append((int(n.group(1)) if n else float('inf'), i, text_, url.strip(), a.group(1).strip() if a else ''))
     out = {}
+    human = human_headings()
     for h, items in todo.items():
         if not items:
             continue
         items.sort(key=lambda x: (x[0], x[1]))
-        mark = h.lower() != 'you' and any(x[0] != float('inf') or x[4] for x in items)
+        mark = h.strip().lower() not in human and any(x[0] != float('inf') or x[4] for x in items)
         rows = []
         for num, _, text_, url, after in items:
             b = blocker(after, running) if after else ''

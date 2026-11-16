@@ -14,7 +14,7 @@ import { PAGE_LINES, bubbleLines, kb, msgRows, pageCount, readChat, selectChanne
 import { markHandled, readInbox } from './inbox'
 import { isDarwin } from './mac'
 import { backfillAgent, clock, doneDetails, machineName, prettyName, readDone } from './done'
-import { clip, moveItem, nextPrompt, parseItem, rankTodos, shownTitle, todoRows as layoutTodos } from './priority'
+import { DEFAULT_HUMAN, HUMAN_REL, clip, isDecision, isHuman, moveItem, nextPrompt, parseHuman, parseItem, rankTodos, shownTitle, todoRows as layoutTodos } from './priority'
 import { DEFAULT_GOAL, OTHER, areaOf, lensTags, plainTitle, projectGoal, readGoal } from './goal'
 import type { LensTag } from './goal'
 import { sessionProject } from './project'
@@ -125,6 +125,8 @@ export function inlineRows(items: readonly StepItem[], step: string, time: strin
 const foldedAtom = atom({ plugin: 'progress-bar', key: 'folded' } as const, [])
 const linesAtom = atom({ plugin: 'progress-bar', key: 'lines' } as const, [])
 const todosAtom = atom({ plugin: 'progress-bar', key: 'todos' } as const, [])
+// Human headings (.state/human-headings, default you and decisions): their items are NEEDS YOU lines, never next.
+const humanAtom = atom({ plugin: 'progress-bar', key: 'human' } as const, DEFAULT_HUMAN)
 // This session's project (its to-do list's name), from project.ts.
 const projectAtom = atom({ plugin: 'progress-bar', key: 'project' } as const, '')
 const menuAtom = atom({ plugin: 'progress-bar', key: 'menuFor' } as const, -1)
@@ -476,11 +478,12 @@ const cap = (x: string) => x.charAt(0).toUpperCase() + x.slice(1)
 
 /**
  * Machines for row labels: remote hosts are "<host>: name" row prefixes plus to-do headings ([mac], [server-1], ...).
- * The local one is the heading named mac or local, else the first heading that is neither "you" nor a remote host.
+ * The local one is the heading named mac or local, else the first heading that is neither a human one ([you],
+ * [decisions]) nor a remote host.
  */
-export function machines(rowNames: string[], owners: string[]): { local: string; remote: string[] } {
+export function machines(rowNames: string[], owners: string[], human: string[] = DEFAULT_HUMAN): { local: string; remote: string[] } {
   const prefixes = rowNames.map(n => /^([a-z0-9_.-]+):\s/.exec(n)?.[1]).filter((x): x is string => !!x)
-  const heads = [...new Set(owners.map(o => o.toLowerCase()))].filter(o => o !== 'you')
+  const heads = [...new Set(owners.map(o => o.toLowerCase()))].filter(o => !isHuman(o, human))
   const local = heads.find(h => h === 'mac' || h === 'local') ?? heads.find(h => !prefixes.includes(h)) ?? ''
   const remote = [...new Set([...prefixes, ...heads])].filter(h => h !== local)
   return { local: local ? (local === 'mac' ? 'Mac' : cap(local)) : '', remote }
@@ -763,6 +766,10 @@ async function readTodos($: EngineInterface, h: string) {
   const out: Todo[] = parseTodo(raw).map(t => ({ owner: t.heading, text: t.text.split(' | ')[0]!.trim(), done: t.done, line: t.line }))
   const prev = await read($, todosAtom)
   if (JSON.stringify(prev) !== JSON.stringify(out)) await update($, todosAtom, () => out)
+  let humanText = ''
+  try { humanText = String(await $.fs.read(`${h}/${HUMAN_REL}`)) } catch { humanText = '' }
+  const human = parseHuman(humanText)
+  if ((await read($, humanAtom)).join('\n') !== human.join('\n')) await update($, humanAtom, () => human)
 }
 
 /** "3 weeks" -> "3w", "2 hours" -> "2h", "4 months" -> "4mo": a commit's age, short. */
@@ -1176,8 +1183,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       ? <Box key={`${key}-b`}><Text>{'  '}</Text><Button key={key} plain onPress={() => startAccountCheck($, homeDir, c)}>{'[Check account]'}</Button></Box>
       : null
     const tab = await read($, tabAtom)
-    // [you] to-dos go to NEEDS YOU on the List tab, the machines' ones stay under TO-DO.
-    const isYou = (t: Todo) => t.owner.toLowerCase() === 'you'
+    // Human to-dos ([you], [decisions], .state/human-headings) go to NEEDS YOU on the List tab, the machines' ones stay under TO-DO.
+    const human = await read($, humanAtom)
+    const isYou = (t: Todo) => isHuman(t.owner, human)
     const openTodos = todos.filter(t => !t.done && !isYou(t)).length
     const width = Math.max(30, e.props.bodyColumns ?? 60)
     const barW = Math.min(20, Math.max(10, width - 30))
@@ -1234,9 +1242,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Box>
       : null
     // Your own to-dos as NEEDS YOU lines: the first word bold ("Review the deploy PR"), a press opens the same menu.
-    const youTodos = rankTodos(todos.filter(t => !t.done && isYou(t)), running)
+    // A [decisions] item reads "Decide: <item>".
+    const youTodos = rankTodos(todos.filter(t => !t.done && isYou(t)), running, human)
     const youRows = () => youTodos.flatMap(t => {
-      const [verb, rest] = verbSplit(shownTitle(t.body))
+      const [verb, rest] = isDecision(t.owner) ? ['Decide:', ` ${shownTitle(t.body)}`] : verbSplit(shownTitle(t.body))
       return [
         <Box key={`tr-${t.line}`}>
           <Text color="yellow">{'  ○ '}</Text>
@@ -1247,7 +1256,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         todoMenu(t, '    '),
       ].filter(Boolean)
     })
-    const todoRows = () => layoutTodos(rankTodos(todos.filter(t => !t.done && !isYou(t)), running), width + 3, jobLabel).flatMap(row => {
+    const todoRows = () => layoutTodos(rankTodos(todos.filter(t => !t.done && !isYou(t)), running, human), width + 3, jobLabel).flatMap(row => {
       if (row.kind === 'gap') return [<Text key={`g-${row.owner}`}>{' '}</Text>]
       if (row.kind === 'head') {
         return [<Box key={`w-${row.owner}`}><Text color="magenta">{`    ${row.owner.charAt(0).toUpperCase()}${row.owner.slice(1).toLowerCase()}`}</Text><Text dimColor>{`  ${row.count}`}</Text></Box>]
@@ -1328,7 +1337,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     }
     const metaOf = (name: string): Meta => meta[slug(name)] ?? {}
     const short = (t: string) => t.split(' · ')[0]!
-    const mach = machines(sections.filter(x => x.key === 'running' || x.key === 'waiting').flatMap(x => x.rows).map(x => runCard(x).name), todos.map(t => t.owner))
+    const mach = machines(sections.filter(x => x.key === 'running' || x.key === 'waiting').flatMap(x => x.rows).map(x => runCard(x).name), todos.map(t => t.owner), human)
     const MINI = 10
     const goal = await read($, goalAtom)
     const topoCfg = (await read($, topoAtom)).cfg
@@ -1768,7 +1777,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         return { name: c.name, title: m0.title || c.name, pct: c.pct, mark: wait ? '⏸' : c.mark === '✔' ? '✔' : c.stuck ? '⚠' : '▶', step: c.step, reads: m0.reads, writes: m0.writes, proc: /\d% CPU\b/.test(row), waitOn: c.waitOn, why: m0.why, area: ar.name }
       })
       const self = topo.cfg.self || resolveMachine(topo.cfg, mach.local) || resolveMachine(topo.cfg, localMachine) || topo.cfg.machines.find(m => m.role === 'data')?.id || 'local'
-      const queues = queuesOf(topo.cfg, rankTodos(todos.filter(t => !t.done), running).map(t => ({ owner: t.owner, text: t.text })), self)
+      const queues = queuesOf(topo.cfg, rankTodos(todos.filter(t => !t.done), running, human).map(t => ({ owner: t.owner, text: t.text })), self, human)
       // A tree of the machines. A press on a name opens it in the details below (its jobs, services, queued count), a
       // press on a job opens its reads, writes, step and why. Open keys live in the same open-cards list as the List tab's.
       const drawn = renderTopology({ cfg: topo.cfg, self, jobs, health: topo.health, queues, extra: mach.remote }, width, openCards)

@@ -118,6 +118,6 @@ export type Topo = { cfg: TopoConfig; health: Record<string, TopoHealth> }
 
 declare module 'claude-code' {
   interface PluginState {
-    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; project: Project; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards; recap: Recap; inbox: Inbox; channel: Channel; chat: ChatState; actions: Action[]; actionUi: ActionUi; health: Health; done: Record<string, DoneRec>; topo: Topo; goal: Goal; chrome: ChromeView; ctl: Ctl; stopAsk: StopAsk; local: LocalView }
+    'progress-bar': { folded: Folded; lines: Lines; todos: Todo[]; human: string[]; project: Project; menuFor: MenuFor; conns: Conns; tab: Tab; gh: Gh; meta: Record<string, Meta>; log: Log; openCards: OpenCards; recap: Recap; inbox: Inbox; channel: Channel; chat: ChatState; actions: Action[]; actionUi: ActionUi; health: Health; done: Record<string, DoneRec>; topo: Topo; goal: Goal; chrome: ChromeView; ctl: Ctl; stopAsk: StopAsk; local: LocalView }
   }
 }

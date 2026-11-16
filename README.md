@@ -32,7 +32,7 @@ Install it and keep working. You never have to ask Claude to show a task in the 
 - **Real bars:** a job that writes `~/.claude-progress/<slug>.json` gets a bar with percent, count, step and time left. See [docs/progress-files.md](docs/progress-files.md).
 - **Bars from logs:** a job that only writes a log gets a bar from a watch file, with `■ stopped` or `✖ error` when it dies.
 - **Groups:** lines sort into TO-DO, PROBLEMS, RUNNING, WAITING and DONE. A row shows `⚠ stuck` only when every sign of life has been quiet for 10 minutes: its numbers and step, its progress file, the writing agent's transcript (`progress_report` records the `agent`), files it names (`heartbeat`, `output_file`) and processes it names (`pid`, `pids`). A long quiet step can say how long it takes (`expect_minutes`, on the report or on the active step). Flat numbers with signs of life read `· working, step 31m`. See [docs/progress-files.md](docs/progress-files.md#stuck-and-signs-of-life).
-- **To-dos:** each project has its own list, with priorities, blockers and auto-next. See [docs/todos.md](docs/todos.md).
+- **To-dos:** each project has its own list, with priorities, blockers and auto-next. `[you]` and `[decisions]` items are yours: they show under NEEDS YOU and never start on their own. See [docs/todos.md](docs/todos.md).
 - **Status panel:** a docked pane beside the chat with List, Connectors, GitHub, Log, Chat and Topology tabs. See [docs/status-panel.md](docs/status-panel.md).
 - **Action needed:** a step only you can run holds your next prompt until it is done or skipped. See [docs/action-needed.md](docs/action-needed.md).
 - **Skills:** `progress-reporting` has the details for reporting (watch files, areas, gains), `action-needed` has Claude hand you steps it cannot run.
@@ -158,6 +158,7 @@ All under `~/.claude-progress/`. None is needed. Each is read only when it exist
 | `chrome-local-accounts.txt` | This Mac's Google accounts, for the Chrome warning |
 | `localhost-ignore.txt` | Processes or ports to leave out of LOCALHOST |
 | `.state/caps` | `machine=N` lines: how many jobs auto-next runs at once per machine. Default `local=3` |
+| `.state/human-headings` | One to-do heading per line whose items are yours, never auto-started or marked next. Default `you` and `decisions` |
 | `.state/stuck-minutes` | Minutes with no sign of life before a row reads stuck. Default 10 |
 
 ## Privacy

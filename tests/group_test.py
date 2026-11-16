@@ -192,6 +192,26 @@ class Group(unittest.TestCase):
             '  LINUX: next 1. trends (after 2019-20 load) · 2. board links'])
         self.assertIn('\033[2m1. first (waits for arts-classify)\033[0m', raw[2])
 
+    def test_todo_decisions_never_next_and_you_unchanged(self):
+        # [decisions] is a human heading like [you]: numbered items there never say next. Machines still do.
+        self.write('todo.txt', '[you]\n1. reply Sam\n[decisions]\n1. pick a host\n2. name it\n[mac]\n1. load\n')
+        plain = [re.sub(r'\033\[[0-9;]*m', '', strip_links(l)) for l in self.g.main(io.StringIO(''), T0)]
+        self.assertEqual(plain[:4], [
+            '▾ ☐ TO-DO',
+            '  YOU: 1. reply Sam',
+            '  DECISIONS: 1. pick a host · 2. name it',
+            '  MAC: next 1. load'])
+
+    def test_todo_human_headings_file(self):
+        # .state/human-headings replaces the defaults: here only [ops] is human, so [decisions] gets next again.
+        self.write('.state/human-headings', '# people\n[Ops]\n')
+        self.assertEqual(self.g.human_headings(), ['ops'])
+        self.write('todo.txt', '[ops]\n1. a\n[decisions]\n1. b\n')
+        plain = [re.sub(r'\033\[[0-9;]*m', '', strip_links(l)) for l in self.g.main(io.StringIO(''), T0)]
+        self.assertEqual(plain[1:3], ['  OPS: 1. a', '  DECISIONS: next 1. b'])
+        self.write('.state/human-headings', '\n')
+        self.assertEqual(self.g.human_headings(), ['you', 'decisions'])
+
     def test_todo_blocker_needs_every_key_word(self):
         self.assertEqual(self.g.blocker('2019-20 load', ['Load 2019-20 filings', 'x']), 'Load 2019-20 filings')
         self.assertEqual(self.g.blocker('2019-20 load', ['Load 2018 filings']), '')
