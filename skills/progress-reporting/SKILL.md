@@ -17,7 +17,6 @@ The Status panel marks every job with an area of the project's goal (`~/.claude-
 
 - **area**: the goal area it improves, by name (`Payments`). Pick from that file's areas; a project with no file has none, so leave it out there. When there are areas, never leave it out: a guess from keywords can mark a job with the wrong area.
 - **title**: the improvement itself, in plain words, not the machine or the mechanism (`Every board member counted, not just 25`).
-- **gains**: which of cost, quality, speed the job makes better, each a short plain line with a number when possible: `{"quality": "12K more orders matched to customers", "speed": "import in 7h instead of 12h", "cost": "$14 of compute instead of $60"}`. Name only the ones that apply.
 - **impact** (before it ends): how the database, or whatever the goal names, is better now, with the key number.
 
 ## Easiest: the progress_report tool
@@ -25,7 +24,7 @@ The Status panel marks every job with an area of the project's goal (`~/.claude-
 Call `progress_report` (from the progress-bar plugin) when the job starts and after each step:
 
 ```
-progress_report(title: "Every order matched to its customer", why: "customer search sees whole order histories", area: "Orders", gains: {"quality": "12K more orders matched"}, done: 2, total: 5, step: "run tests")
+progress_report(title: "Every order matched to its customer", why: "customer search sees whole order histories", area: "Orders", done: 2, total: 5, step: "run tests")
 ```
 
 - It writes `~/.claude-progress/<slug of title>.json` with this session's id, folder and `startedAt` filled in, so the bar shows in this session's Status panel on any machine.
@@ -43,7 +42,7 @@ Path: `~/.claude-progress/<slug>.json`
 {"done": 2, "total": 5, "step": "run tests", "startedAt": 1767225600000,
  "title": "Login fix · tests and deploy", "why": "people can sign in again", "parent": "release-prep",
  "session": "<session id>", "cwd": "/absolute/working/dir",
- "area": "Tools", "gains": {"quality": "login works for all 3 providers"},
+ "area": "Tools",
  "impact": "Login works again for all 3 providers\n41 tests added"}
 ```
 
@@ -53,7 +52,6 @@ Path: `~/.claude-progress/<slug>.json`
 - **startedAt**: optional, milliseconds since the epoch. Without it the file's time is used.
 - **title**: plain words for the improvement the job makes, so a person knows at a glance why it runs. Name the outcome, not the mechanism: `Every board member counted, not just 25` rather than `Board lists past 25 seats`, `Know where more orgs serve` rather than `Service places round 3`. The Status panel shows it in bold above the slug.
 - **area**: the goal area the job improves, by name from `~/.claude-progress/goals/<project>.json` (`Search`, `Payments`). Set it whenever the project's goal has areas.
-- **gains**: an object with any of `cost`, `quality`, `speed`, each a short plain line with a number when possible. State which of the three your job improves. They show in the job's opened card, `quality: <line>`.
 - **why**: what the job unlocks for the person (`the weekly report`). Shown dim under its row.
 - **parent**: the slug of the bigger job this is part of. Set it when a subagent or script works for another job that has a progress file. While both run, the child draws inside the parent's card, and the parent reads `waiting on: <child>` instead of stuck.
 - **session**: the Claude Code session id, so the bar shows only in this session. Include it only if you know it (`$CLAUDE_CODE_SESSION_ID` in Bash, when set). A subagent usually does not: leave it out rather than guess, and name the file after the slug of your Agent `description`. The plugin matches that slug to your agent and keeps the file in this session, also after a plugin reload.
@@ -105,7 +103,7 @@ EOF
 
 ## When done
 
-Write `impact` and `gains` into the file, wait 5 seconds (one poll, so the plugin saves it), then delete the file. Or call `progress_report` with `finished: true`, `impact` and `gains`. A file untouched for 10 minutes stops showing anyway.
+Write `impact` into the file, wait 5 seconds (one poll, so the plugin saves it), then delete the file. Or call `progress_report` with `finished: true` and `impact`. A file untouched for 10 minutes stops showing anyway.
 
 **Subagents:** your final report is your impact. Start it with one bold sentence on how the work made things better, with numbers (`**One person is one person now: 109K split board members merged, so board links stop double counting.**`). The plugin keeps that sentence, or your first 2 to 3 lines.
 

@@ -3,7 +3,7 @@ import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { PANE, cells, fitLabel, rowCol } from '../hooks/panel'
-import { DEFAULT_GOAL, GOALS_DIR_REL, GOAL_REL, OTHER, folderName, projectGoal, readGoal, anchorSummary, areaOf, areaSummary, groupByArea, inferLens, lensSummary, lensTags, parseGoal, pickGains, plainTitle } from '../hooks/goal'
+import { DEFAULT_GOAL, GOALS_DIR_REL, GOAL_REL, OTHER, folderName, projectGoal, readGoal, anchorSummary, areaOf, areaSummary, groupByArea, parseGoal, plainTitle } from '../hooks/goal'
 import { parseDone } from '../hooks/done'
 import { reportBody } from '../hooks/report'
 import { draw } from './render'
@@ -50,21 +50,19 @@ const SAMPLE = {
 const G = parseGoal(JSON.stringify(SAMPLE))
 const area = (t: Parameters<typeof areaOf>[1]) => areaOf(G, t).name
 
-test('goal.json: a neutral default for a missing or bad file, custom areas kept, lenses merged over the defaults', () => {
+test('goal.json: a neutral default for a missing or bad file, custom areas kept, old lenses ignored', () => {
   expect(parseGoal('nope')).toBe(DEFAULT_GOAL)
   expect(parseGoal('[]')).toBe(DEFAULT_GOAL)
   expect(DEFAULT_GOAL.anchor).toBe('This project')
   expect(DEFAULT_GOAL.areas).toEqual([])
   expect(G.anchor).toBe('Make the orders database better')
   expect(G.areas.map(a => a.tag)).toEqual(['Orgs', 'Finances', 'Boards', 'Grants', 'Places', 'Causes', 'Answers', 'Tools'])
-  expect(G.lenses.map(l => l.id)).toEqual(['cost', 'quality', 'speed'])
   const g = parseGoal(JSON.stringify({ anchor: 'Ship the app', areas: [{ name: 'Login', icon: '🔑', keywords: ['Auth'] }, { icon: 'x' }], lenses: [{ id: 'speed', icon: '⏩' }] }))
   expect(g.anchor).toBe('Ship the app')
   // An icon from an older file is read and ignored, the tag defaults to the name's first word.
   expect(g.areas).toEqual([{ id: 'login', name: 'Login', tag: 'Login', keywords: ['auth'] }])
-  expect(g.lenses.find(l => l.id === 'speed')).toEqual(G.lenses[2])
+  expect('lenses' in g).toBe(false)
   expect(parseGoal(JSON.stringify({ areas: [{ id: 'search', name: 'Search & filters' }] })).areas[0]!.tag).toBe('Search')
-  expect(g.lenses.find(l => l.id === 'cost')).toBe(G.lenses[0])
   // No areas: the fallback's (none by default).
   expect(parseGoal('{"anchor":"A"}').areas).toEqual([])
   expect(parseGoal('{"anchor":"A"}', G).areas).toBe(G.areas)
@@ -113,27 +111,13 @@ test('grouping by area: the goal\'s order, job-named areas next, Other last, emp
   expect(plainTitle('Health care labels', ['linux'])).toBe('Health care labels')
 })
 
-test('lenses: named gains in order, else one inferred from the impact, a count per lens for today', () => {
-  expect(pickGains({ speed: ' labels in 7h instead of 12h ', quality: '', other: 'x' })).toEqual({ speed: 'labels in 7h instead of 12h' })
-  expect(pickGains('quality')).toBe(undefined)
-  const named = lensTags(G, { speed: 'labels in 7h instead of 12h', quality: '1.65M more board seats counted' })
-  expect(named.map(t => [t.id, t.name, t.inferred])).toEqual([['quality', 'quality', false], ['speed', 'speed', false]])
-  expect(inferLens(G, '$14 of API instead of 34h of Claude')).toBe('cost')
-  expect(inferLens(G, 'Labels now finish 3 hours sooner')).toBe('speed')
-  expect(inferLens(G, 'labels in 7h instead of 12h')).toBe('speed')
-  expect(inferLens(G, '1.65M more board seats, so people search sees whole boards')).toBe('quality')
-  expect(lensTags(G, undefined, 'cheaper runs').map(t => [t.id, t.inferred])).toEqual([['cost', true]])
-  expect(lensTags(G, undefined, '')).toEqual([])
-  expect(lensSummary(G, [named, lensTags(G, undefined, 'more seats'), lensTags(G, { cost: '$14' })])).toBe('today: 2 quality · 1 cost · 1 speed')
-  expect(lensSummary(G, [[]])).toBe('')
-})
-
-test('area and gains travel from progress_report to the done record', () => {
-  const body = reportBody({ title: 'T', step: 's', area: ' Grants ', gains: { quality: 'more grants linked', cost: '' } }, { session: '', cwd: '' }, 5)
+test('area travels from progress_report to the done record; an old gains field is dropped without error', () => {
+  const body = reportBody({ title: 'T', step: 's', area: ' Grants ', gains: { quality: 'more grants linked' } } as never, { session: '', cwd: '' }, 5)
   expect(body.area).toBe('Grants')
-  expect(body.gains).toEqual({ quality: 'more grants linked' })
+  expect('gains' in body).toBe(false)
   const rec = parseDone(JSON.stringify({ slug: 't', title: 'T', impact: ['x'], finished: 1, machine: 'Mac', kind: 'job', area: 'Grants', gains: { speed: '2x faster', junk: 1 } }))
-  expect([rec?.area, rec?.gains]).toEqual(['Grants', { speed: '2x faster' }])
+  expect(rec?.area).toBe('Grants')
+  expect(rec && 'gains' in rec).toBe(false)
 })
 
 const FULL = [
@@ -200,15 +184,41 @@ test('the List tab: a status line, then TO-DO, RUNNING, WAITING, DONE; two-line 
   // The area word is a step brighter than the dim rest of the line.
   const word = (await ui.findAll({ type: 'Text' })).find(t => t.text === 'Grants') as unknown as { props?: { dimColor?: boolean } }
   expect(!!word.props?.dimColor).toBe(false)
-  // An opened running row adds the area and why, and the gains it named. No badge.
+  // An opened running row adds the area and why. An old file's gains never show. No badge.
   await ui.press({ key: 'open-linux-board-seats' })
   await ui.press({ key: 'open-tidy-up' })
   open = draw((await ui.find({ type: 'Box' })) as never)
   expect(open[open.findIndex(l => /Board lists/.test(l)) + 1]).toBe('    ⎿ 1 of 2 steps')
   expect(open).toContain('      Boards · Whole boards, not just 25')
-  expect(open).toContain('      quality: 1.65M more board seats counted')
+  expect(open.join('\n')).not.toMatch(/quality|1\.65M/)
   expect(open[open.findIndex(l => /Tidy up/.test(l)) + 2]).toBe('      Tools')
   expect(open.join('\n')).not.toMatch(/area: |job$|Claude agent|so far/m)
+  await ui.unmount()
+})
+
+test('no row says "improves": running, waiting and done rows, open or closed, even from files with gains', async ($, on) => {
+  const full = [
+    '▾ ▶ RUNNING', '  ◐ faster-import ██░░ 50.0% · 1/2',
+    '▾ ⏸ WAITING', '  cheaper-gpu · waiting on: faster-import',
+    '▾ ✔ DONE', '  sped-up · finished 10:12',
+  ].join('\n')
+  const files: Record<string, string> = {
+    [SCRIPT]: statusScript(), [FLAG]: 'on\n', [`${HOME}/${GOAL_REL}`]: JSON.stringify(SAMPLE),
+    [`${DIR}/faster-import.json`]: JSON.stringify({ done: 1, total: 2, title: 'Make the import faster', why: 'Import in 7h instead of 12h, saves $14', gains: { speed: '2x faster' } }),
+    [`${DIR}/cheaper-gpu.json`]: JSON.stringify({ title: 'Cut the GPU cost', why: 'cheaper runs' }),
+    [`${DIR}/.state/done/sped-up.json`]: JSON.stringify({ slug: 'sped-up', title: 'Sped up labels', impact: ['Labels now finish 3 hours sooner'], gains: { speed: 'labels in 7h' }, finished: NOW - 60_000, machine: 'linux', kind: 'job' }),
+  }
+  world(on, files, full)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: props(80) })
+  const shown = async () => [...draw((await ui.find({ type: 'Box' })) as never), ...(await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')].join('\n')
+  expect(await shown()).not.toMatch(/improves/i)
+  await ui.press({ key: 'h-done' })
+  for (const b of (await ui.findAll({ type: 'Button' })).filter(b => /^(open-|dno-)/.test(b.key ?? ''))) await ui.press({ key: b.key! })
+  const all = await shown()
+  expect(all).toMatch(/Labels now finish 3 hours sooner/)
+  expect(all).not.toMatch(/improves/i)
+  expect(all).not.toMatch(/(speed|cost|quality): /)
   await ui.unmount()
 })
 
@@ -264,7 +274,7 @@ test('goals are per project: goals/<slug>.json heads its own project, with its a
 
 test('projectGoal and folderName: a project with no file is its folder, no areas', () => {
   expect(folderName('/Users/a/Desktop/agentic-scheduling/')).toBe('agentic-scheduling')
-  expect(projectGoal('x')).toEqual({ anchor: 'x', areas: [], lenses: DEFAULT_GOAL.lenses })
+  expect(projectGoal('x')).toEqual({ anchor: 'x', areas: [] })
   expect(projectGoal('')).toEqual(DEFAULT_GOAL)
   expect(projectGoal('').anchor).toBe('This project')
   expect(areaOf(projectGoal('x'), { title: 'Fix the board seats' })).toBe(OTHER)

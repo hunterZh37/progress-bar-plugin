@@ -27,7 +27,6 @@ import { PROJECT_LINE, pickOwner, routeOf, sessionKeyOf as keyOf } from './route
 import type { Progress, Row, Track } from './render'
 import { isDarwin } from './mac'
 import { impactLines, parseDone, reportOf, saveDone, summarize, DONE_REL } from './done'
-import { pickGains } from './goal'
 import { aliveTasks, bgLaunch, bgSegs, idleSegs, newScan, phaseOf, reportedBy, scanMore, scanResult, snapOf, toolWhat, waitSegs, watchedJob } from './waiting'
 import { PS_ARGVS, addLife, agentOf, aliveRel, jobName, lifeFilesOf, livePidsIn, parseProcs, pickTxBase, pidLife, pidsOf, quietUntilOf, stepQuietUntil, taskProc, type Life, type Proc } from './alive'
 import type { BgSnap, BgTask, Job, ScanAcc, TxScan } from './waiting'
@@ -648,7 +647,7 @@ async function recordJob($: EngineInterface, h: string, name: string, j: FileJob
   if (!session) { try { session = await $.session.id() } catch { session = undefined } }
   await saveDone($, h, {
     slug: name, title: strOf(j.raw.title) ?? '', why: strOf(j.raw.why), impact: impactLines(j.raw.impact), step: j.row.step || undefined,
-    area: strOf(j.raw.area), gains: pickGains(j.raw.gains),
+    area: strOf(j.raw.area),
     started: j.row.startedAt || undefined, finished: now, session, kind: 'job',
   }).catch(() => undefined)
 }
@@ -707,7 +706,7 @@ async function recordAgent($: EngineInterface, agentId: string, report: string, 
   let session = ''
   try { session = await $.session.id() } catch { session = '' }
   await saveDone($, h, {
-    slug: key, title: strOf(raw.title) ?? desc, why: strOf(raw.why), impact, step: strOf(raw.step), area: strOf(raw.area), gains: pickGains(raw.gains),
+    slug: key, title: strOf(raw.title) ?? desc, why: strOf(raw.why), impact, step: strOf(raw.step), area: strOf(raw.area),
     started: Math.max(seen.get(agentId)?.startedAt ?? 0, typeof raw.startedAt === 'number' ? raw.startedAt : 0) || undefined, finished: now, session: session || undefined, kind: 'agent',
   }).catch(() => undefined)
 }
@@ -1127,7 +1126,7 @@ export const register: Register = (on, options) => {
     // This session's own job names the work: its title titles the turn row of a later turn that does not report.
     if (!e.agentId) { if (i.finished === true) setReportTitle('', 0); else if (str(i.title) || str(i.label)) setReportTitle(str(i.title) || str(i.label) || '', await $.clock.now()) }
     // The calling subagent's id goes in the file, so its transcript keeps the row alive however the file is named.
-    const text = await writeReport($, await resolveHome($), { agent: e.agentId, title: str(i.title) ?? '', label: str(i.label), done: num(i.done), total: num(i.total), step: str(i.step), why: str(i.why), parent: str(i.parent), slug: str(i.slug), reads: str(i.reads), writes: str(i.writes), impact: str(i.impact), area: str(i.area), gains: pickGains(typeof i.gains === 'string' ? (() => { try { return JSON.parse(i.gains as string) } catch { return undefined } })() : i.gains), finished: i.finished === true, expectMinutes: num(i.expect_minutes) ?? (typeof i.expect_minutes === 'string' ? num(Number(i.expect_minutes)) : undefined), heartbeat: str(i.heartbeat), steps: listArg(i.steps), stepStates: listArg(i.step_states) })
+    const text = await writeReport($, await resolveHome($), { agent: e.agentId, title: str(i.title) ?? '', label: str(i.label), done: num(i.done), total: num(i.total), step: str(i.step), why: str(i.why), parent: str(i.parent), slug: str(i.slug), reads: str(i.reads), writes: str(i.writes), impact: str(i.impact), area: str(i.area), finished: i.finished === true, expectMinutes: num(i.expect_minutes) ?? (typeof i.expect_minutes === 'string' ? num(Number(i.expect_minutes)) : undefined), heartbeat: str(i.heartbeat), steps: listArg(i.steps), stepStates: listArg(i.step_states) })
     await poll($).catch(() => undefined)
     return { result: text }
   })

@@ -15,9 +15,7 @@ import { markHandled, readInbox } from './inbox'
 import { isDarwin } from './mac'
 import { backfillAgent, clock, doneDetails, machineName, prettyName, readDone } from './done'
 import { DEFAULT_HUMAN, HUMAN_REL, clip, isDecision, isHuman, moveItem, nextPrompt, parseHuman, parseItem, rankTodos, shownTitle, todoRows as layoutTodos } from './priority'
-import { sessionRow } from './auto'
-import { DEFAULT_GOAL, OTHER, areaOf, lensTags, pickGains, plainTitle, projectGoal, readGoal } from './goal'
-import type { LensTag } from './goal'
+import { DEFAULT_GOAL, OTHER, areaOf, plainTitle, projectGoal, readGoal } from './goal'
 import { sessionProject } from './project'
 import { NO_ASK, askKeys, askShown, askStale, controlKind, controlOptions, focusKeeps, readPaused, runControl, toggleAsk } from './control'
 import type { StopAsk } from './control'
@@ -1386,15 +1384,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       if (c.unit && !meta[slug(c.name)]?.title) meta[slug(c.name)] = { ...meta[slug(c.name)], title: c.unit }
     }
     const metaOf = (name: string): Meta => meta[slug(name)] ?? {}
-    // A running or waiting row's lens line: the gains it named, else a guess only from real cost or speed words in
-    // its title and why. Never the default "quality" guess, and never for rows the plugin writes for the session
-    // itself (a turn, a shell) or a busy process: their titles are prompts, commands and script names, not claims.
-    const row0Proc = (c: RunCard) => /cores busy/.test(c.facts)
-    const liveLens = (name: string, m0: Meta, proc: boolean) => {
-      if (pickGains(m0.gains)) return lensTags(goal, m0.gains)
-      if (proc || sessionRow(name)) return []
-      return lensTags(goal, undefined, `${m0.title ?? ''} ${m0.why ?? ''}`, false)
-    }
     const short = (t: string) => t.split(' · ')[0]!
     const mach = machines(sections.filter(x => x.key === 'running' || x.key === 'waiting').flatMap(x => x.rows).map(x => runCard(x).name), todos.map(t => t.owner), human)
     const MINI = 10
@@ -1420,9 +1409,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // Rows cluster by area inside a section: the goal's order, areas only a job names, then Other.
     const areaRank = (a: GoalArea) => { const i = goal.areas.findIndex(x => x.id === a.id); return i >= 0 ? i : a.id === OTHER.id ? 1e6 : 1e5 }
     const byArea = <T,>(xs: T[], of: (x: T) => GoalArea) => xs.map((x, i) => ({ x, i, r: areaRank(of(x)) })).sort((a, b) => a.r - b.r || a.i - b.i).map(y => y.x)
-    // The gains a job named, one line each, for its open card.
-    // Named gains as "quality: <line>". A job that named none gets its likely lens from its wording: "likely improves: speed".
-    const gainLines = (tags: LensTag[]) => tags.map(t => (t.inferred ? `likely improves: ${t.name}` : `${t.name}: ${t.text}`))
     // A to-do's area as a short dim word, padded so the titles line up.
     // A detail line under an open card: wrapped with a hanging indent, so long text never runs back to column 0.
     // The first line under a row starts with a dim "⎿ " (pad is its column), later ones line up under its text.
@@ -1431,7 +1417,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     )
     // A running job, two lines. Line one: the mark, "▸ <title>" (the improvement, no machine), a thin bar, the percent,
     // then time left (or stuck, or what it waits on) when it fits. Line two: "<Area> · <why>", one dim Text cut to
-    // the pane, never wrapped. Pressing the title opens the card: the step, the machine, the time, named gains.
+    // the pane, never wrapped. Pressing the title opens the card: the step, the machine, the time.
     const card = (r: RunCard, k: string, ind: string, child: boolean, kid: string) => {
       const m0 = metaOf(r.name)
       const key = slug(r.name)
@@ -1459,7 +1445,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const ranTail = r.pct === null && r.ran ? (`${r.ran} running`.length <= room ? `${r.ran} running` : r.ran) : ''
       const tail = fit(finished ? 'just finished' : paused ? 'paused' : stuck ? `⚠ stuck ${stuck}` : waitOn ? `waiting on ${short(waitOn)}` : r.left ? `${r.left} left` : ranTail)
       const why = (m0.why ?? '').replace(/^unlocks:?\s*/i, '')
-      const tags = liveLens(r.name, m0, row0Proc(r))
       const ar = runArea(r.name, r.step)
       const step0 = nowLine(r, waitOn)
       // Closed, a row with steps lists them inline under its step line (the first INLINE_ROWS such rows only, so the
@@ -1492,10 +1477,10 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Box>,
         ctlMenu(r, key, ind.length + 4, title),
         // Line two, dim, tied to the row by "⎿ ": what it does now and for how long. Open, it wraps in full, then the
-        // why, area and gains, lined up under its text.
+        // why and area, lined up under its text.
         step ? <Box key={`rs${k}`} paddingLeft={ind.length + 4}>{tie(true)}<Text dimColor wrap={isOpen ? 'wrap' : 'truncate-end'}>{isOpen ? step : clip(step, Math.max(4, width - ind.length - 4 - TIE.length))}</Text></Box> : null,
         ...(inline ? tieFirst(inline.rows.map((c, j) => (f: boolean) => checkLine(`il${k}-${j}`, pad, c, f)), !!step) : []),
-        ...(isOpen ? details(r, k, pad, step.includes(waitOn) ? '' : waitOn, tags, machineOf(full, title), ar, why, !!step, turning) : []),
+        ...(isOpen ? details(r, k, pad, step.includes(waitOn) ? '' : waitOn, machineOf(full, title), ar, why, !!step, turning) : []),
       ].filter(Boolean)
     }
     const toggleCard = (key: string) => update($, openAtom, l => (l.includes(key) ? l.filter(x => x !== key) : [...l, key]))
@@ -1515,9 +1500,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Box>
       )
     }
-    // An open card: the step (or what it waits on, or the count), the machine, the time, and the gains it named.
+    // An open card: the step (or what it waits on, or the count), the machine and the time.
     // The step and time are on line two already, so the card adds only what line two leaves out: what it waits on,
-    // the area and why (no "Other" when the area is unknown), the machine, a watcher and the gains it named.
+    // the area and why (no "Other" when the area is unknown), the machine and a watcher.
     // `above`: a sub-line already sits over these, so none of them takes the "⎿ ".
     // The checklist (steps in its progress file): done and to-do items dim, the current one in normal weight, a
     // failed one red, a skipped one dim and struck through.
@@ -1532,13 +1517,12 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Box>
       )
     }
-    const details = (r: RunCard, k: string, pad: string, waitOn: string, tags: LensTag[] = [], machine = '', ar?: GoalArea, why = '', above = true, active = STEP_MARK.active) => tieFirst([
+    const details = (r: RunCard, k: string, pad: string, waitOn: string, machine = '', ar?: GoalArea, why = '', above = true, active = STEP_MARK.active) => tieFirst([
       waitOn ? (f: boolean) => hang(`t${k}`, pad, `waiting on: ${waitOn}`, false, f) : null,
       ...checkRows(metaOf(r.name).steps ?? [], width - pad.length - TIE.length, active).map((c, j) => (f: boolean) => checkLine(`ck${k}-${j}`, pad, c, f)),
       ar && ar.id !== OTHER.id ? (f: boolean) => second(`ar${k}`, pad.length, ar, why, true, f) : why ? (f: boolean) => hang(`wy${k}`, pad, why, true, f) : null,
       machine ? (f: boolean) => hang(`mc${k}`, pad, `machine: ${machine}`, true, f) : null,
       r.watchedBy ? (f: boolean) => hang(`wb${k}`, pad, `watched by ${r.watchedBy}`, true, f) : null,
-      ...gainLines(tags).map((g, j) => (f: boolean) => hang(`gn${k}-${j}`, pad, g, true, f)),
     ], above)
     // The running rows as top jobs, each with its children (drawn under it while it is open).
     let titleW = 0
@@ -1569,7 +1553,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const full = machineTitle(c.name, m0.title || c.name, mach)
       const title = plain(m0.title || prettyName(c.name))
       const why = (m0.why ?? '').replace(/^unlocks:?\s*/i, '')
-      const tags = liveLens(c.name, m0, row0Proc(c))
       const whole = `${phrase || 'waiting, no reason reported'}${c.waited ? ` · for ${c.waited}` : ''}`
       const said = phrase.replace(/^(waiting on |last step: |paused by a rate limit: )/, '')
       const inStep = !c.waited && !!said && c.step.includes(said)
@@ -1581,19 +1564,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           <Button key={`open-${key}`} plain onPress={() => toggleCard(key)}><Text bold>{clip(title, Math.max(4, width - 4))}</Text></Button>
         </Box>,
         <Box key={`rwn${i}`} paddingLeft={4}>{tie(true)}<Text dimColor wrap="truncate-end">{clip(line2, Math.max(4, width - 4 - TIE.length))}</Text></Box>,
-        ...(isOpen ? [inStep ? null : hang(`wr${i}`, '    ', whole, false), c.step || c.count ? hang(`ws${i}`, '    ', c.step || c.count, false) : null, ...details(c, `w${i}`, '    ', '', tags, machineOf(full, title), ar, why)].filter(Boolean) : []),
+        ...(isOpen ? [inStep ? null : hang(`wr${i}`, '    ', whole, false), c.step || c.count ? hang(`ws${i}`, '    ', c.step || c.count, false) : null, ...details(c, `w${i}`, '    ', '', machineOf(full, title), ar, why)].filter(Boolean) : []),
       ]
     }
 
     // A finished job reads like a changelog line: "✓ ▸ <title>  14:05", then "<Area> · <impact>" dim under it, one
-    // line. Open, it shows the rest of its impact, the gains it named ("quality: ..."), "finished 14:05 · ran 1h20m ·
+    // line. Open, it shows the rest of its impact, "finished 14:05 · ran 1h20m ·
     // machine: Mac", and what it unlocks. An agent that finished before
     // records were kept gets one from its transcript when first opened.
-    const doneTags = (d: DoneItem) => {
-      const rec = recs[d.key]
-      const m0 = metaOf(d.name)
-      return lensTags(goal, rec?.gains ?? m0.gains, rec?.impact.join(' ') || m0.impact || '')
-    }
     const finishedRow = (d: DoneItem, i: number) => {
       if (d.text !== undefined) return [<Text key={`dn${i}`} dimColor>{`  ${d.text}`}</Text>]
       const rec = recs[d.key]
@@ -1612,9 +1590,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         }
         await toggleCard(k)
       }
-      const tags = doneTags(d)
-      const said = tags.find(t => !t.inferred)?.text ?? ''
-      const impact = rec?.impact[0] || said
+      const impact = rec?.impact[0] || ''
       // One line, outcome first, normal weight: a job's impact (the title when there is none), an agent's title (the
       // short name it gave progress_report, not a sentence cut from its report), then the time dim at the right edge.
       // The first impact line shows again in the open card only when the row had to cut it.
@@ -1634,7 +1610,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           ? tieFirst([
               useTitle ? (ar.id !== OTHER.id ? (f: boolean) => second(`dni${i}`, 4, ar, '', true, f) : null)
                 : impact ? (f: boolean) => (ar.id !== OTHER.id ? second(`dni${i}`, 4, ar, title, true, f) : hang(`dni${i}`, '    ', title, true, f)) : null,
-              ...gainLines(tags).filter(g => !g.endsWith(`: ${impact}`)).map((g, j) => (f: boolean) => hang(`dg${i}-${j}`, '    ', g, true, f)),
               ...(impact && more[0] === 'no impact reported' ? more.slice(1) : more).map((t, j) => (f: boolean) => hang(`dd${i}-${j}`, '    ', t, !rec?.impact.length || !rec.impact.includes(t), f)),
             ])
           : []),

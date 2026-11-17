@@ -10,12 +10,12 @@ How jobs report progress: the progress file format, watch files for log-only job
 {"done": 2, "total": 5, "step": "render pages", "startedAt": 1767225600000,
  "title": "Docs site · all pages", "why": "the public help pages", "parent": "release-prep",
  "session": "2f6c1e0a-7d4b-4e8f-9a1c-5b3d2e7f8a90", "cwd": "/Users/me/code/docs",
- "area": "Tools", "gains": {"speed": "help pages build in 2m instead of 9m"},
+ "area": "Tools",
  "impact": "Docs rebuilt: 412 pages\nSearch index 18% smaller",
  "steps": ["build", "render pages", "check links", "index", "publish"]}
 ```
 
-Easiest: Claude calls the plugin's `progress_report` tool (title or its alias label, why, done, total, step, steps, step_states, parent, slug, reads, writes, area, gains, impact, expect_minutes, heartbeat, finished). With `finished: true` it saves the done record (below) and removes the file. It writes this file with `session`, `cwd` and `startedAt` filled in. A call without a title keeps the stored one. A new title with `done` 0 starts a new task on the same row: `startedAt` becomes now and the old `step` and `steps` are cleared, so a reused agent shows its current work and time.
+Easiest: Claude calls the plugin's `progress_report` tool (title or its alias label, why, done, total, step, steps, step_states, parent, slug, reads, writes, area, impact, expect_minutes, heartbeat, finished). With `finished: true` it saves the done record (below) and removes the file. It writes this file with `session`, `cwd` and `startedAt` filled in. A call without a title keeps the stored one. A new title with `done` 0 starts a new task on the same row: `startedAt` becomes now and the old `step` and `steps` are cleared, so a reused agent shows its current work and time.
 
 | Field | Does |
 | --- | --- |
@@ -30,7 +30,6 @@ Easiest: Claude calls the plugin's `progress_report` tool (title or its alias la
 | `cwd` | Optional. The absolute folder the job works for. The job shows in every session of that folder's project (same project as Per-project to-dos) |
 | `reads`, `writes` | Optional short strings for the Topology tab: what the job reads and writes, like `orders table` or `Postgres on mac-mini`. Without `reads` a job on a helper machine reads from the data host's database. Without `writes` it is not drawn writing anything |
 | `area` | Which part of the goal the job improves, by name, from the project's `~/.claude-progress/goals/<project>.json` (see **Goal view**). Example: `Search`. Set it on every job when the project's goal has areas. Without it the panel guesses from keywords in the title, why and impact, else `Other` |
-| `gains` | Optional. What the job makes better, by lens: any of `cost`, `quality`, `speed`, each a short plain line with a number when possible. Example: `{"quality": "12K more orders matched", "speed": "import in 7h instead of 12h", "cost": "$14 of compute instead of $60"}`. Name only the ones that apply |
 | `quietUntil` | Optional, epoch ms (seconds also work). The current step is expected to stay quiet until then, so the row shows no `⚠ stuck` before it. `progress_report` writes it from `expect_minutes`, and the next report without `expect_minutes` clears it. See **Stuck and signs of life** |
 | `heartbeat` | Optional path to a local file the job keeps writing, such as its log (`~/` allowed). Each write counts as a sign of life |
 | `output_file`, `transcript` | Optional paths, same as `heartbeat`: each write counts as a sign of life |
@@ -38,10 +37,11 @@ Easiest: Claude calls the plugin's `progress_report` tool (title or its alias la
 | `pid`, `pids` | Optional process id, or a list (at most 16). While one exists and is not a zombie, the row is alive, even when the process is idle (a `psql` client waiting on its server). A pid whose process started after the file was last written is a reused one and does not count. One batched `ps` per poll checks every file |
 | `impact` | Optional, set it before the job ends. How the job made things better: what the data or product now has or gets right, with the key number, one to three short lines (a string with newlines, or a list). Skip commit ids and file names. Example: `1.65M more board seats, so board links and people search see whole boards`. Shown when its DONE row is opened |
 
+- **Old fields:** a `gains` field from an older file or call is ignored: never shown, never saved.
 - **Slug:** the job or subagent description, lowercased, each run of other characters turned into `-`. `Build docs!` becomes `build-docs`.
 - **Name the improvement.** A `title` says what gets better, not how: `Every board member counted, not just 25` rather than `Board lists past 25 seats`. The `impact` answers how it is better now.
 - **Delete the file when done.** Files not written for 30 minutes are hidden, so a long step between 10-minute updates keeps its bar and impact line. Write `impact` first and give it 5 seconds (one poll) before you delete the file, or call `progress_report` with `finished: true` and `impact`.
-- **Done records:** when a job's file is gone, or it first reports `done` equal to `total`, the plugin saves `~/.claude-progress/.state/done/<slug>.json` with its `title`, `why`, `impact`, `area`, `gains`, `step`, `started`, `finished`, `machine` and `session`. The last 100 are kept, none over 7 days old. A file that is only stale (still there) is not a finish. Shell command rows (`shell-*`) keep none.
+- **Done records:** when a job's file is gone, or it first reports `done` equal to `total`, the plugin saves `~/.claude-progress/.state/done/<slug>.json` with its `title`, `why`, `impact`, `area`, `step`, `started`, `finished`, `machine` and `session`. The last 100 are kept, none over 7 days old. A file that is only stale (still there) is not a finish. Shell command rows (`shell-*`) keep none.
 - **Agents:** a subagent's impact is its final report, cut short: its `SubagentHandback` message, else its last text in its transcript (read at SubagentStop). The first bold sentence (4 words or more, not a label ending in `:`), else its first 2 to 3 lines, as plain text up to 300 characters. An `impact` in its own progress file, or one `progress_report` saved in the last 30 minutes, wins.
 - **Jobs that can't write the file** (a log-only job, a row from another tool) get the same fields from `~/.claude-progress/titles.txt`, one job per line, tab separated: `<job id><TAB><title><TAB><why><TAB><parent><TAB><area>` (area optional). The job id is the name the row shows. Empty columns are fine, `#` starts a comment. A progress file's own fields win.
 

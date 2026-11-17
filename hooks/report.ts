@@ -1,8 +1,6 @@
 import type { EngineInterface } from 'claude-code'
-import type { Gains } from '../types'
 
 import { impactLines, saveDone } from './done'
-import { pickGains } from './goal'
 import { MAX_STEPS, STEP_STATES, cleanSteps, serverOf, slug } from './render'
 import type { StoredStep } from './render'
 import { sessionKeyOf } from './route'
@@ -33,7 +31,6 @@ export const PROGRESS_TOOL = {
       writes: { type: 'string', description: 'Optional. What the job writes, a few words. Example: Postgres on server-1. Shown on the Topology tab.' },
       impact: { type: 'string', description: 'How the finished job made things better: what the data or product now has or gets right, with the key number, one to three short lines (newlines split them). No commit ids or file names. Example: 1.65M more board seats, so board links and people search see whole boards. Shown when its DONE row is opened.' },
       area: { type: 'string', description: 'Which part of the goal (~/.claude-progress/goals/<project>.json areas) the job improves, by name. Example: Search. Set it whenever the project goal has areas, so the Status panel shows that area under the title of the job.' },
-      gains: { type: 'object', description: 'What the job makes better, by lens: any of cost, quality, speed, each a short plain line with a number when possible. Example: {"quality": "1.65M more board seats counted", "speed": "labels in 7h instead of 12h"}. State the ones that apply.', properties: { cost: { type: 'string' }, quality: { type: 'string' }, speed: { type: 'string' } } },
       expect_minutes: { type: 'number', description: 'Optional. How many minutes the current step is expected to stay quiet (no new done count). Example: 90 for a remote job that runs about 1.5 h. The bar shows no stuck warning until then. It applies to this step only: the next report without it clears it.' },
       heartbeat: { type: 'string', description: 'Optional. A local file the job keeps writing, such as its log (~/ allowed). Each write counts as a sign of life, so a quiet step is not marked stuck while the file changes.' },
       steps: { type: 'array', items: { type: 'string' }, description: 'Optional. The job\'s steps in order, a few words each, up to 50. Pass it on the first call when the steps are known. The row shows them as a checklist: done, current, to do, from done. Later calls without steps keep the list.' },
@@ -43,7 +40,7 @@ export const PROGRESS_TOOL = {
   },
 }
 
-export type ReportInput = { agent?: string; title: string; label?: string; done?: number; total?: number; step?: string; why?: string; parent?: string; slug?: string; reads?: string; writes?: string; impact?: string; area?: string; gains?: Gains; finished?: boolean; expectMinutes?: number; heartbeat?: string; steps?: unknown; stepStates?: unknown }
+export type ReportInput = { agent?: string; title: string; label?: string; done?: number; total?: number; step?: string; why?: string; parent?: string; slug?: string; reads?: string; writes?: string; impact?: string; area?: string; finished?: boolean; expectMinutes?: number; heartbeat?: string; steps?: unknown; stepStates?: unknown }
 
 /** The title a report gives: `title`, else its alias `label`, trimmed. Empty when neither is given. */
 export function titleOf(i: Pick<ReportInput, 'title' | 'label'>): string {
@@ -106,8 +103,6 @@ export function reportBody(i: ReportInput, owner: Owner, startedAt: number, now 
   const impact = impactLines(i.impact)
   if (impact.length) out.impact = impact.join('\n')
   if (i.area?.trim()) out.area = i.area.trim()
-  const gains = pickGains(i.gains)
-  if (gains) out.gains = gains
   if (typeof i.expectMinutes === 'number' && Number.isFinite(i.expectMinutes) && i.expectMinutes > 0) out.quietUntil = Math.round(now + Math.min(i.expectMinutes, MAX_EXPECT_MIN) * 60_000)
   if (i.heartbeat?.trim()) out.heartbeat = i.heartbeat.trim()
   // The subagent that reports (filled in by the plugin from the tool call): its transcript counts as the row's life.
@@ -161,7 +156,7 @@ export async function writeReport($: EngineInterface, h: string, i: ReportInput,
     const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
     await saveDone($, h, {
       slug: name, title: given || str(prev.title) || '', why: i.why?.trim() || str(prev.why), impact, step: str(prev.step),
-      area: i.area?.trim() || str(prev.area), gains: pickGains(i.gains) ?? pickGains(prev.gains),
+      area: i.area?.trim() || str(prev.area),
       started: typeof prev.startedAt === 'number' ? prev.startedAt : undefined, finished: await $.clock.now(), session: o.session || undefined, kind: 'job',
     }).catch(() => undefined)
     await $.process.run(['rm', '-f', path]).catch(() => undefined)

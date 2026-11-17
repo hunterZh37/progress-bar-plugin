@@ -43,23 +43,20 @@ export type Tab = 'list' | 'connectors' | 'github' | 'log' | 'chat' | 'topology'
 /** Status panel: a job's plain-language title, what it unlocks and its parent job's slug, from its progress file or titles.txt. */
 /** `reads` and `writes`: what the job reads and writes, for the Topology tab's flows. */
 /** `steps`: the job's checklist in order, each with its state resolved from the file (explicit, else from `done`). */
-export type Meta = { title?: string; why?: string; parent?: string; reads?: string; writes?: string; area?: string; impact?: string; gains?: Gains; steps?: StepItem[] }
+export type Meta = { title?: string; why?: string; parent?: string; reads?: string; writes?: string; area?: string; impact?: string; steps?: StepItem[] }
 /** One checklist item's state: finished, the current one, still to do, skipped or failed. */
 export type StepState = 'done' | 'active' | 'todo' | 'skipped' | 'failed'
 /** One item of a job's step checklist. `note`: the item's own dim text, never the job's `step`. */
 export type StepItem = { name: string; state: StepState; note?: string }
-/** What a job made better, by lens: lower cost, better quality, faster speed. Each a short plain line, a number when possible. */
-export type Gains = { cost?: string; quality?: string; speed?: string }
-/** ~/.claude-progress/goals/<project>.json: a project's anchor goal, the areas of it a job can improve and the lenses of "better". */
+/** ~/.claude-progress/goals/<project>.json: a project's anchor goal, and the areas of it a job can improve. */
 /** `tag`: the short word shown on rows and chips. `icon` is read from old files but no longer shown. */
 export type GoalArea = { id: string; name: string; tag: string; icon?: string; keywords: string[] }
-export type GoalLens = { id: 'cost' | 'quality' | 'speed'; name: string; icon?: string; keywords: string[] }
-export type Goal = { anchor: string; areas: GoalArea[]; lenses: GoalLens[] }
+export type Goal = { anchor: string; areas: GoalArea[] }
 /**
  * Status panel: a finished job's or agent's record, ~/.claude-progress/.state/done/<slug>.json (hooks/done.ts).
  * `impact` is one to three short lines on what it changed. `started` and `finished` are epoch ms.
  */
-export type DoneRec = { slug: string; title: string; why?: string; impact: string[]; area?: string; gains?: Gains; step?: string; started?: number; finished: number; machine: string; session?: string; kind: 'job' | 'agent' }
+export type DoneRec = { slug: string; title: string; why?: string; impact: string[]; area?: string; step?: string; started?: number; finished: number; machine: string; session?: string; kind: 'job' | 'agent' }
 /** Status panel: slugs of the running jobs whose line is open to show its details. */
 export type OpenCards = string[]
 /** Log tab: an event's level. */

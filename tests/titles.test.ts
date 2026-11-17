@@ -5,7 +5,6 @@ import { backgroundNote, liveShells } from '../hooks/report'
 import { remoteServerWork, serverOf } from '../hooks/render'
 import { prettyName } from '../hooks/done'
 import { psTime, runCard, serverNote, timeTail } from '../hooks/panel'
-import { DEFAULT_GOAL, lensTags } from '../hooks/goal'
 
 // 0.35.4: rows are titled by the work, a step shows only while it runs, background shells show, remote process rows read well.
 
@@ -107,20 +106,6 @@ test('remote process rows: ps run times read as durations, a unit names the job,
   expect(prettyName('box: train.sh')).toBe('Box: Train')
   expect(prettyName('nightly-import')).toBe('Nightly import')
   expect(prettyName('box: Rebuild lists.py')).toBe('Box: Rebuild lists.py')
-})
-
-test('"likely improves": only from real words on live rows; named gains always; done rows keep the default', () => {
-  const g = DEFAULT_GOAL
-  // A live row's guess needs a cost, speed or quality word: no default "quality".
-  expect(lensTags(g, undefined, '1. keep it 2. push 3. merge', false)).toEqual([])
-  expect(lensTags(g, undefined, 'Org similar', false)).toEqual([])
-  expect(lensTags(g, undefined, 'Make the import faster', false)).toEqual([{ id: 'speed', name: 'speed', text: '', inferred: true }])
-  expect(lensTags(g, undefined, 'Cut the GPU cost', false)).toEqual([{ id: 'cost', name: 'cost', text: '', inferred: true }])
-  const q = { ...g, lenses: g.lenses.map(l => (l.id === 'quality' ? { ...l, keywords: ['accuracy'] } : l)) }
-  expect(lensTags(q, undefined, 'Better match accuracy', false)).toEqual([{ id: 'quality', name: 'quality', text: '', inferred: true }])
-  expect(lensTags(g, { quality: '12K more orders matched' }, 'x', false)).toEqual([{ id: 'quality', name: 'quality', text: '12K more orders matched', inferred: false }])
-  // A finished job's impact keeps its lens, quality by default (unchanged).
-  expect(lensTags(g, undefined, '1.65M more board seats')).toEqual([{ id: 'quality', name: 'quality', text: '', inferred: true }])
 })
 
 test('orphan turn rows: only this session\'s turn-shaped rows, never the live one, a bar or another session\'s', () => {

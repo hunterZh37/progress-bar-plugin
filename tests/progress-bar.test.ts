@@ -1205,7 +1205,7 @@ test('the panel: titles, ids with badges, unlocks, a nested child, waiting on an
   for (const k of ['open-big-batch', 'open-box-train-py', 'open-other']) await ui.press({ key: k })
   lines = await pic()
   texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
-  // Opened: what it waits on, then area and why ("Other" left out), then the lens. No badge, no counts, no actions.
+  // Opened: what it waits on, then area and why ("Other" left out). No badge, no counts, no actions.
   expect(texts).toContain('waiting on: Child step')
   expect(lines).toContain('    ⎿ Answers · better search')
   expect(lines).toContain('      the weekly report')

@@ -36,7 +36,7 @@ Install it and keep working. You never have to ask Claude to show a task in the 
 - **To-dos:** each project has its own list, with priorities, blockers and auto-next. `[you]` and `[decisions]` items are yours: they show under NEEDS YOU and never start on their own. See [docs/todos.md](docs/todos.md).
 - **Status panel:** a docked pane beside the chat with List, Connectors, GitHub, Log, Chat and Topology tabs. See [docs/status-panel.md](docs/status-panel.md).
 - **Action needed:** a step only you can run holds your next prompt until it is done or skipped. See [docs/action-needed.md](docs/action-needed.md).
-- **Skills:** `progress-reporting` has the details for reporting (watch files, areas, gains), `action-needed` has Claude hand you steps it cannot run.
+- **Skills:** `progress-reporting` has the details for reporting (watch files, areas, impact), `action-needed` has Claude hand you steps it cannot run.
 
 ### Optional extras
 

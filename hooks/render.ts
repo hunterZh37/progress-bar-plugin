@@ -1,6 +1,6 @@
 // Pure helpers: no `$`, so tests import them directly.
 
-import type { Gains, Meta, StepItem, StepState } from '../types'
+import type { Meta, StepItem, StepState } from '../types'
 import type { Life } from './alive'
 
 export type Progress = { done: number | null; total: number | null; step: string; startedAt?: number }
@@ -289,7 +289,7 @@ export function parseProgress(text: string): Progress | null {
   }
 }
 
-/** The `title`, `why`, `parent`, `reads`, `writes`, `area` and `impact` strings, the `gains` and the `steps` checklist of a parsed progress file, the ones present and not empty. */
+/** The `title`, `why`, `parent`, `reads`, `writes`, `area` and `impact` strings and the `steps` checklist of a parsed progress file, the ones present and not empty. */
 export function pickMeta(p: unknown): Meta {
   const m: Meta = {}
   if (!p || typeof p !== 'object') return m
@@ -300,15 +300,6 @@ export function pickMeta(p: unknown): Meta {
   const raw = p as Record<string, unknown>
   const steps = stepItems(raw.steps, typeof raw.done === 'number' ? raw.done : undefined, typeof raw.total === 'number' ? raw.total : undefined)
   if (steps.length) m.steps = steps
-  const g = (p as Record<string, unknown>).gains
-  if (g && typeof g === 'object' && !Array.isArray(g)) {
-    const gains: Gains = {}
-    for (const k of ['cost', 'quality', 'speed'] as const) {
-      const v = (g as Record<string, unknown>)[k]
-      if (typeof v === 'string' && v.trim()) gains[k] = v.trim()
-    }
-    if (Object.keys(gains).length) m.gains = gains
-  }
   return m
 }
 

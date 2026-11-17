@@ -11,18 +11,17 @@ The List tab reads in a few seconds: status first, then what needs you, then the
 - **NEEDS YOU:** next, and only when something needs you (no empty heading). One line each, its verb first and bold: open actions (title, full command, **▶ Run**, **Copy**, **✓ I ran it**, **Skip**), your `[you]` to-dos (press for the to-do menu), a Chrome account warning (**Switch**, with **[Check account]** when it applies), stuck jobs (**Check**, press to open the job) and problems (**Fix**, red). Warnings and commands are never cut, they wrap.
 - **Sections:** TO-DO (machines' to-dos: per machine, priorities, blockers, the menu), RUNNING, WAITING, DONE. Problems are NEEDS YOU lines, not a section. Headers have no hotkeys. Inside RUNNING and WAITING, rows cluster by area in the goal's order. To-dos keep their priority order.
 - **Running rows, two lines:** the mark, the **bold** title, a thin bar and the percent, then time left, `⚠ stuck 14m`, `waiting on X` or `paused`. Line two, dim: the current step (or `a of b steps`) and how long it has run (`scoring · 42m`, never "so far"). Titles are cut to one line. The title column fits the longest title shown, so the bars still line up and the note keeps its room.
-- **Press a row** to open it: line two wraps in full, then `<Area> · <why>` (no `Other` when the area is unknown), the machine, a watcher and the gains the job named. Press again to close.
+- **Press a row** to open it: line two wraps in full, then `<Area> · <why>` (no `Other` when the area is unknown), the machine and a watcher. Press again to close.
 - **Waiting rows:** `⏸` and the bold title, then why it waits and for how long, dim (`waiting on build · for 12m`).
 - **DONE starts folded** to one line, `▸ DONE TODAY  15`. Press it to open it for this session. Open, each job is one line in normal weight, its outcome first, the finish time dim at the right edge. DONE shows the latest 5, then `+N more`, then checked-off to-dos folded to one dim line (see **Done rows**).
 - **Gutter:** the status mark (`◐ ⏸ ✓ ⚠ ✖ ○ ↳`) sits in one column and the title in the next.
 - **Plain titles:** the title is the improvement, with its machine left out (`Server-1 orders backfill` reads `Orders backfill`).
-- **Lenses:** cost, quality and speed show only in an opened card, from the job's `gains`. A running or waiting job that named none shows `likely improves: <lens>` only when its title or why has real cost or speed words (or a goal file's quality keywords), never the default `quality` guess, and never on the session's own turn and shell rows or a busy process. A finished job with an impact keeps its lens from the impact's wording, quality by default.
 - **Machines:** the helper machine lines live on the Topology tab, not the List tab.
 - **No emoji:** the panel and status line use words and single-width symbols only (`✓ ▸ ▾ ◐ ━ ┄ ⏸ ▶ ○ ·`), so every terminal draws them the same. No semicolons or em dashes in its copy.
 
 ### Per-project goals
 
-Each project has its own goal: `~/.claude-progress/goals/<project>.json`, where `<project>` is the same slug as its to-do list (`~/code/myapp` is `code-myapp`). It sets the areas and the lenses (and an `anchor`, the goal's name, kept for older views). A project with no file puts every job under no area, so its open cards name none. The panel never writes or overwrites these files, so create and edit them freely. The old `~/.claude-progress/goal.json` is read only by a session with no folder:
+Each project has its own goal: `~/.claude-progress/goals/<project>.json`, where `<project>` is the same slug as its to-do list (`~/code/myapp` is `code-myapp`). It sets the areas (and an `anchor`, the goal's name, kept for older views). A project with no file puts every job under no area, so its open cards name none. The panel never writes or overwrites these files, so create and edit them freely. The old `~/.claude-progress/goal.json` is read only by a session with no folder:
 
 ```json
 {
@@ -30,11 +29,6 @@ Each project has its own goal: `~/.claude-progress/goals/<project>.json`, where 
   "areas": [
     {"id": "search", "name": "Search & filters", "tag": "Search", "keywords": ["search", "filter", "index"]},
     {"id": "payments", "name": "Payments", "tag": "Pay", "keywords": ["payment", "card", "refund", "checkout"]}
-  ],
-  "lenses": [
-    {"id": "cost", "name": "cost", "keywords": ["$", "cost", "cheaper", "saved"]},
-    {"id": "quality", "name": "quality", "keywords": []},
-    {"id": "speed", "name": "speed", "keywords": ["faster", "hours", "minutes"]}
   ]
 }
 ```
@@ -42,7 +36,7 @@ Each project has its own goal: `~/.claude-progress/goals/<project>.json`, where 
 - **Default:** none. A project with no goal file shows its folder name and no areas, and nothing is written.
 - **Matching:** a job's `area` matches an area's id or name, any case, or the start of a name (`Search` finds `Search & filters`). A name that matches none becomes its own area. Without `area`, each keyword found as a whole word or its plural (`person` finds `persons`, not `personal`) counts 2 in the title and 1 in the why, impact or step. The top score wins, ties go to the area listed first.
 - **Tags:** `tag` is the short area word in an opened card (`Search`, `Pay`), up to 8 letters. Without one, an area takes its name's first word. An `icon` from an older file is read and ignored.
-- **Lenses:** the three ids are fixed (`cost`, `quality`, `speed`). Change their names or the words that infer them.
+- **Old fields:** a `lenses` list from an older file is read and ignored.
 - `goal` is a data file name, so no progress file or `progress_report` slug may take it.
 
 ## Status panel
@@ -232,7 +226,7 @@ NEEDS YOU  1
 - **Time left:** a reported time left wins. An item count (over 20) gets one from its rate: items done since the plugin first saw it over the time since (once that is 5 minutes old), else a rate in its step (`7,196/h`), else its average since a known start. A job of 20 steps or fewer gets no estimate, since its steps take uneven time and no estimate beats a wrong one.
 - **Short title:** `title` from the progress file or `titles.txt`, cut at ` · `, its machine word left out. Without a title the job id made readable.
 - **Aligned bars:** the title column fits the longest title shown, at most what the pane has left after the bar, the percent and 14 columns for time, at least 3 characters. Longer titles end in `…`.
-- **Open card:** line two in full, `waiting on: X` when line one cut it, `<Area> · <why>` (just the why when the area is unknown), `machine: X` when known, a watcher, and the gains the job named. Each line wraps under its own indent. Open cards stay open while the session runs.
+- **Open card:** line two in full, `waiting on: X` when line one cut it, `<Area> · <why>` (just the why when the area is unknown), `machine: X` when known and a watcher. Each line wraps under its own indent. Open cards stay open while the session runs.
 - **Children:** a job whose `parent` is also running shows under the parent's line, marked `↳`, only while the parent is open. One level only: a parent that has a running parent of its own keeps its own line.
 - **Remote jobs:** a `<host>: name` job without a `parent` nests under the one running job whose id starts with `<host>-` (such as `gpu-box: train.py` under `gpu-box-train`). With none or several such jobs it keeps its own line.
 - **Stuck:** a row shows `⚠ stuck` only when its numbers, its step and every other sign of life (its file or heartbeat written, its agent's transcript, a quiet window from `expect_minutes`) are older than the threshold. See [progress-files.md](progress-files.md#stuck-and-signs-of-life).

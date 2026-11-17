@@ -2,6 +2,10 @@
 
 Versions of the progress-bar plugin, newest first. Each line is the release commit. Full detail is in the git history.
 
+## 0.35.5
+
+- **No more "likely improves":** the guessed cost, quality or speed lens is gone from running, waiting and finished rows and their opened cards. Named `gains` no longer show either, `progress_report` no longer takes them and done records no longer keep them. Old progress files, done records and goal files with `gains` or `lenses` still load, the fields ignored. The progress-reporting skill and docs no longer ask for `gains`.
+
 ## 0.35.4
 
 - **No more 8 s status script timeouts:** transcripts are read once from their last 4 MB, then only their new lines, at most 2 MB a read (was: up to 32 MB again each time a waiting agent's transcript changed, and 4 MB of the main transcript every 30 s). An unchanged transcript costs no process. One slow status script run keeps the last lines; the note shows from the third failure in a row.

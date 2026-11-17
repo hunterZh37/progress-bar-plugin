@@ -1,36 +1,26 @@
 import type { EngineInterface } from 'claude-code'
 
 import { slug } from './render'
-import type { Gains, Goal, GoalArea, GoalLens } from '../types'
+import type { Goal, GoalArea } from '../types'
 
-// The goal view of the List tab: one anchor goal ("Make checkout faster"), the areas of it a job improves
-// (Payments, Search, ...) and the lenses of "better" (lower cost, better quality, faster speed).
+// The goal view of the List tab: one anchor goal ("Make checkout faster") and the areas of it a job improves
+// (Payments, Search, ...).
 // Each project has its own: ~/.claude-progress/goals/<slug>.json, the slug as for its to-do list (desktop-myapp):
-// {anchor, areas:[{id,name,tag,keywords}], lenses:[{id,name,keywords}]}. An `icon` from older files is read and ignored:
+// {anchor, areas:[{id,name,tag,keywords}]}. An `icon` or `lenses` from older files is read and ignored:
 // the panel shows words, never emoji. A project with no file shows its folder name and no areas; nothing is written.
 // ~/.claude-progress/goal.json is the old one-goal-for-everything file: only a session with no folder still reads it,
 // so one project's goal no longer heads every project. It is never written.
-// A job names its area with `area` and what it made better with `gains` ({cost, quality, speed}) in its progress file
-// or progress_report. With no `area`, the area comes from keywords in its title, why and impact, else Other.
-// With no `gains`, a finished job's lens comes from its impact wording (cost words, then speed words, else quality),
-// marked as inferred.
+// A job names its area with `area` in its progress file or progress_report. With no `area`, the area comes from
+// keywords in its title, why and impact, else Other. A `gains` field from older files is ignored.
 
 export const GOAL_REL = '.claude-progress/goal.json'
 export const GOALS_DIR_REL = '.claude-progress/goals'
 
-/** The lenses of "better", the same for every goal. A goal file can rename them or change their keywords. */
-const LENSES: GoalLens[] = [
-  { id: 'cost', name: 'cost', keywords: ['$', 'cost', 'costs', 'cheaper', 'cheap', 'save', 'saved', 'saves', 'spend', 'free', 'budget'] },
-  { id: 'quality', name: 'quality', keywords: [] },
-  { id: 'speed', name: 'speed', keywords: ['faster', 'quicker', 'sooner', 'speed', 'hours', 'hour', 'minutes', 'mins', 'seconds'] },
-]
-
-/** The goal with no goal file: a neutral anchor, no areas (every job is Other), the usual lenses. Never written. */
-export const DEFAULT_GOAL: Goal = { anchor: 'This project', areas: [], lenses: LENSES }
+/** The goal with no goal file: a neutral anchor, no areas (every job is Other). Never written. */
+export const DEFAULT_GOAL: Goal = { anchor: 'This project', areas: [] }
 
 /** Where a job's area did not match any: its own name, else Other. */
 export const OTHER: GoalArea = { id: 'other', name: 'Other', tag: 'Other', keywords: [] }
-export const LENS_IDS = ['cost', 'quality', 'speed'] as const
 
 const str = (x: unknown) => (typeof x === 'string' && x.trim() ? x.trim() : '')
 const words = (x: unknown) => (Array.isArray(x) ? x.map(str).filter(Boolean).map(w => w.toLowerCase()) : [])
@@ -38,8 +28,8 @@ const words = (x: unknown) => (Array.isArray(x) ? x.map(str).filter(Boolean).map
 /** An area's short tag when goal.json names none: the first word of its name, at most 14 letters ("Search & filters" -> "Search"). */
 export const tagOf = (name: string) => (name.split(/[^A-Za-z0-9]+/).find(Boolean) ?? name).slice(0, 14)
 
-/** A project with no goal file: its folder name as the anchor, no areas (every job is Other), the usual lenses. */
-export const projectGoal = (name: string): Goal => ({ anchor: name || DEFAULT_GOAL.anchor, areas: [], lenses: LENSES })
+/** A project with no goal file: its folder name as the anchor, no areas (every job is Other). */
+export const projectGoal = (name: string): Goal => ({ anchor: name || DEFAULT_GOAL.anchor, areas: [] })
 
 /** A goal file as a goal. A missing or bad part falls back to `fallback`'s (the defaults unless given). */
 export function parseGoal(text: string, fallback: Goal = DEFAULT_GOAL): Goal {
@@ -52,11 +42,7 @@ export function parseGoal(text: string, fallback: Goal = DEFAULT_GOAL): Goal {
     const id = slug(str(r.id) || name)
     return id && name ? [{ id, name, tag: str(r.tag) || tagOf(name), keywords: words(r.keywords) }] : []
   })
-  const lenses = LENSES.map((d): GoalLens => {
-    const r = ((Array.isArray(raw.lenses) ? raw.lenses : []) as Record<string, unknown>[]).find(x => x && str(x.id).toLowerCase() === d.id)
-    return r ? { id: d.id, name: str(r.name) || d.name, keywords: Array.isArray(r.keywords) ? words(r.keywords) : d.keywords } : d
-  })
-  return { anchor: str(raw.anchor) || fallback.anchor, areas: areas.length ? areas : fallback.areas, lenses }
+  return { anchor: str(raw.anchor) || fallback.anchor, areas: areas.length ? areas : fallback.areas }
 }
 
 /** A folder's last part, for the anchor of a project with no goal file: /Users/a/Desktop/agentic-scheduling -> agentic-scheduling. */
@@ -112,55 +98,6 @@ export function areaOf(goal: Goal, t: AreaText): GoalArea {
   return best
 }
 
-/** A progress file's or record's `gains`: the cost, quality and speed lines it has, trimmed. Undefined when none. */
-export function pickGains(v: unknown): Gains | undefined {
-  if (!v || typeof v !== 'object' || Array.isArray(v)) return undefined
-  const out: Gains = {}
-  for (const k of LENS_IDS) {
-    const s = str((v as Record<string, unknown>)[k])
-    if (s) out[k] = s.length > 160 ? `${s.slice(0, 159)}…` : s
-  }
-  return Object.keys(out).length ? out : undefined
-}
-
-/** One lens a job made better: its name, the line when the job said it, and whether it was inferred. */
-export type LensTag = { id: GoalLens['id']; name: string; text: string; inferred: boolean }
-
-/** The lens an impact's wording points to: cost words first, then speed words, else quality. */
-export function inferLens(goal: Goal, impact: string): GoalLens['id'] {
-  const t = impact.toLowerCase()
-  for (const id of ['cost', 'speed'] as const) {
-    const l = goal.lenses.find(x => x.id === id)
-    if (l && l.keywords.some(kw => hits(t, kw))) return id
-    // "in 7h instead of 12h", "3m per batch": a time is speed.
-    // Units in lower case only, so "1.65M" (millions) is not minutes.
-    if (id === 'speed' && /(^|[^A-Za-z0-9$])\d+(\.\d+)?\s?(h|m|s|min)\b/.test(impact)) return id
-  }
-  return 'quality'
-}
-
-/** Whether a lens's own keywords appear in the text (a goal file may give quality keywords). */
-function lensWords(goal: Goal, id: GoalLens['id'], text: string): boolean {
-  const t = text.toLowerCase()
-  return (goal.lenses.find(x => x.id === id)?.keywords ?? []).some(kw => hits(t, kw))
-}
-
-/**
- * The lens tags for a job, in the goal's lens order: the ones its `gains` names, else (for a job with an impact) the
- * one its impact's wording points to, marked inferred. None when it says nothing. With `fallback` false, a guess
- * needs real cost, speed or quality words: no default "quality".
- */
-export function lensTags(goal: Goal, gains: Gains | undefined, impact = '', fallback = true): LensTag[] {
-  const g = pickGains(gains)
-  if (g) return goal.lenses.filter(l => g[l.id]).map(l => ({ id: l.id, name: l.name, text: g[l.id]!, inferred: false }))
-  if (!impact.trim()) return []
-  const id = inferLens(goal, impact)
-  // Without `fallback` (a running or waiting row, guessed from its title), "quality" by default is no signal: none.
-  if (!fallback && id === 'quality' && !lensWords(goal, 'quality', impact)) return []
-  const l = goal.lenses.find(x => x.id === id)!
-  return [{ id, name: l.name, text: '', inferred: true }]
-}
-
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
 /** The anchor, one line: "Make checkout faster · 6 done today · 3 running", the counts that are not zero. */
@@ -176,14 +113,6 @@ export function anchorSummary(done: number, live: number, queued: number): strin
     queued ? `${queued} queued` : '',
   ].filter(Boolean)
   return parts.length ? parts.join(' · ') : 'Nothing moving yet today'
-}
-
-/** Today's count per lens, most first: "today: 5 quality · 2 speed · 1 cost". Empty with none. */
-export function lensSummary(goal: Goal, tags: LensTag[][]): string {
-  const n = (id: string) => tags.filter(t => t.some(x => x.id === id)).length
-  const order = [...goal.lenses].sort((a, b) => n(b.id) - n(a.id))
-  const parts = order.filter(l => n(l.id)).map(l => `${n(l.id)} ${l.name}`)
-  return parts.length ? `today: ${parts.join(' · ')}` : ''
 }
 
 /** An area header's plain words: "1 improving, 2 done today, 3 queued", the parts that are not zero. */
