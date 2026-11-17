@@ -16,7 +16,7 @@ The List tab reads in a few seconds: status first, then what needs you, then the
 - **DONE starts folded** to one line, `▸ DONE TODAY  15`. Press it to open it for this session. Open, each job is one line in normal weight, its outcome first, the finish time dim at the right edge. DONE shows the latest 5, then `+N more`, then checked-off to-dos folded to one dim line (see **Done rows**).
 - **Gutter:** the status mark (`◐ ⏸ ✓ ⚠ ✖ ○ ↳`) sits in one column and the title in the next.
 - **Plain titles:** the title is the improvement, with its machine left out (`Server-1 orders backfill` reads `Orders backfill`).
-- **Lenses:** cost, quality and speed show only in an opened card, from the job's `gains`. A job that named none shows its likely lens from its title and why, `likely improves: speed`.
+- **Lenses:** cost, quality and speed show only in an opened card, from the job's `gains`. A running or waiting job that named none shows `likely improves: <lens>` only when its title or why has real cost or speed words (or a goal file's quality keywords), never the default `quality` guess, and never on the session's own turn and shell rows or a busy process. A finished job with an impact keeps its lens from the impact's wording, quality by default.
 - **Machines:** the helper machine lines live on the Topology tab, not the List tab.
 - **No emoji:** the panel and status line use words and single-width symbols only (`✓ ▸ ▾ ◐ ━ ┄ ⏸ ▶ ○ ·`), so every terminal draws them the same. No semicolons or em dashes in its copy.
 
@@ -109,7 +109,7 @@ Press a job row to open what it changed:
 
 ## Server rows
 
-A background Bash shell that runs a server (`npm run dev`, `pnpm start`, `next dev`, `vite`, `uvicorn`, `gunicorn`, `flask run`, `manage.py runserver`, `rails s`, `python -m http.server`, `node server.js`, `docker compose up` and the like, or one whose description reads "Start/Run ... server", or a background shell whose port listens) stays up by design. It is not a RUNNING row: it shows once under LOCALHOST, in the row of its port, with its uptime and `[x]`. It ends when the shell exits.
+A background Bash shell that runs a server (`npm run dev`, `pnpm start`, `next dev`, `vite`, `uvicorn`, `gunicorn`, `flask run`, `manage.py runserver`, `rails s`, `python -m http.server`, `node server.js`, `docker compose up` and the like, or one whose description reads "Start/Run ... server", or a background shell whose port listens). Work run on or against a server is not one: a description like "Run the backfill on the AWS server" or a remote runner (`ssh`, `ssm-run.sh`, `aws ssm`, `kubectl exec`) stays a RUNNING row, `running in the background` stays up by design. It is not a RUNNING row: it shows once under LOCALHOST, in the row of its port, with its uptime and `[x]`. It ends when the shell exits.
 
     ▾ LOCALHOST  2
       ● localhost:3000  myapp dev server     up 0m [edit] [x]
@@ -238,7 +238,7 @@ NEEDS YOU  1
 - **Stuck:** a row shows `⚠ stuck` only when its numbers, its step and every other sign of life (its file or heartbeat written, its agent's transcript, a quiet window from `expect_minutes`) are older than the threshold. See [progress-files.md](progress-files.md#stuck-and-signs-of-life).
 - **Waiting on:** a parent whose numbers have not moved is not stuck while a child runs or changed in the last 10 minutes. Its line reads `waiting on <child title>` instead of `⚠ stuck`. The grouper does the same in the status line.
 - **Abandoned waits:** an agent that has sat waiting for 6 hours with no change to its transcript is dropped from WAITING. The work it waited on ended long ago and its finished notices never reached it. A job that still writes its progress file keeps its own row.
-- **Busy processes:** a row detail `N% CPU` is never progress. The line shows a still dotted bar and the run time. A busy process that ends never shows as finished.
+- **Busy processes:** a row detail `N% CPU` is never progress. The line shows a still dotted bar and the run time as a duration (`06:05` from `ps` reads `6m running`, or just `6m` where the words do not fit). A busy process that ends never shows as finished. Its title comes from the progress file or `titles.txt`, else a ` · unit: <Description>` part of the row (the heartbeat writer can add its systemd unit's `Description`), else its script name as words (`org_similar.py` reads `Org similar`).
 - **Name:** a trailing status word (`working`, `running`, `pending`, `waiting`, `starting`) is left out.
 - **No percent:** a still dotted bar `┄┄┄┄┄┄┄┄┄┄` with the run time. It used to slide, which read as flashing.
 - **Usage meter:** one shared meter on the tab row (or above it in a narrow pane), from a row detail `7d N%` or `Max 7-day used N%` (the highest one). Green under 50%, yellow under 80%, red above.

@@ -99,6 +99,8 @@ export function prettyName(name: string): string {
   let rest = m ? m[2]! : name.trim()
   if (/^[a-z0-9_.-]+$/.test(rest)) {
     if (host && rest.toLowerCase().startsWith(`${host.toLowerCase()}-`)) rest = rest.slice(host.length + 1)
+    // A script's name reads as words: "org_similar.py" is "Org similar".
+    rest = rest.replace(/\.(py|sh|js|mjs|cjs|ts|rb|pl|R)$/, '')
     rest = rest.replace(/[-_]+/g, ' ').trim()
   }
   const cap = (x: string) => x.charAt(0).toUpperCase() + x.slice(1)

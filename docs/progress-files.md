@@ -161,3 +161,10 @@ The plugin keeps the session's running agents (id, description, start, status, p
 **One writer per session.** Each copy of the plugin claims its session at start in `.state/owner-<session>.json`. A copy that `/reload-plugins` replaced sees the newer claim at its next tick, stops its timers and writes nothing more, so two copies no longer take turns writing the line files (a row that came and went every few seconds). A copy also stops its timers when the session ends.
 
 **LOCALHOST lists only real pages.** A port is listed when this session's background shell names it (`-p 3000`, `PORT=`), when a server inside the project folder or started by this project's session listens on it and answers HTTP, or when you added the page with [+ page]. System and infra listeners are never listed on their own: Docker Desktop (com.docker.backend, vpnkit, docker-proxy), OrbStack, colima/limactl, ControlCenter/AirPlay (5000, 7000), rapportd, Spotify, Dropbox, Code Helper, postgres, redis, mysqld. Hide more in `~/.claude-progress/localhost-ignore.txt`: one process name (prefix, any case) or port per line, `#` comments. A page you named stays listed. A name prompt closes when the focus leaves it or its row disappears.
+
+## Reading transcripts
+
+The plugin reads Claude Code transcripts to tell when background tasks end and what a waiting agent last did. A long session's transcript can pass 200 MB, so each one is read once from its last 4 MB, then only the lines written since, at most 2 MB per read, always cut at a line end (`hooks/txread.ts`). A transcript that did not grow costs one `stat` and no process. A reader that falls behind catches up a chunk per poll. An agent's final report is read from its transcript's last 4 MB. Before 0.35.4 each waiting agent's transcript was read again in full (up to 32 MB, over a second each) whenever it changed, which could hold the plugin long enough that the status script's 8 s limit ran out.
+
+The Status panel keeps its last lines when one run of the status script fails or times out, and shows `Status script could not run` only from the third failure in a row.
+

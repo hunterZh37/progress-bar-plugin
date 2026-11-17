@@ -2,6 +2,16 @@
 
 Versions of the progress-bar plugin, newest first. Each line is the release commit. Full detail is in the git history.
 
+## 0.35.4
+
+- **No more 8 s status script timeouts:** transcripts are read once from their last 4 MB, then only their new lines, at most 2 MB a read (was: up to 32 MB again each time a waiting agent's transcript changed, and 4 MB of the main transcript every 30 s). An unchanged transcript costs no process. One slow status script run keeps the last lines; the note shows from the third failure in a row.
+- **Rows named by the work:** a long turn's row takes the session's own live `progress_report` title, else the prompt's first clause, else the latest tool call's description. A prompt of short replies (`1. keep it 2. push`, `yes`, `push`) or a few words pointing back at the chat never names a row.
+- **Steps only while running:** a turn row names a tool call only while it runs. Between calls it says `working · background: <job> · 8m` while one of the session's background shells runs, else `idle`.
+- **No stale turn rows:** a turn row keeps the file it was first written to, so a `cd` mid-turn no longer leaves it behind (it lingered as `⚠ stuck` titled by the prompt). This session's leftover turn rows are cleared every 30 s.
+- **Main-session background jobs show:** a background Bash described as work on a server ("Run the backfill on the AWS server") or run through a remote runner (`ssh`, `ssm-run.sh`, `aws ssm`, `kubectl exec`) is a RUNNING row, not a hidden LOCALHOST server. Rows an older build marked `serving` are corrected.
+- **Remote process rows:** `ps` run times read as durations (`06:05` is `6m running`, never cut mid-time), script names read as words (`org_similar.py` is `Org similar`), and a ` · unit: <Description>` row part names the job.
+- **"likely improves" only when meaningful:** running and waiting rows show a guessed lens only from real cost or speed words, never the default `quality`, and never on turn, shell or busy-process rows. Finished rows are unchanged.
+
 ## 0.35.3
 
 - **Agent states:** an agent row is running, working on a background job, blocked or done. Only blocked says waiting.

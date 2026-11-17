@@ -242,7 +242,7 @@ export const taskList = (): Task[] => [...tasks.values()]
 export const LONG_BASH_MS = 60_000
 
 /** Files of shell commands still running, by path, rewritten each poll so they stay fresh. */
-export const liveShells = new Map<string, { body: string; taskId?: string }>()
+export const liveShells = new Map<string, { body: string; taskId?: string; title?: string; startedAt?: number }>()
 
 export function shellSlug(description: string, command: string): string {
   return `shell-${slug(description || command).slice(0, 40).replace(/-+$/, '') || 'command'}`
@@ -257,8 +257,10 @@ export async function startShell($: EngineInterface, h: string, description: str
   const server = taskId ? serverOf(command, description) : null
   const step = server !== null ? `serving${server ? ` ${server}` : ''}` : taskId ? 'running in the background' : 'running'
   // A background shell keeps its command and task id, so the panel's [x] can stop or pause exactly that shell.
-  const body = JSON.stringify({ ...reportBody({ title: description || command.slice(0, 60), step }, owner, await $.clock.now()), ...(taskId ? { command, taskId } : {}) })
-  liveShells.set(path, { body, taskId })
+  const startedAt = await $.clock.now()
+  const title = description || command.slice(0, 60)
+  const body = JSON.stringify({ ...reportBody({ title, step }, owner, startedAt), ...(taskId ? { command, taskId } : {}) })
+  liveShells.set(path, { body, taskId, title, startedAt })
   await $.fs.write(path, body).catch(() => undefined)
   return path
 }
@@ -273,12 +275,34 @@ export async function touchShells($: EngineInterface) {
   for (const [path, s] of liveShells) await $.fs.write(path, s.body).catch(() => undefined)
 }
 
+/** Minutes as a row's elapsed part: "8m", "1h05m". */
+const minPart = (ms: number) => { const m = Math.max(0, Math.floor(ms / 60_000)); return m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}m` : `${m}m` }
+
+/**
+ * The session's live background shells for its turn row: "background: <description> · <elapsed>" for the oldest,
+ * "+N more" when several run. '' when none.
+ */
+export function backgroundNote(now: number): string {
+  const bg = [...liveShells.values()].filter(s => s.taskId && s.title).sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0))
+  if (!bg.length) return ''
+  const first = bg[0]!
+  const desc = first.title!.replace(/\s+·\s+/g, ', ').replace(/\s+/g, ' ').trim()
+  return `background: ${desc.length > 60 ? `${desc.slice(0, 59)}…` : desc}${bg.length > 1 ? `, +${bg.length - 1} more` : ''} · ${minPart(now - (first.startedAt ?? now))}`
+}
+
 /** The task ids of background shells still shown as working rows. */
 export const backgroundShellIds = () => [...liveShells.values()].map(s => s.taskId).filter((t): t is string => !!t)
 
 /** Ends the rows of background shells whose task ids are in `done` (finished, failed or stopped). */
 export async function endShellsFor($: EngineInterface, done: ReadonlySet<string>) {
   for (const [path, s] of [...liveShells]) if (s.taskId && done.has(s.taskId)) await endShell($, path)
+}
+
+/** Every task id a stretch of transcript reports as over (completed, failed, killed, stopped or error). */
+export function endedTaskIds(text: string): string[] {
+  const out: string[] = []
+  for (const m of text.matchAll(/<task-id>([A-Za-z0-9_-]+)<\/task-id>(?:(?!<task-id>)[\s\S]){0,600}?<status>(completed|failed|killed|stopped|error)/gi)) out.push(m[1]!)
+  return out
 }
 
 /** Task ids the session transcript reports as over: `<task-id>X</task-id> ... <status>completed|failed|killed|stopped`. */

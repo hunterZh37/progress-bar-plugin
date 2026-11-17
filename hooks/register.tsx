@@ -2,7 +2,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import { ACTION_TOOL, CHECK_EVERY, actionCommand, addFromClaude, gatePrompt, isGated, tickActions } from './actions'
 import { ATTACH_COMMAND, ATTACH_DESCRIPTION, attachFiles } from './attach'
-import { countTool, endTurn, sessionRow, setAutoReport, startTurn, tickTurn, turn, withReportSection } from './auto'
+import { countTool, endTurn, orphanTurnRows, sessionRow, setAutoReport, setReportTitle, startTurn, tickTurn, toolEnded, turn, withReportSection } from './auto'
 import { autonextCommand, ownJobs, tickAutonext } from './autonext'
 import { backfillChat, sayCommand } from './chat'
 import { CHAT_READ_TOOL, CHAT_SAY_TOOL, STATIC as CHAT_NOTE, chatContext, chatRead, chatSay, ensureDaemon, ownPrompt, withChatSection } from './groupchat'
@@ -18,18 +18,19 @@ import { USAGE_CHECK, probeUsage, sessionLogin, setUsageMeter } from './usage'
 import { setHideEmails } from './privacy'
 import { macClicks, parseMacClicks } from './mac'
 import { checkpointCommand, noteStatusLine, panelCommand, registerPanel, startPanel } from './panel'
-import { FILE_FRESH_MS, FRESH_MS, closestFile, pairFile, type PairCandidate, eta, pickMeta, setInlineSteps, expandHome, rateLeft, trackJob, lines, parseProgress, parseWatch, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
+import { FILE_FRESH_MS, FRESH_MS, closestFile, pairFile, type PairCandidate, eta, pickMeta, remoteServerWork, setInlineSteps, expandHome, rateLeft, trackJob, lines, parseProgress, parseWatch, readLog, slug, statusScript, watchState, todoAdd, todoClear, todoDone, todoList as listOf } from './render'
 import { PROJECTS_REL, gitRootOf, mainRootOf, resolveProject, sessionProject, worktreeCwd } from './project'
-import { LONG_BASH_MS, PROGRESS_TOOL, backgroundShellIds, endBackground, endShell, endShellsFor, finishedTaskIds, liveShells, mirrorTasks, startShell, taskCreated, taskList, taskUpdated, touchShells, writeReport } from './report'
+import { TX_FIRST, readNewLines } from './txread'
+import { LONG_BASH_MS, PROGRESS_TOOL, backgroundNote, backgroundShellIds, endBackground, endShell, endShellsFor, endedTaskIds, liveShells, mirrorTasks, startShell, taskCreated, taskList, taskUpdated, touchShells, writeReport } from './report'
 import type { Task } from './report'
 import { PROJECT_LINE, pickOwner, routeOf, sessionKeyOf as keyOf } from './route'
 import type { Progress, Row, Track } from './render'
 import { isDarwin } from './mac'
 import { impactLines, parseDone, reportOf, saveDone, summarize, DONE_REL } from './done'
 import { pickGains } from './goal'
-import { aliveTasks, bgLaunch, bgSegs, idleSegs, phaseOf, reportedBy, scanTranscript, snapOf, toolWhat, waitSegs, watchedJob } from './waiting'
+import { aliveTasks, bgLaunch, bgSegs, idleSegs, newScan, phaseOf, reportedBy, scanMore, scanResult, snapOf, toolWhat, waitSegs, watchedJob } from './waiting'
 import { PS_ARGVS, addLife, agentOf, aliveRel, jobName, lifeFilesOf, livePidsIn, parseProcs, pickTxBase, pidLife, pidsOf, quietUntilOf, stepQuietUntil, taskProc, type Life, type Proc } from './alive'
-import type { BgSnap, BgTask, Job, TxScan } from './waiting'
+import type { BgSnap, BgTask, Job, ScanAcc, TxScan } from './waiting'
 
 const WATCH = '.watch.json'
 // Data files in ~/.claude-progress that are never jobs.
@@ -125,10 +126,10 @@ let txReadAt = 0
 const TX_CHECK_MS = 60_000
 const SHELL_TRUST_MS = 2 * 60_000
 const txOf = new Map<string, string>()
-// Each waiting agent's transcript scan, kept while the transcript does not change.
-const scans = new Map<string, { mtime: number; scan: TxScan }>()
-// Ids and task notices are scanned in this much of a transcript's end (calls in its last 4 MB, waiting.ts TX_PARSE).
-const TX_TAIL = 32 * 1024 * 1024
+// Each waiting agent's transcript scan, fed only the lines written since the last read (txread.ts).
+const scans = new Map<string, ScanAcc>()
+// An agent's final report is read from this much of its transcript's end.
+const TX_TAIL = TX_FIRST
 
 /** Removes a stopped task from every agent. */
 function dropTask(id: string) {
@@ -190,15 +191,16 @@ async function explainWaits($: EngineInterface, agents: Awaited<ReturnType<Engin
     // forgets the ones seen at tool calls), its last call when not seen since a reload, and the progress files it names.
     let scan: TxScan | null = null
     if (a.status === 'waiting' && path) {
-      try {
-        const m = (await $.fs.stat(path)).mtimeMs
-        const c = scans.get(a.id)
-        if (c && c.mtime === m) scan = c.scan
-        else {
-          scan = scanTranscript((await $.process.run(['tail', '-c', String(TX_TAIL), path], { timeoutMs: 5000 })).stdout)
-          scans.set(a.id, { mtime: m, scan })
-        }
-      } catch { scan = null }
+      // New lines only, at most two chunks a poll; a slow or failed read keeps the last scan.
+      let acc = scans.get(a.id)
+      for (let i = 0; i < 2; i++) {
+        const r = await readNewLines($, path)
+        if (!r) break
+        if (r.fresh || !acc) { acc = newScan(); scans.set(a.id, acc) }
+        if (r.text) scanMore(acc, r.text)
+        if (!r.behind) break
+      }
+      scan = acc ? scanResult(acc) : null
     }
     if (scan) {
       const ended = new Set(scan.ended)
@@ -741,6 +743,8 @@ async function sessionKeyOf($: EngineInterface): Promise<string> {
 // Background shells end when the transcript shows their finished notice. Stop hooks don't always list background
 // tasks, so a row could otherwise stay "running in the background" long after the command ended. Checked every 30 s.
 let shellCheckAt = 0
+// Background task ids the main transcript reports finished, from its lines read so far.
+const mainEnded = new Set<string>()
 async function endFinishedShells($: EngineInterface) {
   const now = await $.clock.now()
   const h = await resolveHome($)
@@ -756,8 +760,12 @@ async function endFinishedShells($: EngineInterface) {
         const path = `${dirOf(h)}/${f.name}`
         if (f.kind !== 'file' || !f.name.startsWith('shell-') || !f.name.endsWith('.json') || liveShells.has(path)) continue
         try {
-          const r = JSON.parse(String(await $.fs.read(path))) as { session?: unknown; taskId?: unknown }
-          if (sid && r.session === sid && typeof r.taskId === 'string' && r.taskId) orphans.set(path, r.taskId)
+          const r = JSON.parse(String(await $.fs.read(path))) as { session?: unknown; taskId?: unknown; step?: unknown; title?: unknown }
+          if (sid && r.session === sid && typeof r.taskId === 'string' && r.taskId) {
+            orphans.set(path, r.taskId)
+            // An older build called "Run the backfill on the AWS server" a server: it is a background job.
+            if (r.step === 'serving' && typeof r.title === 'string' && remoteServerWork(r.title)) await $.fs.write(path, JSON.stringify({ ...r, step: 'running in the background' })).catch(() => undefined)
+          }
         } catch { /* half written */ }
       }
     } catch { /* none */ }
@@ -765,14 +773,14 @@ async function endFinishedShells($: EngineInterface) {
   const ids = [...backgroundShellIds(), ...orphans.values()]
   if (!ids.length) return
   shellCheckAt = now
-  let text = ''
-  try {
-    const r = await $.process.run(['tail', '-c', '4000000', `${txBase}.jsonl`])
-    if (r.exitCode !== 0) return
-    text = r.stdout
-  } catch { return }
+  // Only the main transcript's new lines (it grows past 200 MB): every finished notice seen so far is kept.
+  const r = await readNewLines($, `${txBase}.jsonl`)
+  if (!r) return
+  if (r.fresh) mainEnded.clear()
+  for (const id of endedTaskIds(r.text.replace(/\\n/g, '\n'))) mainEnded.add(id)
+  if (mainEnded.size > 2000) for (const id of [...mainEnded].slice(0, mainEnded.size - 2000)) mainEnded.delete(id)
   txReadAt = now
-  const done = finishedTaskIds(text.replace(/\\n/g, '\n'), ids)
+  const done = new Set(ids.filter(id => mainEnded.has(id)))
   if (!done.size) return
   await endShellsFor($, done)
   for (const [path, id] of orphans) if (done.has(id)) await $.process.run(['rm', '-f', path]).catch(() => undefined)
@@ -791,11 +799,32 @@ async function transcriptFile($: EngineInterface, h: string): Promise<string> {
 let owner = newOwner(0)
 const ownsSession = async ($: EngineInterface) => owns($, owner, await resolveHome($), await sessionKeyOf($))
 
+// This session's turn rows the current turn does not own (an older build lost track of one when the session's folder
+// changed mid-turn, or a copy before a /reload-plugins left one): removed, checked every 30 s.
+let sweepAt = 0
+async function sweepTurnRows($: EngineInterface) {
+  const now = await $.clock.now()
+  if (now - sweepAt < 30_000) return
+  sweepAt = now
+  const h = await resolveHome($)
+  if (!h) return
+  let sid = ''
+  try { sid = await $.session.id() } catch { return }
+  const dir = dirOf(h)
+  const found: { name: string; session: string; bar: boolean }[] = []
+  for (const f of await $.fs.list(dir)) {
+    if (f.kind !== 'file' || !f.name.startsWith('working-') || !f.name.endsWith('.json')) continue
+    try { const r = JSON.parse(String(await $.fs.read(`${dir}/${f.name}`))) as { session?: unknown; total?: unknown }; found.push({ name: f.name, session: typeof r.session === 'string' ? r.session : '', bar: r.total !== undefined }) } catch { /* half written */ }
+  }
+  for (const path of orphanTurnRows(found, dir, sid, turn.shown ? turn.path : '')) await $.process.run(['rm', '-f', path]).catch(() => undefined)
+}
+
 async function poll($: EngineInterface) {
   if (!(await ownsSession($))) return
   await endFinishedShells($).catch(() => undefined)
   await touchShells($)
-  await tickTurn($, await resolveHome($)).catch(() => undefined)
+  await tickTurn($, await resolveHome($), backgroundNote(await $.clock.now())).catch(() => undefined)
+  await sweepTurnRows($).catch(() => undefined)
   const { rows, now, shared } = await collect($)
   const home = await resolveHome($)
   if (!home) return
@@ -1095,6 +1124,8 @@ export const register: Register = (on, options) => {
     const listArg = (v: unknown) => { if (typeof v !== 'string') return v; try { return JSON.parse(v) as unknown } catch { return v } }
     // The model reports this turn itself, so the turn's fallback row goes.
     if (!e.agentId && i.finished !== true) turn.reported = true
+    // This session's own job names the work: its title titles the turn row of a later turn that does not report.
+    if (!e.agentId) { if (i.finished === true) setReportTitle('', 0); else if (str(i.title) || str(i.label)) setReportTitle(str(i.title) || str(i.label) || '', await $.clock.now()) }
     // The calling subagent's id goes in the file, so its transcript keeps the row alive however the file is named.
     const text = await writeReport($, await resolveHome($), { agent: e.agentId, title: str(i.title) ?? '', label: str(i.label), done: num(i.done), total: num(i.total), step: str(i.step), why: str(i.why), parent: str(i.parent), slug: str(i.slug), reads: str(i.reads), writes: str(i.writes), impact: str(i.impact), area: str(i.area), gains: pickGains(typeof i.gains === 'string' ? (() => { try { return JSON.parse(i.gains as string) } catch { return undefined } })() : i.gains), finished: i.finished === true, expectMinutes: num(i.expect_minutes) ?? (typeof i.expect_minutes === 'string' ? num(Number(i.expect_minutes)) : undefined), heartbeat: str(i.heartbeat), steps: listArg(i.steps), stepStates: listArg(i.step_states) })
     await poll($).catch(() => undefined)
@@ -1168,7 +1199,8 @@ export const register: Register = (on, options) => {
     const tx = typeof i.agent_transcript_path === 'string' ? i.agent_transcript_path : ''
     if (id && tx && !handedBack.has(id)) {
       try {
-        const rep = reportOf((await $.process.run(['tail', '-c', String(TX_TAIL), tx], { timeoutMs: 5000 })).stdout)
+        // The report is at the end: its last 4 MB, never the whole transcript.
+        const rep = reportOf((await $.process.run(['tail', '-c', String(TX_TAIL), tx], { timeoutMs: 3000 })).stdout)
         if (rep.text) await recordAgent($, id, rep.text, tx)
       } catch { /* no transcript */ }
     }
@@ -1186,8 +1218,10 @@ export const register: Register = (on, options) => {
       const input = e as unknown as Record<string, unknown>
       const stopped = e.tool === 'TaskStop' ? String(input.task_id ?? input.shell_id ?? '') : ''
       if (!e.agentId) {
-        countTool(String(e.tool), toolWhat(input))
-        const r = await next(e)
+        const call = countTool(String(e.tool), toolWhat(input), typeof input.description === 'string' ? input.description : '')
+        let r
+        // The step names this call only while it runs: it ends (or is refused, or throws) and the step moves on.
+        try { r = await next(e) } finally { toolEnded(call) }
         if (stopped && !('deny' in r && r.deny)) dropTask(stopped)
         // The turn's row shows (or updates) as soon as it is due, not only at the next poll.
         await tickTurn($, await resolveHome($)).catch(() => undefined)

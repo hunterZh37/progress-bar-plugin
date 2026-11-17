@@ -214,6 +214,17 @@ const SERVER_CMD = [
   /\bdocker[\s-]compose\s+up\b|\bcaddy\s+run\b|\bngrok\s+http\b/,
 ]
 
+/** A command that runs its work on another machine (ssh, SSM, kubectl exec...): never a local server by its description. */
+const REMOTE_CMD = /\b(ssh|ssm-run(\.sh)?|aws\s+ssm|gcloud\s+compute\s+ssh|kubectl\s+exec|az\s+vm\s+run-command)\b/
+
+/**
+ * A description of work done on or against a server, not starting one: "Run the backfill on the AWS server",
+ * "Deploy to the prod server", "Run tests against the staging server".
+ */
+export function remoteServerWork(description: string): boolean {
+  return /\b(on|to|onto|against|at|in|from|via|over|through|inside)\s+(?:(?:the|a|an|our|my|its|that|this)\s+)?(?:[\w.-]+\s+){0,3}servers?\b/i.test(description)
+}
+
 /**
  * Whether a background shell is a long-lived server, by its command or a "Start/Run ... server" description:
  * null when not, else the port read from the command (":3000"), or '' when none is given.
@@ -221,7 +232,7 @@ const SERVER_CMD = [
 export function serverOf(command: string, description = ''): string | null {
   const c = command.replace(/\s+/g, ' ')
   const byCmd = SERVER_CMD.some(re => re.test(c))
-  const byDesc = /^\s*(start|run|launch|serve|boot)\b.*\bserver\b/i.test(description)
+  const byDesc = /^\s*(start|run|launch|serve|boot)\b.*\bserver\b/i.test(description) && !remoteServerWork(description) && !REMOTE_CMD.test(c)
   if (!byCmd && !byDesc) return null
   const m = /(?:^|\s)(?:-p|--port)[ =](\d{2,5})\b/.exec(c) ?? /\bPORT=(\d{2,5})\b/.exec(c) ?? /\bhttp\.server\s+(\d{2,5})\b/.exec(c) ?? /(?:localhost|0\.0\.0\.0|127\.0\.0\.1):(\d{2,5})\b/.exec(c)
   return m ? `:${m[1]}` : ''

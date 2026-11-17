@@ -165,17 +165,39 @@ export const TX_PARSE = 4 * 1024 * 1024
  * of the parsed tail; calls (description, command, launch time) are parsed from the last TX_PARSE characters.
  */
 export function scanTranscript(text: string): TxScan {
-  const calls = new Map<string, { name: string; input: Record<string, unknown>; at: number }>()
-  const started = new Map<string, { desc: string; kind: string; cmd?: string; at?: number }>()
-  const ended = new Set<string>()
-  const files = new Set<string>()
-  let lastTool = '', lastWhat = '', lastAt = 0
-  for (const m of text.matchAll(/\.claude-progress\/([a-z0-9-]+)\.json/g)) files.add(m[1]!)
-  for (const m of text.matchAll(ENDED)) ended.add(m[1]!)
-  for (const m of text.matchAll(STARTED)) { const id = (m[1] ?? m[2])!; if (!started.has(id)) started.set(id, { desc: '', kind: m[2] ? 'monitor' : 'shell' }) }
-  for (const m of text.matchAll(/"name":"TaskStop","input":\{[^}]*?"(?:task_id|shell_id)":"([\w-]+)"/g)) ended.add(m[1]!)
-  const body0 = text.length > TX_PARSE ? text.slice(text.length - TX_PARSE) : text
-  for (const l of body0.split('\n')) {
+  const acc = newScan()
+  scanMore(acc, text.length > TX_PARSE ? text.slice(text.length - TX_PARSE) : text, text.length > TX_PARSE ? text.slice(0, text.length - TX_PARSE) : '')
+  return scanResult(acc)
+}
+
+/** A transcript scan kept between reads, so only new lines are scanned (txread.ts). */
+export type ScanAcc = {
+  calls: Map<string, { name: string; input: Record<string, unknown>; at: number }>
+  started: Map<string, { desc: string; kind: string; cmd?: string; at?: number }>
+  ended: Set<string>
+  files: Set<string>
+  lastTool: string; lastWhat: string; lastAt: number
+}
+
+export const newScan = (): ScanAcc => ({ calls: new Map(), started: new Map(), ended: new Set(), files: new Set(), lastTool: '', lastWhat: '', lastAt: 0 })
+
+/** Calls awaiting their result, at most this many kept: a result comes right after its call. */
+const MAX_CALLS = 500
+
+/**
+ * Adds lines to a scan: ids, notices and progress files by regex in `text` and `idsOnly`, calls and results parsed
+ * from `text` only.
+ */
+export function scanMore(acc: ScanAcc, text: string, idsOnly = '') {
+  const { calls, started, ended, files } = acc
+  for (const t of [idsOnly, text]) {
+    if (!t) continue
+    for (const m of t.matchAll(/\.claude-progress\/([a-z0-9-]+)\.json/g)) files.add(m[1]!)
+    for (const m of t.matchAll(ENDED)) ended.add(m[1]!)
+    for (const m of t.matchAll(STARTED)) { const id = (m[1] ?? m[2])!; if (!started.has(id)) started.set(id, { desc: '', kind: m[2] ? 'monitor' : 'shell' }) }
+    for (const m of t.matchAll(/"name":"TaskStop","input":\{[^}]*?"(?:task_id|shell_id)":"([\w-]+)"/g)) ended.add(m[1]!)
+  }
+  for (const l of text.split('\n')) {
     if (!l.startsWith('{')) continue
     let d: { message?: { content?: unknown }; timestamp?: unknown }
     try { d = JSON.parse(l) } catch { continue }
@@ -186,13 +208,15 @@ export function scanTranscript(text: string): TxScan {
         const input = (x.input && typeof x.input === 'object' ? x.input : {}) as Record<string, unknown>
         const at = Date.parse(s(d.timestamp))
         calls.set(x.id, { name: s(x.name), input, at: at || 0 })
-        lastTool = s(x.name); lastWhat = toolWhat(input)
-        if (at) lastAt = at
+        if (calls.size > MAX_CALLS) calls.delete(calls.keys().next().value!)
+        acc.lastTool = s(x.name); acc.lastWhat = toolWhat(input)
+        if (at) acc.lastAt = at
         if (x.name === 'TaskStop') ended.add(s(input.task_id) || s(input.shell_id))
       } else if (x.type === 'tool_result') {
         const body = typeof x.content === 'string' ? x.content : JSON.stringify(x.content ?? '')
         const m = /running in background with ID: ([\w-]+)/.exec(body) ?? /Monitor started \(task ([\w-]+)/.exec(body)
         const call = calls.get(s(x.tool_use_id))
+        calls.delete(s(x.tool_use_id))
         if (m) {
           const at = Date.parse(s(d.timestamp)) || call?.at
           started.set(m[1]!, { desc: oneLine(s(call?.input.description) || s(call?.input.command).split('\n')[0]!, 80), kind: call?.name === 'Monitor' ? 'monitor' : 'shell', cmd: s(call?.input.command).slice(0, 400) || undefined, at: at || undefined })
@@ -200,8 +224,15 @@ export function scanTranscript(text: string): TxScan {
       }
     }
   }
-  const running = [...started].filter(([id]) => !ended.has(id)).map(([id, v]) => ({ id, ...v }))
-  return { running, ended: [...ended], lastTool, lastWhat, lastAt, files: [...files] }
+  // Bounded: ended tasks leave the started list, old ids leave the sets.
+  for (const id of ended) started.delete(id)
+  if (ended.size > 2000) for (const id of [...ended].slice(0, ended.size - 2000)) ended.delete(id)
+}
+
+/** What a scan says now. */
+export function scanResult(acc: ScanAcc): TxScan {
+  const running = [...acc.started].filter(([id]) => !acc.ended.has(id)).map(([id, v]) => ({ id, ...v }))
+  return { running, ended: [...acc.ended], lastTool: acc.lastTool, lastWhat: acc.lastWhat, lastAt: acc.lastAt, files: [...acc.files] }
 }
 
 /**

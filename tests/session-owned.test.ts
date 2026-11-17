@@ -11,6 +11,7 @@ import { PROGRESS_TOOL, isNewTask, reportBody, shellSlug, taskProgress, taskSlug
 import { pickOwner, routeOf, sessionKeyOf } from '../hooks/route'
 import { CHAT_MAX_LINES, CHAT_SECTION_ID, chatDataBlock } from '../hooks/groupchat'
 import { REPORT_SECTION, REPORT_SECTION_ID, TURN_MIN_MS, turnSlug, turnTitle, withReportSection } from '../hooks/auto'
+import { liveShells } from '../hooks/report'
 import { aliveRel, heartbeatOf, mergeLife, pickTxBase, quietUntilOf, toMs } from '../hooks/alive'
 
 // Progress files carry their owner (session id, folder), the plugin sets itself up on first run, and the main
@@ -27,7 +28,7 @@ const CWD = '/home/u/code/shop'
 const SCRIPT = `${HOME}/.claude/progress-bar/statusline.sh`
 
 /** A world with files in memory, a fixed session id and folder, and timers that never fire. */
-function world(on: On, files: Record<string, string>, opts: { clock?: () => number; agents?: unknown[]; onRun?: (argv: readonly string[]) => { exitCode: number; stdout: string } | undefined; userStatusLine?: string; projectStatusLine?: string; isPlaced?: boolean; script?: { exitCode: number; stdout: string; stderr: string }; now?: number; mtimes?: Record<string, number> } = {}) {
+function world(on: On, files: Record<string, string>, opts: { clock?: () => number; cwd?: () => string; agents?: unknown[]; onRun?: (argv: readonly string[]) => { exitCode: number; stdout: string } | undefined; userStatusLine?: string; projectStatusLine?: string; isPlaced?: boolean; script?: { exitCode: number; stdout: string; stderr: string }; now?: number; mtimes?: Record<string, number> } = {}) {
   const opened: string[] = []
   const runs: string[][] = []
   const toasts: string[] = []
@@ -41,7 +42,7 @@ function world(on: On, files: Record<string, string>, opts: { clock?: () => numb
   on('clock.every', async () => { await new Promise<void>(() => {}); return { value: undefined } })
   on('clock.sleep', async () => { await new Promise<void>(() => {}); return { value: undefined } })
   on('session.id', () => ({ value: SID }))
-  on('session.cwd', () => ({ value: CWD }))
+  on('session.cwd', () => ({ value: opts.cwd ? opts.cwd() : CWD }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('agent.list', () => ({ value: (opts.agents ?? []) as never }))
   on('command.register', () => ({ value: { command: 'progress-bar' } }))
@@ -50,13 +51,20 @@ function world(on: On, files: Record<string, string>, opts: { clock?: () => numb
   on('fs.read', (_, e) => { const t = files[String(e.path)]; if (t === undefined) throw new Error('ENOENT'); return { value: t } })
   on('fs.write', (_, e) => { files[String(e.path)] = e.text; return { value: undefined } })
   on('fs.exists', (_, e) => ({ value: String(e.path) in files || Object.keys(files).some(f => f.startsWith(`${e.path}/`)) }))
-  on('fs.stat', (_, e) => { if (!(String(e.path) in files)) throw new Error('ENOENT'); return { value: { size: 1, mtimeMs: mtime(String(e.path)) } as never } })
+  on('fs.stat', (_, e) => { if (!(String(e.path) in files)) throw new Error('ENOENT'); return { value: { size: String(e.path).endsWith('.jsonl') ? new TextEncoder().encode(files[String(e.path)]!).length : 1, mtimeMs: mtime(String(e.path)) } as never } })
   on('settings.read', (_, e) => {
     const cmd = e.source === 'user' ? opts.userStatusLine : e.source === 'project' ? opts.projectStatusLine : undefined
     return { value: (cmd ? { statusLine: { type: 'command', command: cmd } } : {}) as never }
   })
   on('process.run', (_, e) => {
     runs.push([...e.argv])
+    // The transcript reader's chunk read (txread.ts): "tail -c +FROM path | head -c TAKE", answered as a "tail" would be.
+    if (e.argv[0] === '/bin/sh' && /^tail -c \+"\$1" "\$2" \| head -c "\$3"$/.test(String(e.argv[2]))) {
+      const [from, path, take] = [Number(e.argv[4]), String(e.argv[5]), Number(e.argv[6])]
+      const whole = opts.onRun?.(['tail', '-c', `+${from}`, path])?.stdout ?? files[path] ?? ''
+      const out = new TextDecoder().decode(new TextEncoder().encode(whole).subarray(from - 1, from - 1 + take))
+      return { value: { exitCode: 0, stdout: out, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
     const own = opts.onRun?.(e.argv)
     if (own) return { value: { ...own, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     if (e.argv[0] === 'rm') for (const f of e.argv.slice(2)) delete files[f]
@@ -771,11 +779,12 @@ test('new user, defaults: the prompt carries the instruction, a subagent and a l
   now = NOW + TURN_MIN_MS
   await $.tool.call({ tool: 'Bash', command: 'npm test', description: 'Run the cart tests' } as never)
   await settle($ as never)
-  expect(JSON.parse(files[row]!)).toMatchObject({ title: 'Fix the checkout total rounding and add a test', step: 'Bash Run the cart tests, 4 tool calls', startedAt: NOW, session: SID, cwd: CWD })
+  // The Bash call ended, so the step says idle, not the finished call (0.35.4).
+  expect(JSON.parse(files[row]!)).toMatchObject({ title: 'Fix the checkout total rounding and add a test', step: 'idle, 4 tool calls', startedAt: NOW, session: SID, cwd: CWD })
   // Both show in this session: the subagent on its line, the turn as a working row.
   expect(files[`${L}/agents-${KEY}.txt`]).toContain('Audit the checkout tests')
   // The status line and panel name the row by its file's title (group.py), the line by its file name.
-  expect(files[`${L}/jobs-${KEY}.txt`]).toContain(`${turnSlug(CWD, SID)} working · Bash Run the cart tests, 4 tool calls`)
+  expect(files[`${L}/jobs-${KEY}.txt`]).toContain(`${turnSlug(CWD, SID)} working · idle, 4 tool calls`)
   // A subagent's own turn ending leaves the row, the main turn ending removes it.
   await $.turn.complete(end('ag1'))
   expect(files[row]).toBeDefined()
@@ -1030,4 +1039,194 @@ test('agent states: a waiting-on-child agent is blocked (the only state that say
   const lines = files[`${L}/agents-${KEY}.txt`]!.split('\n')
   expect(lines.find(l => l.includes('Release prep'))).toBe('▶ Release prep waiting · waiting on: agent: Grade the sample · waiting 5m · 10m · 3 tools · Agent')
   expect(ps).toEqual([])
+})
+
+// ---- 0.35.4: the turn row names the work, its step only while a call runs, background shells, orphan rows ----
+
+/** A tool.call answer that holds a call open until released, so a test can look while it runs. */
+function held() {
+  let release: () => void = () => {}
+  const gate = new Promise<void>(r => { release = r })
+  return { gate, release: () => release() }
+}
+
+test('turn row: a prompt of numbered replies never titles it; the work does, and the step shows a call only while it runs', { options: { openPanel: false } }, async ($, on) => {
+  const T = NOW + 20 * 86_400_000
+  let now = T
+  const files: Record<string, string> = {}
+  world(on, files, { clock: () => now })
+  turns(on)
+  const hold = held()
+  on('tool.call', async (_, e) => {
+    const i = e as unknown as { description?: string }
+    if (i.description === 'Commit the merge') await hold.gate
+    return { result: { ok: true } as never }
+  })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  liveShells.clear()
+  await $.turn.start(start('1. keep it 2. push 3. merge 4. ignore 5. spread them out'))
+  const row = `${P}/${turnSlug(CWD, SID)}.json`
+  await $.tool.call({ tool: 'Bash', command: 'git status', description: 'Check the branch' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'git merge x', description: 'Merge the release branch' } as never)
+  await $.tool.call({ tool: 'Read', file_path: '/home/u/code/shop/a.ts' } as never)
+  now = T + TURN_MIN_MS
+  // A call still running: the step names it. The title is the latest described call, never the prompt.
+  const running = $.tool.call({ tool: 'Bash', command: 'git commit -m x', description: 'Commit the merge' } as never)
+  await settle($ as never)
+  let r = JSON.parse(files[row]!)
+  expect(r.title).toBe('Commit the merge')
+  expect(r.title).not.toContain('keep it')
+  expect(r.step).toBe('Bash running, 4 tool calls')
+  hold.release()
+  await running
+  await settle($ as never)
+  r = JSON.parse(files[row]!)
+  // It ended: idle, not the finished call.
+  expect(r.step).toBe('idle, 4 tool calls')
+  expect(r.step).not.toContain('Commit')
+  await $.turn.complete(end())
+  expect(files[row]).toBe(undefined)
+})
+
+test('turn row: a real prompt titles it by its first clause; this session\'s own live report title wins on a later turn', { options: { openPanel: false } }, async ($, on) => {
+  const T = NOW + 21 * 86_400_000
+  let now = T
+  const files: Record<string, string> = {}
+  world(on, files, { clock: () => now })
+  turns(on)
+  on('tool.call', () => ({ result: { ok: true } as never }))
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  liveShells.clear()
+  const row = `${P}/${turnSlug(CWD, SID)}.json`
+  await $.turn.start(start('Please fix the checkout rounding bug; then add a test for it\nmore'))
+  for (let i = 0; i < 3; i++) await $.tool.call({ tool: 'Read', file_path: `/f${i}` } as never)
+  now = T + TURN_MIN_MS
+  await settle($ as never)
+  expect(JSON.parse(files[row]!).title).toBe('Fix the checkout rounding bug')
+  await $.turn.complete(end())
+  // The model reports a job (not finished) in one turn; a later short-reply turn's row takes that job's title.
+  await $.turn.start(start('Migrate the orders table'))
+  await $.tool.call(report({ title: 'Orders table migrated · step 1', done: 0, total: 3 }))
+  await $.turn.complete(end())
+  await $.turn.start(start('yes'))
+  for (let i = 0; i < 3; i++) await $.tool.call({ tool: 'Read', file_path: `/g${i}` } as never)
+  now += TURN_MIN_MS
+  await $.tool.call({ tool: 'Read', file_path: '/g9' } as never)
+  expect(JSON.parse(files[row]!).title).toBe('Orders table migrated')
+  await $.turn.complete(end())
+  // Once that job finished, a reply turn with no described call is just "Working".
+  await $.tool.call(report({ title: 'Orders table migrated', finished: true, impact: 'done' }))
+  await $.turn.start(start('push'))
+  for (let i = 0; i < 3; i++) await $.tool.call({ tool: 'Read', file_path: `/h${i}` } as never)
+  now += TURN_MIN_MS
+  await $.tool.call({ tool: 'Read', file_path: '/h9' } as never)
+  expect(JSON.parse(files[row]!).title).toBe('Working')
+  await $.turn.complete(end())
+})
+
+test('turn row: the session folder changes mid-turn, and the row still goes when the turn ends', { options: { openPanel: false } }, async ($, on) => {
+  const T = NOW + 22 * 86_400_000
+  let now = T
+  let cwd = `${CWD}/web`
+  const files: Record<string, string> = {}
+  world(on, files, { clock: () => now, cwd: () => cwd })
+  turns(on)
+  on('tool.call', () => ({ result: { ok: true } as never }))
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  liveShells.clear()
+  await $.turn.start(start('Merge the news import branch and commit'))
+  for (let i = 0; i < 3; i++) await $.tool.call({ tool: 'Read', file_path: `/f${i}` } as never)
+  now = T + TURN_MIN_MS
+  await $.tool.call({ tool: 'Bash', command: 'git merge', description: 'Merge the branch' } as never)
+  const first = `${P}/${turnSlug(`${CWD}/web`, SID)}.json`
+  expect(files[first]).toBeDefined()
+  // A "cd .." in the turn: the folder is now the project root. The row keeps its first file, no second one.
+  cwd = CWD
+  await $.tool.call({ tool: 'Bash', command: 'cd .. && git commit', description: 'Commit the merge' } as never)
+  expect(files[`${P}/${turnSlug(CWD, SID)}.json`]).toBe(undefined)
+  await $.turn.complete(end())
+  expect(files[first]).toBe(undefined)
+})
+
+test('orphan turn rows: this session\'s left-behind "working-" row goes at the next poll; others stay', { options: { openPanel: false } }, async ($, on) => {
+  const T = NOW + 23 * 86_400_000
+  const key4 = KEY.slice(0, 4)
+  const orphan = `${P}/working-web-${key4}.json`
+  const files: Record<string, string> = {
+    [orphan]: JSON.stringify({ step: 'Bash Commit the merge, 25 tool calls', startedAt: T - 600_000, title: '1. keep it 2. push', session: SID, cwd: `${CWD}/web` }),
+    // another session's turn row, and a job of this session whose slug happens to start with "working-"
+    [`${P}/working-web-9999.json`]: JSON.stringify({ step: 'x', title: 'y', session: OTHER }),
+    [`${P}/working-hours-report-${key4}.json`]: JSON.stringify({ done: 1, total: 3, step: 'x', title: 'Working hours report', session: SID }),
+  }
+  world(on, files, { now: T })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  liveShells.clear()
+  await settle($ as never)
+  expect(files[orphan]).toBe(undefined)
+  expect(files[`${P}/working-web-9999.json`]).toBeDefined()
+  expect(files[`${P}/working-hours-report-${key4}.json`]).toBeDefined()
+})
+
+test('main-session background shells: a row each, the turn says "working · background", and each goes when it ends', { options: { openPanel: false } }, async ($, on) => {
+  const T = NOW + 24 * 86_400_000
+  let now = T
+  const files: Record<string, string> = {}
+  world(on, files, { clock: () => now })
+  turns(on)
+  on('tool.call', (_, e) => {
+    const i = e as unknown as { run_in_background?: boolean; description?: string }
+    return { result: (i.run_in_background ? { stdout: '', stderr: '', interrupted: false, backgroundTaskId: i.description === 'Run the news import migration and backfill on the AWS server' ? 'bgA' : 'bgB' } : { ok: true }) as never }
+  })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  liveShells.clear()
+  await $.turn.start(start('Ship news import: merge it, then backfill on the server'))
+  const row = `${P}/${turnSlug(CWD, SID)}.json`
+  // The real shape: a remote runner, described as work "on the AWS server". It is a background job, not a dev server.
+  await $.tool.call({ tool: 'Bash', command: 'cd ~/infra && build/ssm-run.sh /tmp/x/news.sh 10800 2>&1 | tail -25', description: 'Run the news import migration and backfill on the AWS server', run_in_background: true } as never)
+  const a = `${P}/${shellSlug('Run the news import migration and backfill on the AWS server', '')}.json`
+  expect(JSON.parse(files[a]!)).toMatchObject({ step: 'running in the background', title: 'Run the news import migration and backfill on the AWS server', taskId: 'bgA', session: SID })
+  now = T + 60_000
+  await $.tool.call({ tool: 'Bash', command: 'python load.py', description: 'Load the 2026 batch', run_in_background: true } as never)
+  const b = `${P}/shell-load-the-2026-batch.json`
+  expect(files[b]).toBeDefined()
+  await $.tool.call({ tool: 'Read', file_path: '/r' } as never)
+  now = T + 8 * 60_000
+  await settle($ as never)
+  // Two at once: the oldest by name with its time, "+1 more".
+  expect(JSON.parse(files[row]!).step).toBe('working · background: Run the news import migration and backfill on the AWS server, +1 more · 8m')
+  // The first one ends: its row goes, the turn names the other.
+  await $.classic.Stop({ stop_hook_active: false, background_tasks: [{ id: 'bgB', type: 'shell', status: 'running', description: 'x' }] } as never)
+  expect(files[a]).toBe(undefined)
+  expect(files[b]).toBeDefined()
+  await settle($ as never)
+  expect(JSON.parse(files[row]!).step).toBe('working · background: Load the 2026 batch · 7m')
+  // Both over: rows gone, the turn is idle.
+  await $.classic.Stop({ stop_hook_active: false, background_tasks: [] } as never)
+  expect(files[b]).toBe(undefined)
+  await settle($ as never)
+  expect(JSON.parse(files[row]!).step).toBe('idle, 3 tool calls')
+  await $.turn.complete(end())
+})
+
+test('replay 0.35.4 writer: the stale prompt-titled turn row goes, the "serving" backfill becomes a background job', { options: { openPanel: false } }, async ($, on) => {
+  // Scrubbed copies of the real files: a turn row left when the folder changed mid-turn (10 min old, so it read
+  // "stuck"), and a background SSM backfill an older build called a server.
+  const T = NOW + 30 * 86_400_000
+  const live = `${HOME}/.claude/projects/-home-u-code-shop/${SID}`
+  const orphan = `${P}/working-web-${KEY.slice(0, 4)}.json`
+  const shell = `${P}/shell-run-the-news-import-migration-and-backfill.json`
+  const files: Record<string, string> = {
+    [`${P}/.state/bg-${KEY}.json`]: JSON.stringify({ snap: { at: T - 60_000, tasks: [] }, txBase: live }),
+    [`${live}.jsonl`]: `${JSON.stringify({ type: 'user', message: { role: 'user', content: 'Command running in background with ID: bq7.' } })}\n`,
+    [orphan]: JSON.stringify({ step: 'Bash Commit the news-import merge and mark decision 12, 25 tool calls', startedAt: T - 600_000, title: '1. keep it 2. push 3. merge 4. ignore 5. spread them out', session: SID, cwd: `${CWD}/web` }),
+    [shell]: JSON.stringify({ step: 'serving', startedAt: T - 480_000, title: 'Run the news import migration and backfill on the AWS server', session: SID, cwd: CWD, command: 'cd ~/infra && build/ssm-run.sh /tmp/x/news.sh 10800 2>&1 | tail -25', taskId: 'bq7' }),
+  }
+  world(on, files, { now: T, mtimes: { [`${live}.jsonl`]: T - 5_000, [orphan]: T - 600_000 } })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  liveShells.clear()
+  await settle($ as never)
+  expect(files[orphan]).toBe(undefined)
+  expect(JSON.parse(files[shell]!)).toMatchObject({ step: 'running in the background', taskId: 'bq7' })
+  // Its job still runs (no finish notice): the row stays, and nothing is titled by the prompt.
+  expect(Object.keys(files).filter(f => f.startsWith(`${P}/working-`))).toEqual([])
 })

@@ -139,15 +139,24 @@ export function inferLens(goal: Goal, impact: string): GoalLens['id'] {
   return 'quality'
 }
 
+/** Whether a lens's own keywords appear in the text (a goal file may give quality keywords). */
+function lensWords(goal: Goal, id: GoalLens['id'], text: string): boolean {
+  const t = text.toLowerCase()
+  return (goal.lenses.find(x => x.id === id)?.keywords ?? []).some(kw => hits(t, kw))
+}
+
 /**
  * The lens tags for a job, in the goal's lens order: the ones its `gains` names, else (for a job with an impact) the
- * one its impact's wording points to, marked inferred. None when it says nothing.
+ * one its impact's wording points to, marked inferred. None when it says nothing. With `fallback` false, a guess
+ * needs real cost, speed or quality words: no default "quality".
  */
-export function lensTags(goal: Goal, gains: Gains | undefined, impact = ''): LensTag[] {
+export function lensTags(goal: Goal, gains: Gains | undefined, impact = '', fallback = true): LensTag[] {
   const g = pickGains(gains)
   if (g) return goal.lenses.filter(l => g[l.id]).map(l => ({ id: l.id, name: l.name, text: g[l.id]!, inferred: false }))
   if (!impact.trim()) return []
   const id = inferLens(goal, impact)
+  // Without `fallback` (a running or waiting row, guessed from its title), "quality" by default is no signal: none.
+  if (!fallback && id === 'quality' && !lensWords(goal, 'quality', impact)) return []
   const l = goal.lenses.find(x => x.id === id)!
   return [{ id, name: l.name, text: '', inferred: true }]
 }

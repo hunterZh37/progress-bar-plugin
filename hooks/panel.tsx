@@ -15,7 +15,8 @@ import { markHandled, readInbox } from './inbox'
 import { isDarwin } from './mac'
 import { backfillAgent, clock, doneDetails, machineName, prettyName, readDone } from './done'
 import { DEFAULT_HUMAN, HUMAN_REL, clip, isDecision, isHuman, moveItem, nextPrompt, parseHuman, parseItem, rankTodos, shownTitle, todoRows as layoutTodos } from './priority'
-import { DEFAULT_GOAL, OTHER, areaOf, lensTags, plainTitle, projectGoal, readGoal } from './goal'
+import { sessionRow } from './auto'
+import { DEFAULT_GOAL, OTHER, areaOf, lensTags, pickGains, plainTitle, projectGoal, readGoal } from './goal'
 import type { LensTag } from './goal'
 import { sessionProject } from './project'
 import { NO_ASK, askKeys, askShown, askStale, controlKind, controlOptions, focusKeeps, readPaused, runControl, toggleAsk } from './control'
@@ -28,7 +29,7 @@ import { turnOnStatusLine } from './setup'
 import { parseSaved, sessionLogin, usageFileRel, usageMeterOn } from './usage'
 import { shownEmails } from './privacy'
 import type { UsageReading } from './usage'
-import { FEW_STEPS, FILE_FRESH_MS, INLINE_ROWS, STEP_MARK, activeMark, checklistLines, inlineLines, inlineStepsOn, todoItems as parseTodo, parseTitles, pickMeta, serverOf, slug } from './render'
+import { FEW_STEPS, FILE_FRESH_MS, INLINE_ROWS, STEP_MARK, activeMark, checklistLines, inlineLines, inlineStepsOn, todoItems as parseTodo, parseTitles, pickMeta, remoteServerWork, serverOf, slug } from './render'
 import type { StepItem, StepState } from '../types'
 import type { CheckLine } from './render'
 import type { LocalView } from '../types'
@@ -338,6 +339,8 @@ export type RunCard = {
   left: string
   ran: string
   elapsed: string
+  /** What a busy process is, from a "unit: <Description>" part (its systemd unit's Description), else ''. */
+  unit?: string
 }
 
 /**
@@ -362,7 +365,7 @@ export function runCard(row: string): RunCard {
     : host ? { text: `on ${host}` }
     : isAgent ? { text: 'Claude agent' }
     : { text: 'job' }
-  let count = '', step = '', elapsed = '', left = '', speed = '', actions = '', last = '', cores = '', ran = '', waitOn = '', watchedBy = '', waited = '', note = '', bg = ''
+  let count = '', step = '', elapsed = '', left = '', speed = '', actions = '', last = '', cores = '', ran = '', waitOn = '', watchedBy = '', waited = '', note = '', bg = '', unit = ''
   let bgTime = false
   let maxUsed: number | null = null
   for (const x of parts) {
@@ -375,7 +378,8 @@ export function runCard(row: string): RunCard {
     else if ((m = /^waiting ((?:\d+h)?\d+m)$/.exec(x))) waited = m[1]!
     else if (/^last action\b.+$|^not started yet$|^idle: .+$/.test(x)) note = note ? `${note} · ${x}` : x
     else if ((m = /^(\d+(?:\.\d+)?)% CPU$/.exec(x))) cores = `${(Number(m[1]) / 100).toFixed(1)} cores busy`
-    else if (/^(\d+-)?\d+:\d\d(:\d\d)?$/.test(x)) ran = x
+    else if (/^(\d+-)?\d+:\d\d(:\d\d)?$/.test(x)) ran = psTime(x)
+    else if ((m = /^unit: (.+)$/.exec(x))) unit = m[1]!.trim()
     else if ((m = /^Max 7-day used (\d+)%$/.exec(x)) || (m = /^7d (\d+)%$/.exec(x))) maxUsed = Math.max(maxUsed ?? 0, Number(m[1]))
     else if ((m = /^(\d+)\/(\d+)( batches)?$/.exec(x))) count = `${Number(m[1]).toLocaleString('en-US')} of ${Number(m[2]).toLocaleString('en-US')}${m[3] ? ' batches' : Number(m[2]) > FEW_STEPS ? ' items' : ' steps'}`
     else if ((m = /^done in (.+)$/.exec(x)) || (m = /^ETA (.+)$/.exec(x)) || (m = /^(.+) left$/.exec(x))) left = m[1]!
@@ -406,7 +410,23 @@ export function runCard(row: string): RunCard {
     left,
     ran,
     elapsed,
+    ...(unit ? { unit } : {}),
   }
+}
+
+/**
+ * A ps run time ("06:05", "1:02:03", "2-03:04:05") as a short duration ("6m", "1h02m", "2d3h"), so a remote row's time
+ * reads like every other row's and fits its column. Under a minute: "45s".
+ */
+export function psTime(x: string): string {
+  const m = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d\d)$/.exec(x.trim())
+  if (!m) return x
+  const sec = Number(m[1] ?? 0) * 86400 + Number(m[2] ?? 0) * 3600 + Number(m[3]) * 60 + Number(m[4])
+  if (sec < 60) return `${sec}s`
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min}m`
+  if (min < 1440) return `${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}m`
+  return `${Math.floor(min / 1440)}d${Math.floor((min % 1440) / 60)}h`
 }
 
 /**
@@ -619,6 +639,8 @@ export function runCount(names: string[], meta: Record<string, Meta>): string {
  */
 export function serverNote(c: Pick<RunCard, 'name' | 'step' | 'elapsed' | 'ran'>, title = ''): string | null {
   const m = /^serving(?:\s+(:\d+))?\b/.exec(c.step)
+  // An older build called "Run the backfill on the AWS server" a server ("serving", no port): it is a job, not a server.
+  if (m && !m[1] && c.name.startsWith('shell-') && remoteServerWork(title || c.name.replace(/^shell-/, '').replace(/-/g, ' '))) return null
   if (!m && !(c.name.startsWith('shell-') && serverOf('', title || c.name.replace(/^shell-/, '').replace(/-/g, ' ')) !== null)) return null
   const up = c.elapsed || c.ran
   return `serving${m?.[1] ? ` ${m[1]}` : ''}${up ? ` · up ${up}` : ''}`
@@ -845,6 +867,15 @@ export async function clearStaleAsk($: EngineInterface) {
   if (askStale(ask, await $.clock.now(), undefined, panelBlurAt)) await update($, askAtom, () => NO_ASK)
 }
 
+/** Status script runs that failed in a row; the note shows from the third, so one slow run never flashes an error. */
+let scriptFails = 0
+export const SCRIPT_FAILS_NOTE = 3
+
+/** The note for the n-th status script failure in a row: none before SCRIPT_FAILS_NOTE (the last lines stay up). */
+export function scriptFailNote(n: number, err: unknown): string {
+  return n >= SCRIPT_FAILS_NOTE ? `Status script could not run: ${firstLine(String(err)) || 'unknown error'}` : ''
+}
+
 export async function pollPanel($: EngineInterface, h: string) {
   await clearStaleAsk($)
   if (!h) return
@@ -854,8 +885,12 @@ export async function pollPanel($: EngineInterface, h: string) {
     const prev = await read($, linesAtom)
     if (prev.join('\n') !== lines.join('\n')) await update($, linesAtom, () => lines)
     await setScriptNote($, scriptNote(r))
+    scriptFails = 0
   } catch (err) {
-    await setScriptNote($, `Status script could not run: ${firstLine(String(err)) || 'unknown error'}`)
+    // One slow run (a busy machine) keeps the last lines and says nothing; only repeated failures show the note.
+    scriptFails += 1
+    const note = scriptFailNote(scriptFails, err)
+    if (note) await setScriptNote($, note)
   }
   await readStatusOff($, h)
   const hl = await read($, healthAtom)
@@ -1291,7 +1326,8 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     // it: id and badge, count, step, facts and what it unlocks. A running child shows under its parent only while the
     // parent is open, marked ↳.
     const nowMs = await $.clock.now()
-    const meta = await read($, metaAtom)
+    // A copy: a busy process's unit description fills its title below, without changing the shared atom.
+    const meta: Record<string, Meta> = { ...(await read($, metaAtom)) }
     const openCards = new Set(await read($, openAtom))
     // Stop or pause from a row's [x] (control.ts): which kind of control a row has, and the open confirm's choices.
     const ctl = await read($, ctlAtom)
@@ -1344,7 +1380,21 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
         </Box>
       )
     }
+    // A busy process with no title of its own takes its unit's description ("unit: Weekly similar organizations").
+    for (const row of sections.filter(x => x.key === 'running' || x.key === 'waiting').flatMap(x => x.rows)) {
+      const c = runCard(row)
+      if (c.unit && !meta[slug(c.name)]?.title) meta[slug(c.name)] = { ...meta[slug(c.name)], title: c.unit }
+    }
     const metaOf = (name: string): Meta => meta[slug(name)] ?? {}
+    // A running or waiting row's lens line: the gains it named, else a guess only from real cost or speed words in
+    // its title and why. Never the default "quality" guess, and never for rows the plugin writes for the session
+    // itself (a turn, a shell) or a busy process: their titles are prompts, commands and script names, not claims.
+    const row0Proc = (c: RunCard) => /cores busy/.test(c.facts)
+    const liveLens = (name: string, m0: Meta, proc: boolean) => {
+      if (pickGains(m0.gains)) return lensTags(goal, m0.gains)
+      if (proc || sessionRow(name)) return []
+      return lensTags(goal, undefined, `${m0.title ?? ''} ${m0.why ?? ''}`, false)
+    }
     const short = (t: string) => t.split(' · ')[0]!
     const mach = machines(sections.filter(x => x.key === 'running' || x.key === 'waiting').flatMap(x => x.rows).map(x => runCard(x).name), todos.map(t => t.owner), human)
     const MINI = 10
@@ -1405,9 +1455,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       // Room after mark, label, bar and percent (4 + col + 17) and two spaces.
       const room = width - ind.length - col - 23 - (ctlKindOf(r) ? 4 : 0)
       const fit = (x: string) => (x.length > room ? (room > 1 ? `${x.slice(0, room - 1)}…` : '') : x)
-      const tail = fit(finished ? 'just finished' : paused ? 'paused' : stuck ? `⚠ stuck ${stuck}` : waitOn ? `waiting on ${short(waitOn)}` : r.left ? `${r.left} left` : r.pct === null && r.ran ? `${r.ran} running` : '')
+      // A busy process's run time: "6m running", or just "6m" when the words do not fit, never cut mid-time.
+      const ranTail = r.pct === null && r.ran ? (`${r.ran} running`.length <= room ? `${r.ran} running` : r.ran) : ''
+      const tail = fit(finished ? 'just finished' : paused ? 'paused' : stuck ? `⚠ stuck ${stuck}` : waitOn ? `waiting on ${short(waitOn)}` : r.left ? `${r.left} left` : ranTail)
       const why = (m0.why ?? '').replace(/^unlocks:?\s*/i, '')
-      const tags = lensTags(goal, m0.gains, `${m0.title ?? ''} ${m0.why ?? ''}`)
+      const tags = liveLens(r.name, m0, row0Proc(r))
       const ar = runArea(r.name, r.step)
       const step0 = nowLine(r, waitOn)
       // Closed, a row with steps lists them inline under its step line (the first INLINE_ROWS such rows only, so the
@@ -1517,7 +1569,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const full = machineTitle(c.name, m0.title || c.name, mach)
       const title = plain(m0.title || prettyName(c.name))
       const why = (m0.why ?? '').replace(/^unlocks:?\s*/i, '')
-      const tags = lensTags(goal, m0.gains, `${m0.title ?? ''} ${m0.why ?? ''}`)
+      const tags = liveLens(c.name, m0, row0Proc(c))
       const whole = `${phrase || 'waiting, no reason reported'}${c.waited ? ` · for ${c.waited}` : ''}`
       const said = phrase.replace(/^(waiting on |last step: |paused by a rate limit: )/, '')
       const inStep = !c.waited && !!said && c.step.includes(said)

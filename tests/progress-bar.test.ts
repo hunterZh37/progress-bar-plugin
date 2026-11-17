@@ -570,7 +570,7 @@ test('one-line card time: a real time left, else an estimate from an item count,
   expect(timeTail(runCard('◐ Build docs working · 0/8 · 12m · 9 tools'))).toBe('12m so far')
   expect(timeTail(runCard('◐ Build docs working ████ 100.0% · 8/8 · 12m · 9 tools'))).toBe('12m so far')
   expect(timeTail(runCard('◐ Build docs working · 3m · 12 tools · Edit'))).toBe('3m so far')
-  expect(timeTail(runCard('◐ box: train.py · 540% CPU · 12:50'))).toBe('12:50 running')
+  expect(timeTail(runCard('◐ box: train.py · 540% CPU · 12:50'))).toBe('12m running')
 })
 
 test('running cards: Claude Max weekly use is pulled out, not the bar %', async () => {
@@ -1089,7 +1089,7 @@ test('running cards: N% CPU is a busy process, not progress; waiting on; spaced 
   const c = runCard('◐ box: train.py · 540% CPU · 12:50')
   expect(c.pct).toBe(null)
   expect(c.kind).toEqual({ text: 'on box' })
-  expect(c.facts).toBe('5.4 cores busy · 12:50 running')
+  expect(c.facts).toBe('5.4 cores busy · 12m running')
   expect(c.step).toBe('')
   expect(runCard('◐ big ██░░ 50.0% · 1/2 · a step · waiting on: Child job').waitOn).toBe('Child job')
   expect(badge({ text: 'labeling' })).toBe('labeling')
@@ -1198,7 +1198,7 @@ test('the panel: titles, ids with badges, unlocks, a nested child, waiting on an
   const boxes = tieBoxes((await ui.find({ type: 'Box' })) as never)
   expect(boxes.length).toBe(2)
   expect(boxes.every(b => b.props?.flexShrink === 0)).toBe(true)
-  expect(lines).toContain('  ◐ Train the model  ┄┄┄┄┄┄┄┄┄┄       12:50 running')
+  expect(lines).toContain('  ◐ Train the model  ┄┄┄┄┄┄┄┄┄┄       12m running')
   let texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   expect(texts.filter(t => t === '[x]').length).toBe(1)
   expect(texts.some(t => /540|unlocks|so far|Answers|better search|weekly report/.test(t))).toBe(false)
@@ -1343,12 +1343,12 @@ test('running jobs: two aligned lines each, a press opens the details', async ($
   // With no step, line two shows the count.
   expect(texts).toContain('2 of 5 steps')
   await ui.press({ key: 'open-linux-rebuild' })
-  expect(await lines()).toEqual(['Rebuild'.padEnd(rowCol(52)), 'Embed.py'.padEnd(rowCol(52, 4)), fitLabel('A much longer job name than fits', rowCol(52))])
+  expect(await lines()).toEqual(['Rebuild'.padEnd(rowCol(52)), 'Embed'.padEnd(rowCol(52, 4)), fitLabel('A much longer job name than fits', rowCol(52))])
   texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   expect(texts.filter(t => /2 of 5/.test(t))).toEqual(['2 of 5 steps'])
   expect(texts.filter(t => /1h left/.test(t))).toEqual(['  1h left'])
   expect(texts.filter(t => /40%/.test(t))).toEqual(['  40%'])
-  expect(texts).toContain('  3:10 running')
+  expect(texts).toContain('  3m running')
   await ui.unmount()
 })
 
@@ -2466,4 +2466,53 @@ test('a step\'s expect_minutes survives a later report that rewrites the checkli
   const prev = [{ name: 'sql', state: 'active', expect_minutes: 90, since: 1_800_000_000_000 }, 'commit']
   expect(reportSteps({}, prev)).toEqual([{ name: 'sql', state: 'active', expect_minutes: 90, since: 1_800_000_000_000 }, 'commit'])
   expect(reportSteps({ stepStates: ['done', 'active'] }, prev)).toEqual([{ name: 'sql', state: 'done', expect_minutes: 90, since: 1_800_000_000_000 }, { name: 'commit', state: 'active' }])
+})
+
+// ---- 0.35.4 replay: the rows from the real panel, rebuilt from scrubbed copies of the real progress files ----
+// REPLAY_BEFORE/AFTER are the grouper's own output (group.py) for those files, before and after 0.35.4's writer fixes.
+
+const REPLAY_BEFORE = ["\u25be \u25b6 RUNNING", "  \u25d2 shell-run-the-news-import-migration-and-backfill working \u00b7 serving \u00b7 8m", "  \u25d2 working-web-1111 working \u00b7 Bash Commit the news-import merge and mark decision 12, 25 tool calls \u00b7 10m", "  \u25d2 box: org_similar.py \u00b7 273% CPU \u00b7 06:05", "machine box \u2713 helper healthy \u00b7 load 6.28 on 12 cores \u00b7 \u27f3 similar \u00b7 busy: 1 process running"].join('\n')
+const REPLAY_AFTER = ["\u25be \u25b6 RUNNING", "  \u25d2 shell-run-the-news-import-migration-and-backfill working \u00b7 running in the background \u00b7 8m", "  \u25d2 box: org_similar.py \u00b7 273% CPU \u00b7 06:05 \u00b7 unit: Weekly similar organizations", "machine box \u2713 helper healthy \u00b7 load 6.28 on 12 cores \u00b7 \u27f3 similar \u00b7 busy: 1 process running"].join('\n')
+const replayFiles = (after: boolean): Record<string, string> => ({
+  [SCRIPT]: statusScript(), [FLAG]: 'on\n',
+  ...(after ? {} : { [`${DIR}/working-web-1111.json`]: JSON.stringify({ step: 'Bash Commit the news-import merge and mark decision 12, 25 tool calls', startedAt: NOW - 600_000, title: '1. keep it 2. push 3. merge 4. ignore 5. spread them out', session: 'x', cwd: '/home/u/code/shop/web' }) }),
+  [`${DIR}/shell-run-the-news-import-migration-and-backfill.json`]: JSON.stringify({ step: after ? 'running in the background' : 'serving', startedAt: NOW - 480_000, title: 'Run the news import migration and backfill on the AWS server', session: 'x', cwd: '/home/u/code/shop', command: 'cd ~/infra && build/ssm-run.sh /tmp/x/news-rds.sh 10800', taskId: 'bq7' }),
+})
+
+/** The RUNNING part of the panel, every card opened, for the replay files and grouper output. */
+async function replayRender($: Parameters<Parameters<typeof test>[1]>[0], on: On, after: boolean): Promise<string[]> {
+  const files = replayFiles(after)
+  panelWorld(on, files, after ? REPLAY_AFTER : REPLAY_BEFORE)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 64 } })
+  for (const b of (await ui.findAll({ type: 'Button' })).filter(b => /^open-/.test(b.key ?? ''))) await ui.press({ key: b.key! })
+  const pic = (await draw((await ui.find({ type: 'Box' })) as never)).map(l => l.replace(/\s+$/, ''))
+  await ui.unmount()
+  const from = pic.findIndex(l => /RUNNING/.test(l))
+  const to = pic.findIndex((l, j) => j > from && /^(▸|▾) (DONE|LOCALHOST)/.test(l))
+  return pic.slice(from, to < 0 ? undefined : to).filter(l => l.trim())
+}
+
+test('replay 0.35.4 before: the files as the real panel had them (the writer fixes then remove the turn row)', async ($, on) => {
+  // 0.35.3 drew these files as: the prompt-titled row with "likely improves: quality", no backfill row (taken for a
+  // LOCALHOST server), and "Org similar.py  06:05 runni…". 0.35.4's panel already shows the backfill as a job and the
+  // remote row readable; the writer then removes the stale turn row (see session-owned.test.ts).
+  expect(await replayRender($, on, false)).toEqual([
+    '▾ RUNNING  3',
+    '  ◒ Run the news import migratio…  ┄┄┄┄┄┄┄┄┄┄      [x]',
+    '    ⎿ serving · 8m',
+    '  ◒ 1. keep it 2. push 3. merge …  ┄┄┄┄┄┄┄┄┄┄      [x]',
+    '    ⎿ Bash Commit the news-import merge and mark decision 12, 25 tool calls · 10m',
+    '  ◒ Org similar                    ┄┄┄┄┄┄┄┄┄┄       6m running',
+    '    ⎿ machine: box',
+  ])
+})
+
+test('replay 0.35.4 after: the files as 0.35.4 leaves them', async ($, on) => {
+  expect(await replayRender($, on, true)).toEqual([
+    '▾ RUNNING  2',
+    '  ◒ Run the news import migratio…  ┄┄┄┄┄┄┄┄┄┄      [x]',
+    '    ⎿ running in the background · 8m',
+    '  ◒ Weekly similar organizations   ┄┄┄┄┄┄┄┄┄┄       6m running',
+  ])
 })
