@@ -2,6 +2,10 @@
 
 Versions of the progress-bar plugin, newest first. Each line is the release commit. Full detail is in the git history.
 
+## 0.35.6
+
+- **Status script stays fast with any number of line files:** one `find` lists the fresh (under 2 min), non-empty line files instead of two processes per file, and once an hour line files older than a day and session state files older than a week are pruned. About 2,800 stale files had pushed the script past its 8 s limit.
+
 ## 0.35.5
 
 - **No more "likely improves":** the guessed cost, quality or speed lens is gone from running, waiting and finished rows and their opened cards. Named `gains` no longer show either, `progress_report` no longer takes them and done records no longer keep them. Old progress files, done records and goal files with `gains` or `lenses` still load, the fields ignored. The progress-reporting skill and docs no longer ask for `gains`.
