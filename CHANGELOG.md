@@ -2,6 +2,10 @@
 
 Versions of the progress-bar plugin, newest first. Each line is the release commit. Full detail is in the git history.
 
+## 0.35.7
+
+- **Stopped jobs leave the running list:** a background shell ended with TaskStop now ends its row. Before, only a completion notice did, so stopped dev servers stayed listed as running until the session ended.
+
 ## 0.35.6
 
 - **Status script stays fast with any number of line files:** one `find` lists the fresh (under 2 min), non-empty line files instead of two processes per file, and once an hour line files older than a day and session state files older than a week are pruned. About 2,800 stale files had pushed the script past its 8 s limit.
