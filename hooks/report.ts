@@ -297,6 +297,9 @@ export async function endShellsFor($: EngineInterface, done: ReadonlySet<string>
 export function endedTaskIds(text: string): string[] {
   const out: string[] = []
   for (const m of text.matchAll(/<task-id>([A-Za-z0-9_-]+)<\/task-id>(?:(?!<task-id>)[\s\S]){0,600}?<status>(completed|failed|killed|stopped|error)/gi)) out.push(m[1]!)
+  // A TaskStop ends a task with no task-notification: its call names the id, its result says "stopped task: <id>"
+  for (const m of text.matchAll(/"name":"TaskStop","input":\{[^}]*?"(?:task_id|shell_id)":"([\w-]+)"/g)) out.push(m[1]!)
+  for (const m of text.matchAll(/[Ss]uccessfully stopped task:? ([\w-]+)/g)) out.push(m[1]!)
   return out
 }
 
@@ -307,6 +310,7 @@ export function finishedTaskIds(text: string, ids: readonly string[]): Set<strin
     const re = new RegExp(`<task-id>${id.replace(/[^A-Za-z0-9_-]/g, '')}</task-id>[\\s\\S]{0,600}?<status>(completed|failed|killed|stopped|error)`, 'i')
     if (re.test(text)) out.add(id)
   }
+  for (const id of endedTaskIds(text)) if (ids.includes(id)) out.add(id)
   return out
 }
 
