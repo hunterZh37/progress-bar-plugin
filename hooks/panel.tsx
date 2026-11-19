@@ -668,6 +668,12 @@ export function maxReading(live: number | null, saved: { pct: number; at: number
   return { used: null, asOf: '', save: false }
 }
 
+/** False when the reading names an account and this login ("email · org" from claude auth status) is another one. */
+export function readingIsLogin(r: UsageReading, login: string): boolean {
+  const email = login.split(' · ')[0]?.trim() ?? ''
+  return !r.email || !email || r.email.toLowerCase() === email.toLowerCase()
+}
+
 /** The meter's name: the saved plan ("Team"), "Max" when the plan is not known. */
 export function meterLabel(plan?: string): string {
   return plan && /^[A-Za-z][A-Za-z0-9 ]{0,19}$/.test(plan) ? plan : 'Max'
@@ -1219,6 +1225,9 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const todos = await read($, todosAtom)
     const menuFor = await read($, menuAtom)
     const conns = await read($, connsAtom)
+    // A reading taken under another account than this session's login (its Connectors check) is not shown: the
+    // usage probe replaces it within minutes.
+    if (maxSaved && !readingIsLogin(maxSaved, conns.login)) maxSaved = null
     const chrome = await read($, chromeAtom)
     // Check account: submits a prompt that has Claude read the browser's Google account page.
     const checkBtn = (c: ChromeCheck | null | undefined, key: string) => c
@@ -1641,7 +1650,7 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
     const liveUsed = (sections.find(x => x.key === 'running')?.rows ?? []).map(runCard)
       .reduce<number | null>((a, c) => (c.maxUsed === null ? a : Math.max(a ?? 0, c.maxUsed)), null)
     const reading = maxReading(liveUsed, maxSaved, nowMs)
-    if (usageMeterOn() && reading.save && liveUsed !== null) void $.fs.write(maxFile, JSON.stringify({ pct: liveUsed, at: nowMs, ...(maxSaved?.plan ? { plan: maxSaved.plan } : {}) })).catch(() => undefined)
+    if (usageMeterOn() && reading.save && liveUsed !== null) void $.fs.write(maxFile, JSON.stringify({ pct: liveUsed, at: nowMs, ...(maxSaved?.plan ? { plan: maxSaved.plan } : {}), ...(maxSaved?.email !== undefined ? { email: maxSaved.email } : {}) })).catch(() => undefined)
     // The tab labels in words, then the usage meter: on the tab row's right end when it fits, else right-aligned on
     // its own line. The shown tab is bold cyan, the others dim. Short names when the full ones do not fit the pane.
     const labelsAt = (narrow: boolean) => [

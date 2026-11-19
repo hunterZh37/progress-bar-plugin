@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { CONN_CACHE_REL, connUrl, connName, connSummary, formatCache, parseAccounts, parseCache, parseLogin, parseMcpList } from '../hooks/connectors'
+import { CONN_ACCOUNTS_REL, CONN_CACHE_REL, connAccountsRel, connCacheRel, seedAccounts, connUrl, connName, connSummary, formatCache, parseAccounts, parseCache, parseLogin, parseMcpList } from '../hooks/connectors'
 import { CHECKPOINT_PY } from '../hooks/checkpoint'
 import { forgetLocalState } from '../hooks/chrome'
 import { closestFile, pairFile, serverOf } from '../hooks/render'
@@ -593,10 +593,10 @@ test('the sliding piece moves one cell a second and wraps', async () => {
 })
 
 /** A world for the panel: the status script answers `full`, files live in `files`. */
-function panelWorld(on: On, files: Record<string, string>, full = FULL, answer: (argv: string[]) => string | undefined = () => undefined) {
+function panelWorld(on: On, files: Record<string, string>, full = FULL, answer: (argv: string[]) => string | undefined = () => undefined, env: Record<string, string> = {}) {
   const ran: { argv: string[]; env?: Record<string, string>; stdin?: string }[] = []
   const clk = mock.clock(on, { now: NOW })
-  mock.env(on, { HOME })
+  mock.env(on, { HOME, ...env })
   on('command.register', () => ({ value: { command: 'progress-bar' } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('agent.list', () => ({ value: [] as never }))
@@ -1667,6 +1667,87 @@ test('loginKey gives each Claude login its own usage reading', () => {
   expect(loginKey('/Users/h/.claude-personal/', '/Users/h')).toBe('claude-personal')
   expect(usageFileRel('')).toBe('.claude-progress/.state/max-usage.json')
   expect(usageFileRel('claude-personal')).toBe('.claude-progress/.state/max-usage-claude-personal.json')
+})
+
+test('connectors per login: the default login keeps today\'s names, another gets its own', () => {
+  expect(connCacheRel('')).toBe(CONN_CACHE_REL)
+  expect(connCacheRel('')).toBe('.cache/progress-bar/connectors.txt')
+  expect(connAccountsRel('')).toBe(CONN_ACCOUNTS_REL)
+  expect(connAccountsRel('')).toBe('.claude-progress/connector-accounts.txt')
+  expect(connCacheRel('claude-personal')).toBe('.cache/progress-bar/connectors-claude-personal.txt')
+  expect(connAccountsRel('claude-personal')).toBe('.claude-progress/connector-accounts-claude-personal.txt')
+})
+
+const WORK_ACCOUNTS = [
+  '# Account each Claude connector runs under, shown in the Status panel. "name<TAB>account". Edit freely.',
+  '# The claude.ai connectors belong to the Claude login (claude auth status): me@work.test.',
+  'Gmail\tme@work.test',
+  'Claude Docs\tme@work.test · Acme',
+  'db\treader @ local Postgres',
+].join('\n') + '\n'
+
+test('seedAccounts: the Google and other lines stay, the Claude login lines name this login', () => {
+  const seed = seedAccounts(WORK_ACCOUNTS, 'me@home.test · Home Org')
+  expect(seed).toBe([
+    '# Account each Claude connector runs under, shown in the Status panel. "name<TAB>account". Edit freely.',
+    '# The claude.ai connectors belong to the Claude login (claude auth status): me@home.test.',
+    'Gmail\tme@work.test',
+    'Claude Docs\tme@home.test · Home Org',
+    'db\treader @ local Postgres',
+  ].join('\n') + '\n')
+  expect(seedAccounts('', 'me@home.test')).toContain('(claude auth status): me@home.test.')
+  expect(seedAccounts(WORK_ACCOUNTS, '')).toBe('')
+})
+
+test('a second login\'s session checks under its own config dir and never writes the default login\'s files', { options: { usageMeter: true } }, async ($, on) => {
+  const PDIR = `${HOME}/.claude-personal`
+  const HOME_AUTH = JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', email: 'me@home.test', orgName: 'Home Org', subscriptionType: 'max' })
+  const workCache = `Gmail\tok\n#login\tme@work.test · Acme\n#checked\t${Math.floor((NOW - 60_000) / 1000)}\n`
+  const workUsage = JSON.stringify({ pct: 52, at: NOW - 60_000, plan: 'Team', email: 'me@work.test' })
+  const files: Record<string, string> = {
+    [SCRIPT]: statusScript(), [FLAG]: 'on\n',
+    [`${HOME}/${CONN_CACHE_REL}`]: workCache, [`${HOME}/${CONN_ACCOUNTS_REL}`]: WORK_ACCOUNTS, [`${HOME}/${usageFileRel('')}`]: workUsage,
+  }
+  const { ran } = panelWorld(on, files, DONE_FULL, argv =>
+    argv[0] === 'claude' && argv[1] === 'mcp' ? MCP_LIST : argv[0] === 'claude' && argv[1] === 'auth' ? HOME_AUTH : undefined, { CLAUDE_CONFIG_DIR: PDIR })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 70 } })
+  await new Promise(r => setTimeout(r, 200))
+  // The default login's fresh cache is not this login's: this login has none yet, so it checks, as itself.
+  expect(ran).toContainEqual({ argv: ['claude', 'mcp', 'list'], env: { CLAUDE_CONFIG_DIR: PDIR }, stdin: undefined })
+  expect(files[`${HOME}/${connCacheRel('claude-personal')}`]).toContain('#login\tme@home.test · Home Org\n')
+  const seeded = files[`${HOME}/${connAccountsRel('claude-personal')}`]!
+  expect(seeded).toContain('Gmail\tme@work.test\n')
+  expect(seeded).toContain('Claude Docs\tme@home.test · Home Org\n')
+  // The default login's files are untouched.
+  expect(files[`${HOME}/${CONN_CACHE_REL}`]).toBe(workCache)
+  expect(files[`${HOME}/${CONN_ACCOUNTS_REL}`]).toBe(WORK_ACCOUNTS)
+  expect(files[`${HOME}/${usageFileRel('')}`]).toBe(workUsage)
+  // No Team meter from the default login's reading.
+  expect((await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')).not.toContain('Team ')
+  await ui.press({ key: 'tab-connectors' })
+  expect((await ui.find({ type: 'Text', text: /Claude:/ }))?.text).toBe('  Claude: me@home.test · Home Org')
+  await ui.unmount()
+})
+
+test('the default login reads its own cache, and hides a usage reading taken under another account', { options: { usageMeter: true } }, async ($, on) => {
+  const files: Record<string, string> = {
+    [SCRIPT]: statusScript(), [FLAG]: 'on\n',
+    [`${HOME}/${CONN_CACHE_REL}`]: `Gmail\tok\n#login\tme@home.test · Home Org\n#checked\t${Math.floor((NOW - 60_000) / 1000)}\n`,
+    [`${HOME}/${usageFileRel('')}`]: JSON.stringify({ pct: 52, at: NOW - 60_000, plan: 'Team', email: 'me@work.test' }),
+    [`${HOME}/${connCacheRel('claude-personal')}`]: `Canva\tok\n#checked\t${Math.floor((NOW - 60_000) / 1000)}\n`,
+  }
+  const { ran } = panelWorld(on, files, DONE_FULL)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 70 } })
+  expect(ran.some(r => r.argv[0] === 'claude' && r.argv[1] === 'mcp')).toBe(false)
+  expect((await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')).not.toContain('Team ')
+  await ui.press({ key: 'tab-connectors' })
+  expect((await ui.find({ type: 'Text', text: /CONNECTORS/ }))?.text).toBe('CONNECTORS  1 ok')
+  expect(await allText(ui)).toContain('Gmail')
+  expect(await allText(ui)).not.toContain('Canva')
+  expect(ran.some(r => r.env?.CLAUDE_CONFIG_DIR !== undefined)).toBe(false)
+  await ui.unmount()
 })
 
 test('Claude in Chrome: a /chrome switch and this Mac\'s accounts file update the panel without a Chrome call', async ($, on) => {

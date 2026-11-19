@@ -2,15 +2,24 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 
 import type { Conn, ConnKind } from '../types'
+import { sessionLogin } from './usage'
 
 // The CONNECTORS section of the Status panel: each MCP server's name and status (ok, needs sign-in, failed).
 // A refresh runs `claude mcp list` at most every 5 minutes, only while the panel is open, never two at once.
 // The URL or command part of each line is dropped at parse time: it is never kept, cached or drawn,
-// since it can hold credentials. Sessions share the result through ~/.cache/progress-bar/connectors.txt.
+// since it can hold credentials. Sessions of one Claude login share the result through ~/.cache/progress-bar/connectors.txt.
+// Each login (CLAUDE_CONFIG_DIR, see loginKey) has its own cache and accounts file: the default login keeps the plain
+// names, ~/.claude-personal gets connectors-claude-personal.txt and connector-accounts-claude-personal.txt. A session
+// reads and writes only its own login's files.
 
 export const CONN_CACHE_REL = '.cache/progress-bar/connectors.txt'
 const CONN_LOCK_REL = '.cache/progress-bar/connectors.lock'
 export const CONN_ACCOUNTS_REL = '.claude-progress/connector-accounts.txt'
+/** This login's files: today's names for the default login (key ''), a -<key> suffix for another. */
+export const connCacheRel = (key: string) => (key ? `.cache/progress-bar/connectors-${key}.txt` : CONN_CACHE_REL)
+export const connLockRel = (key: string) => (key ? `.cache/progress-bar/connectors-${key}.lock` : CONN_LOCK_REL)
+export const connAccountsRel = (key: string) => (key ? `.claude-progress/connector-accounts-${key}.txt` : CONN_ACCOUNTS_REL)
+type Login = { key: string; dir: string }
 export const CONN_EVERY = 5 * 60_000
 const LOCK_MS = 2 * 60_000
 
@@ -126,15 +135,45 @@ async function readText($: EngineInterface, path: string): Promise<string> {
   try { return String(await $.fs.read(path)) } catch { return '' }
 }
 
-/** Reads the shared cache and the accounts file into the atom. Returns the last check time. */
-export async function readConns($: EngineInterface, h: string): Promise<number> {
-  const { at, login, list } = parseCache(await readText($, `${h}/${CONN_CACHE_REL}`))
-  const accounts = parseAccounts(await readText($, `${h}/${CONN_ACCOUNTS_REL}`))
-  const urls = parseUrls(await readText($, `${h}/${CONN_ACCOUNTS_REL}`))
+/**
+ * A first accounts file for another login, from the default login's: the comments and every connector line are kept
+ * (Gmail and the others sign in to their own accounts), except that the Claude login's own lines (Claude Docs and the
+ * comment naming the Claude login) name this login ("email · org" from its claude auth status). '' when no login.
+ */
+export function seedAccounts(defaultText: string, login: string): string {
+  if (!login) return ''
+  const email = login.split(' · ')[0]!.trim()
+  const out: string[] = []
+  let noted = false
+  for (const l of defaultText.split('\n')) {
+    const t = l.trim()
+    if (t.startsWith('#') && /claude login/i.test(t)) { out.push(`# The claude.ai connectors belong to the Claude login (claude auth status): ${email}.`); noted = true; continue }
+    const [name = '', , url] = l.split('\t')
+    if (!t.startsWith('#') && /^claude\b/i.test(connName(name) || name.trim())) { out.push([name, login, ...(url ? [url] : [])].join('\t')); continue }
+    out.push(l)
+  }
+  while (out.length && !out[out.length - 1]!.trim()) out.pop()
+  if (!noted) out.unshift(`# The claude.ai connectors belong to the Claude login (claude auth status): ${email}.`)
+  if (!out.some(l => l.trim().startsWith('#') && /name<TAB>account|edit freely/i.test(l))) out.unshift('# Account each Claude connector runs under, shown in the Status panel. "name<TAB>account". Edit freely.')
+  return out.join('\n') + '\n'
+}
+
+async function loginOf($: EngineInterface, h: string, login?: Login): Promise<Login> {
+  if (login) return login
+  try { return await sessionLogin($, h) } catch { return { key: '', dir: '' } }
+}
+
+/** Reads this login's cache and accounts file into the atom. Returns the last check time. */
+export async function readConns($: EngineInterface, h: string, login?: Login): Promise<number> {
+  const { key } = await loginOf($, h, login)
+  const { at, login: who, list } = parseCache(await readText($, `${h}/${connCacheRel(key)}`))
+  const accText = await readText($, `${h}/${connAccountsRel(key)}`)
+  const accounts = parseAccounts(accText)
+  const urls = parseUrls(accText)
   const withAcc = list.map(c => ({ ...c, account: accounts.get(c.name) ?? '', url: connUrl(c.name, accounts.get(c.name) ?? '', urls.get(c.name) ?? '') }))
   const prev = await read($, connsAtom)
-  if (prev.at !== at || prev.login !== login || JSON.stringify(prev.list) !== JSON.stringify(withAcc)) {
-    await update($, connsAtom, c => ({ ...c, at, login, list: withAcc }))
+  if (prev.at !== at || prev.login !== who || JSON.stringify(prev.list) !== JSON.stringify(withAcc)) {
+    await update($, connsAtom, c => ({ ...c, at, login: who, list: withAcc }))
   }
   return at
 }
@@ -147,13 +186,18 @@ export async function resetConns($: EngineInterface) {
   await update($, connsAtom, c => ({ ...c, checking: false }))
 }
 
-/** Refreshes when the cache is older than 5 minutes (or `force`), unless a check is already running here or in another session. */
-export async function refreshConns($: EngineInterface, h: string, force = false) {
+/**
+ * Refreshes when this login's cache is older than 5 minutes (or `force`), unless a check is already running here or in
+ * another session of the same login. claude runs under this session's CLAUDE_CONFIG_DIR, so the list and the login line
+ * are this login's.
+ */
+export async function refreshConns($: EngineInterface, h: string, force = false, login?: Login) {
   if (!h || running) return
-  const at = await readConns($, h)
+  const me = await loginOf($, h, login)
+  const at = await readConns($, h, me)
   const now = await $.clock.now()
   if (!force && now - at < CONN_EVERY) return
-  const lock = `${h}/${CONN_LOCK_REL}`
+  const lock = `${h}/${connLockRel(me.key)}`
   const lockAt = Number((await readText($, lock)).trim()) * 1000 || 0
   if (now - lockAt < LOCK_MS) return
   running = true
@@ -161,20 +205,26 @@ export async function refreshConns($: EngineInterface, h: string, force = false)
   try {
     await update($, connsAtom, c => ({ ...c, checking: true }))
     await $.fs.write(lock, `${Math.floor(now / 1000)}\n`)
-    const opts = { cwd: h, timeoutMs: 90_000 }
+    const opts = { cwd: h, timeoutMs: 90_000, ...(me.dir ? { env: { CLAUDE_CONFIG_DIR: me.dir } } : {}) }
     const mcp = await $.process.run(['claude', 'mcp', 'list'], opts)
     const list = parseMcpList(mcp.stdout)
-    let login = ''
-    try { login = parseLogin((await $.process.run(['claude', 'auth', 'status', '--json'], opts)).stdout) } catch { login = '' }
+    let who = ''
+    try { who = parseLogin((await $.process.run(['claude', 'auth', 'status', '--json'], opts)).stdout) } catch { who = '' }
     if (list.length || mcp.exitCode === 0) {
-      await $.fs.write(`${h}/${CONN_CACHE_REL}`, formatCache(list, login, await $.clock.now()))
+      await $.fs.write(`${h}/${connCacheRel(me.key)}`, formatCache(list, who, await $.clock.now()))
       saved = true
+    }
+    // Another login's first check: its accounts file starts as a copy of the default one, with its own Claude login.
+    const accFile = `${h}/${connAccountsRel(me.key)}`
+    if (me.key && who && !(await $.fs.exists(accFile).catch(() => true))) {
+      const seed = seedAccounts(await readText($, `${h}/${CONN_ACCOUNTS_REL}`), who)
+      if (seed) await $.fs.write(accFile, seed)
     }
   } catch { /* keep the old list */ } finally { running = false }
   // After a failed check the lock stays, so the next try waits LOCK_MS instead of running every second.
   if (saved) await $.process.run(['rm', '-f', lock]).catch(() => undefined)
   await update($, connsAtom, c => ({ ...c, checking: false }))
-  await readConns($, h)
+  await readConns($, h, me)
 }
 
 /** "7 ok · 2 need sign-in · 1 failed" */

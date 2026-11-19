@@ -1,7 +1,8 @@
 // The usage meter's own reading. Off by default: it runs only when the person turns on usageMeter in /config. Then
-// every 30 minutes one session on the machine asks Claude for the login's 7-day and 5-hour use: a tiny Haiku call whose stream carries a rate_limit_event, run on the default login with no API key, no
+// every 30 minutes one session per login asks Claude for the login's 7-day and 5-hour use: a tiny Haiku call whose stream carries a rate_limit_event, run on the default login with no API key, no
 // tools, no MCP, no settings and no saved session. The result goes to .state/max-usage.json, the file the panel reads.
-// Any failure (offline, not logged in, an API key in use) keeps the old reading and says nothing.
+// Any failure (offline, not logged in, an API key in use) keeps the old reading and says nothing. A /login to another
+// account (claude auth status shows another email than the reading's) takes a new reading at once.
 import type { EngineInterface } from 'claude-code'
 
 export const USAGE_EVERY = 30 * 60_000 // a reading older than this is refreshed
@@ -23,17 +24,17 @@ export function loginKey(configDir: string, home: string): string {
 export const usageFileRel = (key: string) => (key ? `.claude-progress/.state/max-usage-${key}.json` : USAGE_FILE_REL)
 export const usageLockRel = (key: string) => (key ? `.claude-progress/.state/max-usage-${key}.probe` : USAGE_LOCK_REL)
 
-let loginCache: { key: string; dir: string } | null = null
-/** This session's CLAUDE_CONFIG_DIR (from the process environment), cached. */
+/** This session's login: CLAUDE_CONFIG_DIR from the session's own environment, the dir only when it is not the default. */
 export async function sessionLogin($: EngineInterface, home: string): Promise<{ key: string; dir: string }> {
-  if (loginCache) return loginCache
   let dir = ''
-  try { dir = String((await $.process.run(['/bin/sh', '-c', 'printf %s "$CLAUDE_CONFIG_DIR"'], { timeoutMs: 5000 })).stdout ?? '').trim() } catch { dir = '' }
-  loginCache = { key: loginKey(dir, home), dir: loginKey(dir, home) ? dir : '' }
-  return loginCache
+  try { dir = String((await $.env.get('CLAUDE_CONFIG_DIR')) ?? '').trim() } catch { dir = '' }
+  const key = loginKey(dir, home)
+  return { key, dir: key ? dir : '' }
 }
 
-export type UsageReading = { pct: number; at: number; five?: number; plan?: string }
+// email: the login (claude auth status) the reading was taken under. A different email now means another account
+// logged in since, so the reading is stale whatever its age.
+export type UsageReading = { pct: number; at: number; five?: number; plan?: string; email?: string }
 
 // One shell: a fresh empty folder, the session's login ($2 = its CLAUDE_CONFIG_DIR, empty for the default ~/.claude),
 // no API key, and a guard so a probe never starts another probe. "auth" prints the plan (claude auth status has no
@@ -70,14 +71,15 @@ export function parseProbe(stdout: string): { seven: number; five: number | null
   return seven === null ? null : { seven, five: pct(win.five_hour?.utilization) }
 }
 
-/** "Team", "Max", "Pro", "Enterprise" from claude auth status --json, else ''. */
-export function parsePlan(stdout: string): { loggedIn: boolean; plan: string } {
+/** "Team", "Max", "Pro", "Enterprise" from claude auth status --json, else '', and the login's email ('' when unknown). */
+export function parsePlan(stdout: string): { loggedIn: boolean; plan: string; email: string } {
   try {
-    const j = JSON.parse(stdout) as { loggedIn?: unknown; subscriptionType?: unknown }
+    const j = JSON.parse(stdout) as { loggedIn?: unknown; subscriptionType?: unknown; email?: unknown }
     const t = typeof j.subscriptionType === 'string' ? j.subscriptionType.trim().toLowerCase() : ''
     const plan = /^[a-z][a-z0-9_ -]{0,19}$/.test(t) ? t.split(/[_ -]+/).map(w => w[0]!.toUpperCase() + w.slice(1)).join(' ') : ''
-    return { loggedIn: j.loggedIn !== false, plan }
-  } catch { return { loggedIn: true, plan: '' } }
+    const e = typeof j.email === 'string' ? j.email.trim() : ''
+    return { loggedIn: j.loggedIn !== false, plan, email: /^[^\s@]{1,64}@[^\s@]{1,190}$/.test(e) ? e : '' }
+  } catch { return { loggedIn: true, plan: '', email: '' } }
 }
 
 /** The saved reading, or null. */
@@ -92,6 +94,17 @@ export function parseSaved(text: string): UsageReading | null {
 export function probeDue(saved: UsageReading | null, lockAt: number | null, now: number): boolean {
   if (saved && now - saved.at < USAGE_EVERY) return false
   return lockAt === null || now - lockAt >= USAGE_EVERY
+}
+
+/** A probe started this recently is still running: a login change waits for it instead of starting another. */
+export const LOGIN_LOCK_MS = 3 * 60_000
+
+/**
+ * True when the saved reading belongs to another account than the one logged in now: its email differs, or it has
+ * none (taken before readings kept one). Unknown either side of a logged-in email never counts as a change.
+ */
+export function loginChanged(saved: UsageReading | null, email: string): boolean {
+  return !!saved && !!email && saved.email !== email
 }
 
 /** What a probe needs from the machine, so tests can stand in for it. */
@@ -128,6 +141,9 @@ export async function probeUsage($: EngineInterface, h: string): Promise<boolean
   return probeWith(engineIo($), h, login)
 }
 
+/** The login record a /login rewrites: ~/.claude.json for the default login, <dir>/.claude.json for another. Only its time is read. */
+export const loginRecord = (h: string, dir: string) => (dir ? `${dir.replace(/\/+$/, '')}/.claude.json` : `${h}/.claude.json`)
+
 export async function probeWith(io: ProbeIo, h: string, login: { key: string; dir: string } = { key: '', dir: '' }): Promise<boolean> {
   if (!h || probing) return false
   probing = true
@@ -139,19 +155,40 @@ export async function probeWith(io: ProbeIo, h: string, login: { key: string; di
     try { saved = parseSaved(await io.read(file)) } catch { saved = null }
     let lockAt: number | null = null
     try { lockAt = await io.mtime(lock) } catch { lockAt = null }
-    if (!probeDue(saved, lockAt, t)) return false
+    const run = (what: string) => io.run(['/bin/sh', '-c', PROBE_SCRIPT, 'sh', what, login.dir], 90_000).catch(() => ({ stdout: '' }))
+    let auth: ReturnType<typeof parsePlan> | null = null
+    let changed = false
+    if (!probeDue(saved, lockAt, t)) {
+      // A fresh reading: still another account's when a /login happened since. Ask claude auth status only when
+      // the login record changed after the reading, or the reading predates kept emails.
+      // A stale reading another session is probing for: that probe brings this login's reading.
+      if (!saved || t - saved.at >= USAGE_EVERY) return false
+      let recAt = 0
+      try { recAt = await io.mtime(loginRecord(h, login.dir)) } catch { recAt = 0 }
+      if (saved.email !== undefined && recAt <= saved.at) return false
+      auth = parsePlan((await run('auth')).stdout)
+      changed = auth.loggedIn ? loginChanged(saved, auth.email) : true
+      if (!changed) {
+        if (saved.email === undefined) await io.write(file, JSON.stringify({ ...saved, email: auth.email }))
+        return false
+      }
+      if (lockAt !== null && t - lockAt < LOGIN_LOCK_MS) return false
+    }
     // mkdir is the claim: a stale lock is removed and claimed again, and only one session wins the mkdir.
     if (lockAt !== null) await io.run(['rmdir', lock], 5000).catch(() => undefined)
     await io.run(['mkdir', '-p', `${h}/.claude-progress/.state`], 5000).catch(() => undefined)
     const claim = await io.run(['mkdir', lock], 5000).catch(() => ({ exitCode: 1 }))
     if (claim.exitCode !== 0) return false
-    const run = (what: string) => io.run(['/bin/sh', '-c', PROBE_SCRIPT, 'sh', what, login.dir], 90_000).catch(() => ({ stdout: '' }))
-    const auth = parsePlan((await run('auth')).stdout)
-    if (!auth.loggedIn) return false
+    // The other account's reading goes as soon as the change is seen, so it never shows under this login.
+    const drop = async () => { if (changed) await io.run(['rm', '-f', file], 5000).catch(() => undefined) }
+    auth ??= parsePlan((await run('auth')).stdout)
+    if (!auth.loggedIn) { await drop(); return false }
+    if (!changed) changed = loginChanged(saved, auth.email)
     const r = parseProbe((await run('probe')).stdout)
-    if (!r) return false
-    const plan = auth.plan || saved?.plan
-    const next: UsageReading = { pct: r.seven, at: await io.now(), ...(r.five !== null ? { five: r.five } : {}), ...(plan ? { plan } : {}) }
+    if (!r) { await drop(); return false }
+    // The plan is this login's own: an old reading's plan is kept only for the same account.
+    const plan = auth.plan || (changed ? '' : saved?.plan)
+    const next: UsageReading = { pct: r.seven, at: await io.now(), ...(r.five !== null ? { five: r.five } : {}), ...(plan ? { plan } : {}), email: auth.email }
     await io.write(file, JSON.stringify(next))
     return true
   } catch { return false } finally { probing = false }

@@ -125,7 +125,7 @@ Set these in `/config`, under progress-bar.
 | **Progress status line** (`statusLine`) | on | Shows the bars in the status line. Off leaves your status line alone |
 | **Open the Status panel** (`openPanel`) | on | Opens the panel at session start. Off keeps it closed until `/progress-bar` |
 | **Report work automatically** (`autoReport`) | on | Tells Claude once per conversation to report multi-step work, and shows a long busy turn as a row. Off, rows come only from task lists, long commands, subagents and `progress_report` calls |
-| **Usage meter** (`usageMeter`) | off | Shows your plan's 7-day usage in the panel. On, one session per machine runs a tiny `claude -p` Haiku call every 30 minutes on your login to read it |
+| **Usage meter** (`usageMeter`) | off | Shows your plan's 7-day usage in the panel. On, one session per login runs a tiny `claude -p` Haiku call every 30 minutes on that login to read it |
 | **Hide account emails** (`hideEmails`) | off | Masks account emails in the panel and the Chrome part, such as `j•••@example.com`, for screen sharing |
 | **Group chat** (`groupChat`) | off | Gives your sessions `chat_read` and `chat_say` for the agent daemon's group chat. The collaborator's new lines ride on your own next prompt as quoted data, never as instructions |
 | **Agent link** (`agentLink`) | off | Lets the plugin set up the agent daemon once a secure channel exists. It installs and starts a background service. Off, the plugin never does |
@@ -142,6 +142,14 @@ Set these in `/config`, under progress-bar.
 | `INBOX_ACCOUNT` | The Gmail address for the example inbox checker |
 | `HERDR_PLUGIN_ID`, `HERDR_PLUGIN_STATE_DIR` | Set by herdr for the herdr pane |
 
+### Two Claude logins
+
+Sessions started with `CLAUDE_CONFIG_DIR` (e.g. `~/.claude-personal`) keep their account data apart from the default `~/.claude` login.
+
+- **Per login:** the usage meter (plan and percent), the Connectors list, the Claude login line and the accounts file. The default login keeps the plain file names, another gets `-<login>` (e.g. `connectors-claude-personal.txt`).
+- **Shared:** to-dos, decisions, goals, job and agent bars, and the Chrome line. Both logins work on the same projects, so both see them.
+- **Login change:** a `/login` to another account takes a new usage reading at once instead of showing the old account's.
+
 ### Files you can edit
 
 All under `~/.claude-progress/`. None is needed. Each is read only when it exists.
@@ -155,7 +163,7 @@ All under `~/.claude-progress/`. None is needed. Each is read only when it exist
 | `links.txt` | Where a job name links to |
 | `log-dirs.txt` | Log folders the Log tab scans for errors |
 | `repos.txt` | More repos for the GitHub tab |
-| `connector-accounts.txt` | Which account each connector uses |
+| `connector-accounts.txt` | Which account each connector uses. A second login (`CLAUDE_CONFIG_DIR`) has its own `connector-accounts-<login>.txt` |
 | `chrome-local-accounts.txt` | This Mac's Google accounts, for the Chrome warning |
 | `localhost-ignore.txt` | Processes or ports to leave out of LOCALHOST |
 | `.state/caps` | `machine=N` lines: how many jobs auto-next runs at once per machine. Default `local=3` |
@@ -169,7 +177,7 @@ Everything stays on your machine unless you turn on a feature that says otherwis
 - **Local files only:** the plugin reads and writes under `~/.claude-progress/`, `~/.claude/progress-bar/` and `~/.cache/progress-bar/`, plus log folders you list.
 - **Read only:** Chrome's `Local State` file (profile emails), and the session transcript's latest lines for `/chrome` switches.
 - **No network of its own,** with these exceptions:
-  - **Usage meter (off by default):** when you turn it on, one session per machine runs `claude -p --model haiku` every 30 minutes (at most 48 calls a day) on your default login, with no tools, no MCP and no settings. It counts toward your plan's usage, about 3.5k tokens a call. API keys are unset for the call.
+  - **Usage meter (off by default):** when you turn it on, one session per login runs `claude -p --model haiku` every 30 minutes (at most 48 calls a day per login) on that session's login, with no tools, no MCP and no settings. It counts toward your plan's usage, about 3.5k tokens a call. API keys are unset for the call.
   - **Connectors tab:** while the panel is open, it runs `claude mcp list` (which contacts your connectors) and `claude auth status`, at most every 5 minutes. Only names, status, email and org are kept.
   - **Secure channel:** once you open one, it talks to GitHub through your own `gh` and `git` and stores only ciphertext there.
   - **Inbox checker:** runs only when you schedule it, through your own Gmail connector.
