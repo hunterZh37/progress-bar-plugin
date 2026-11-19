@@ -2,6 +2,11 @@
 
 Versions of the progress-bar plugin, newest first. Each line is the release commit. Full detail is in the git history.
 
+## 0.35.8
+
+- **Each Claude login keeps its own account data:** a session started with `CLAUDE_CONFIG_DIR` (e.g. `~/.claude-personal`) now has its own Connectors cache and accounts file (`connectors-claude-personal.txt`, `connector-accounts-claude-personal.txt`), and runs its check under that login. It never writes the default login's files, and the default login keeps today's names. A new login's accounts file starts from the default one with its own Claude login line. To-dos, decisions and job bars stay shared.
+- **Usage meter follows a /login:** each reading keeps the email it was taken under. When `claude auth status` shows another email, the reading is taken again at once, so a Team reading no longer shows under a Max login. The panel hides a reading from another account meanwhile.
+
 ## 0.35.7
 
 - **Stopped jobs leave the running list:** a background shell ended with TaskStop now ends its row. Before, only a completion notice did, so stopped dev servers stayed listed as running until the session ended.
