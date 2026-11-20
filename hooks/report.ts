@@ -254,7 +254,9 @@ export async function startShell($: EngineInterface, h: string, description: str
   // A background shell keeps its command and task id, so the panel's [x] can stop or pause exactly that shell.
   const startedAt = await $.clock.now()
   const title = description || command.slice(0, 60)
-  const body = JSON.stringify({ ...reportBody({ title, step }, owner, startedAt), ...(taskId ? { command, taskId } : {}) })
+  // A foreground command keeps its command as `fg` (not `command`: the panel's stop acts on background shells only), so
+  // the ghost sweep (sweep.ts) can still tell whether it runs.
+  const body = JSON.stringify({ ...reportBody({ title, step }, owner, startedAt), ...(taskId ? { command, taskId } : command ? { fg: command } : {}) })
   liveShells.set(path, { body, taskId, title, startedAt })
   await $.fs.write(path, body).catch(() => undefined)
   return path

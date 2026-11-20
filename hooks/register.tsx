@@ -30,6 +30,7 @@ import { impactLines, parseDone, reportOf, saveDone, summarize, DONE_REL } from 
 import { aliveTasks, bgLaunch, bgSegs, idleSegs, newScan, phaseOf, reportedBy, scanMore, scanResult, snapOf, toolWhat, waitSegs, watchedJob } from './waiting'
 import { PS_ARGVS, addLife, agentOf, aliveRel, jobName, lifeFilesOf, livePidsIn, parseProcs, pickTxBase, pidLife, pidsOf, quietUntilOf, stepQuietUntil, taskProc, type Life, type Proc } from './alive'
 import type { BgSnap, BgTask, Job, ScanAcc, TxScan } from './waiting'
+import { SESSION_LIVE_MS, SWEEP_EVERY_MS, STALE_FILE_MS, archivePath, forkLinesRel, forkParentOf, parseShellFile, shellProc, shellVerdict, staleProgress, treeOf } from './sweep'
 
 const WATCH = '.watch.json'
 // Data files in ~/.claude-progress that are never jobs.
@@ -486,7 +487,8 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
     }
     if (f.kind !== 'file' || !f.name.endsWith('.json')) continue
     const name = f.name.slice(0, -5)
-    if (used.has(name) || now - f.mtimeMs > FILE_FRESH_MS) continue
+    // A shell file whose process still runs stays however long ago its file was written (its session may be gone).
+    if (used.has(name) || (now - f.mtimeMs > FILE_FRESH_MS && !liveShellFiles.has(`${dir}/${f.name}`))) continue
     let text = ''
     try { text = String(await $.fs.read(`${dir}/${f.name}`)) } catch { continue }
     const p = parseProgress(text)
@@ -505,9 +507,29 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
       }
       continue
     }
-    // A file paired with one of this session's agents is this session's, with or without its own `session`.
+    // The agent the file names (progress_report records it), when this session's engine lists it.
+    const ag = agentOf(raw)
+    const agState = ag ? agents.find(a => a.id === ag)?.status : undefined
+    // Its agent finished (or handed its report back) and nothing else of it lives: the job is over, not stuck. It goes
+    // to DONE once and its file to the archive. A file whose pid, heartbeat or quiet window still lives stays.
+    if (ag && !name.startsWith('shell-') && ((agState && !LIVE.has(agState)) || handedBack.has(ag) || seen.get(ag)?.lastTool === 'SubagentHandback')) {
+      const pids = pidsOf(raw)
+      const procs = pids.length ? await procsNow($, now) : null
+      const pidsLive = pids.length > 0 && (!procs || livePidsIn(pids, procs, f.mtimeMs, now).size > 0)
+      let beat = 0
+      for (const lf of lifeFilesOf(raw)) { try { beat = Math.max(beat, (await $.fs.stat(expandHome(lf, h))).mtimeMs) } catch { /* none */ } }
+      if (!pidsLive && !((quietUntilOf(raw) ?? 0) > now) && !(beat > f.mtimeMs && now - beat < 60_000)) {
+        const row: Row = { id: `file:${name}`, description: name, status: 'running', startedAt: p.startedAt ?? 0, tools: 0, lastTool: '', done: p.done, total: p.total, step: p.step }
+        const k = `${name}@agent-ended@${ag}`
+        if (!recordedAt.has(k)) { recordedAt.add(k); await recordJob($, h, name, { row, raw: raw as Record<string, unknown> }, now).catch(() => undefined) }
+        await archive($, dir, 'jobs', f.name, now)
+        continue
+      }
+    }
+    // A file paired with one of this session's agents is this session's, with or without its own `session`, and so is
+    // one naming a live agent of this session: an agent resumed across a restart keeps the old session id in its file.
     const owner0 = pickOwner(raw)
-    const owner = !owner0.session && stamped.has(name) ? { ...owner0, session: key } : owner0
+    const owner = (!owner0.session && stamped.has(name)) || (agState && LIVE.has(agState)) ? { ...owner0, session: key } : owner0
     if (owner.cwd && !projects.has(owner.cwd)) projects.set(owner.cwd, await projectOfCwd($, h, owner.cwd, projectsText))
     const route = routeOf(owner, { key, project }, live, c => projects.get(c) ?? '')
     if (route === 'skip') continue
@@ -517,7 +539,7 @@ async function collect($: EngineInterface): Promise<{ rows: Row[]; now: number; 
     // A shell row's file is rewritten by this plugin every poll, so its write says nothing. It is alive while this
     // copy runs it and has read the session's checked transcript lately without finding its finished notice.
     if (name.startsWith('shell-')) {
-      if (liveShells.has(`${dir}/${f.name}`) && now - txReadAt < SHELL_TRUST_MS) row.life = { at: now }
+      if ((liveShells.has(`${dir}/${f.name}`) && now - txReadAt < SHELL_TRUST_MS) || liveShellFiles.has(`${dir}/${f.name}`)) row.life = { at: now }
     } else {
       const l = await fileLife($, h, `${dir}/${f.name}`, raw, f.mtimeMs)
       if (l.at || l.until) row.life = l
@@ -781,8 +803,34 @@ async function endFinishedShells($: EngineInterface) {
   txReadAt = now
   const done = new Set(ids.filter(id => mainEnded.has(id)))
   if (!done.size) return
+  // A task whose shell is gone but whose work goes on (an orphaned child, seen by its pid): its row stays until the
+  // process ends, which the ghost sweep sees (sweep.ts). A live job is never hidden.
+  for (const id of await orphanBacked($, now, done)) done.delete(id)
+  if (!done.size) return
   await endShellsFor($, done)
   for (const [path, id] of orphans) if (done.has(id)) await $.process.run(['rm', '-f', path]).catch(() => undefined)
+}
+
+/**
+ * Of the given task ids, those whose shell is over but whose work goes on: a pid the ghost sweep recorded for it (its
+ * command's process, a child) is still alive, orphaned to pid 1 when its shell was killed. Their rows stay until the
+ * process ends, which the sweep sees (sweep.ts). A live job is never hidden.
+ */
+async function orphanBacked($: EngineInterface, now: number, ids: ReadonlySet<string>): Promise<string[]> {
+  const over = [...liveShells].filter(([, s]) => s.taskId && ids.has(s.taskId))
+  if (!over.length) return []
+  procsDone = false
+  const procs = await procsNow($, now)
+  // No process list: the task's own notice stands (it is over as far as anything can tell).
+  if (!procs) return []
+  const out: string[] = []
+  for (const [path, s] of over) {
+    let sf
+    try { sf = parseShellFile(JSON.parse(s.body)) } catch { continue }
+    // A pid recorded for it, or a process running its command (an orphaned child whose shell was killed).
+    if (livePidsIn(sf.pids, procs, now, now).size || shellProc(sf, procs, now, now)) { out.push(s.taskId!); liveShellFiles.add(path) }
+  }
+  return out
 }
 
 /** The session's transcript: from the last Stop, else its folder under this login's config dir. */
@@ -818,9 +866,110 @@ async function sweepTurnRows($: EngineInterface) {
   for (const path of orphanTurnRows(found, dir, sid, turn.shown ? turn.path : '')) await $.process.run(['rm', '-f', path]).catch(() => undefined)
 }
 
+// Ghost rows (sweep.ts): every shell file checked against the process list, every SWEEP_EVERY_MS.
+let sweptAt = 0
+// Shell files a process of which ran at the last sweep (their rows are alive, whoever started them).
+const liveShellFiles = new Set<string>()
+
+/** Keys of the open sessions: those whose claims file was written lately, and this one. */
+async function openSessions($: EngineInterface, dir: string, now: number): Promise<Set<string>> {
+  const out = new Set<string>([await sessionKeyOf($)])
+  try {
+    for (const f of await $.fs.list(`${dir}/.state`)) {
+      if (f.kind === 'file' && f.name.startsWith('claims-') && f.name.endsWith('.txt') && now - f.mtimeMs < SESSION_LIVE_MS) out.add(f.name.slice(7, -4))
+    }
+  } catch { /* none */ }
+  return out
+}
+
+/** Moves a swept file to the archive (never deletes it). */
+async function archive($: EngineInterface, dir: string, kind: 'shells' | 'jobs', name: string, now: number) {
+  const to = archivePath(dir, kind, name, now)
+  await $.process.run(['mkdir', '-p', to.slice(0, to.lastIndexOf('/'))], { timeoutMs: 3000 }).catch(() => undefined)
+  await $.process.run(['mv', '-f', `${dir}/${name}`, to], { timeoutMs: 3000 }).catch(() => undefined)
+}
+
+/**
+ * Ends or archives shell rows whose process is gone and progress files whose owner is gone (sweep.ts), so no row stays
+ * running without a live backing. A shell row with a live process is kept whoever owns it.
+ */
+async function sweepGhosts($: EngineInterface) {
+  const now = await $.clock.now()
+  if (now - sweptAt < SWEEP_EVERY_MS) return
+  sweptAt = now
+  const h = await resolveHome($)
+  if (!h) return
+  const dir = dirOf(h)
+  const me = await sessionKeyOf($)
+  let files: Awaited<ReturnType<typeof $.fs.list>> = []
+  try { files = await $.fs.list(dir) } catch { return }
+  const shells = files.filter(f => f.kind === 'file' && f.name.startsWith('shell-') && f.name.endsWith('.json'))
+  const old = files.filter(f => f.kind === 'file' && !f.name.startsWith('shell-') && f.name.endsWith('.json') && !f.name.endsWith(WATCH) && !DATA_FILES.has(f.name.slice(0, -5)) && now - f.mtimeMs > STALE_FILE_MS)
+  if (!shells.length && !old.length) { liveShellFiles.clear(); return }
+  procsDone = false
+  const procs = await procsNow($, now)
+  const open = await openSessions($, dir, now)
+  const live = new Set<string>()
+  for (const f of shells) {
+    const path = `${dir}/${f.name}`
+    let raw: unknown
+    try { raw = JSON.parse(String(await $.fs.read(path))) } catch { continue }
+    const sf = parseShellFile(raw)
+    const mine = liveShells.has(path)
+    const v = shellVerdict(sf, { mine, ownerKey: sf.session ? keyOf(sf.session) : '', me, openSessions: open, procs, writtenAt: f.mtimeMs, now })
+    if (v === 'live') {
+      live.add(path)
+      // Keep the pids it runs as, so an orphaned child still counts after its shell is gone.
+      const s = liveShells.get(path)
+      const p = procs ? shellProc(sf, procs, f.mtimeMs, now) : null
+      if (s && p) {
+        const pids = treeOf(p.pid, procs!)
+        try {
+          const body = JSON.parse(s.body) as Record<string, unknown>
+          if (JSON.stringify(body.pids) !== JSON.stringify(pids)) { s.body = JSON.stringify({ ...body, pids }); await $.fs.write(path, s.body).catch(() => undefined) }
+        } catch { /* keep the old body */ }
+      }
+    } else if (v === 'end') await endShell($, path)
+    else if (v === 'archive') { liveShells.delete(path); await archive($, dir, 'shells', f.name, now) }
+  }
+  liveShellFiles.clear()
+  for (const p of live) liveShellFiles.add(p)
+  for (const f of old) {
+    let raw: unknown
+    try { raw = JSON.parse(String(await $.fs.read(`${dir}/${f.name}`))) } catch { continue }
+    const p = parseProgress(JSON.stringify(raw))
+    if (!p || (p.done === null && !p.step)) continue
+    const owner = pickOwner(raw)
+    let lifeAt = 0
+    for (const lf of lifeFilesOf(raw)) { try { lifeAt = Math.max(lifeAt, (await $.fs.stat(expandHome(lf, h))).mtimeMs) } catch { /* none */ } }
+    const pids = pidsOf(raw)
+    const livePids = pids.length && procs ? livePidsIn(pids, procs, f.mtimeMs, now).size : pids.length ? 1 : 0
+    if (staleProgress({ ownerKey: owner.session ? keyOf(owner.session) : '', me, openSessions: open, writtenAt: f.mtimeMs, lifeAt, until: quietUntilOf(raw) ?? 0, livePids, now })) await archive($, dir, 'jobs', f.name, now)
+  }
+}
+
+// The session this one is a background fork of (sweep.ts forkParentOf): '' none, null not looked up yet.
+let forkParent: string | null = null
+async function forkParentKey($: EngineInterface, h: string): Promise<string> {
+  if (forkParent !== null) return forkParent
+  forkParent = ''
+  try {
+    const pid = (await $.process.run(['/bin/sh', '-c', 'echo $PPID'], { timeoutMs: 3000 })).stdout.trim()
+    if (!/^\d+$/.test(pid)) return forkParent
+    const { dir } = await sessionLogin($, h)
+    let kind = ''
+    try { kind = String((JSON.parse(String(await $.fs.read(`${dir || `${h}/.claude`}/sessions/${pid}.json`))) as { kind?: unknown }).kind ?? '') } catch { kind = '' }
+    if (kind !== 'bg') return forkParent
+    const cmd = (await $.process.run(['ps', '-ww', '-o', 'command=', '-p', pid], { timeoutMs: 3000 })).stdout
+    forkParent = forkParentOf(cmd, kind, keyOf)
+  } catch { forkParent = '' }
+  return forkParent
+}
+
 async function poll($: EngineInterface) {
   if (!(await ownsSession($))) return
   await endFinishedShells($).catch(() => undefined)
+  await sweepGhosts($).catch(() => undefined)
   await touchShells($)
   await tickTurn($, await resolveHome($), backgroundNote(await $.clock.now())).catch(() => undefined)
   await sweepTurnRows($).catch(() => undefined)
@@ -839,6 +988,9 @@ async function poll($: EngineInterface) {
   try { await $.fs.write(`${base}/agents-${sessionKey}.txt`, lines(agents, now).join('\n')) } catch { /* next poll */ }
   try { await $.fs.write(`${base}/jobs-${sessionKey}.txt`, lines(mine, now).join('\n')) } catch { /* next poll */ }
   try { await $.fs.write(`${base}/jobs.txt`, lines(jobs, now).join('\n')) } catch { /* next poll */ }
+  // A background fork's agents and jobs also show in the session it was forked from, where the person looks.
+  const parent = await forkParentKey($, home)
+  if (parent && parent !== sessionKey) { try { await $.fs.write(`${dirOf(home)}/${forkLinesRel(sessionKey, parent)}`, [...lines(agents, now), ...lines(mine, now)].join('\n')) } catch { /* next poll */ } }
   // Signs of life beyond the numbers, for group.py's stuck mark (alive.ts).
   const life: Record<string, Life> = {}
   for (const r of rows) if (r.life && (r.life.at || r.life.until)) life[slug(r.description)] = r.life
@@ -1182,7 +1334,13 @@ export const register: Register = (on, options) => {
   on('classic.Stop', async ($, e, next) => {
     const i = e as unknown as { background_tasks?: { id: string; status?: string }[]; transcript_path?: unknown }
     const running = i.background_tasks
-    if (Array.isArray(running)) await endBackground($, running).catch(() => undefined)
+    if (Array.isArray(running)) {
+      // A task the session lists as over whose orphaned work still runs keeps its row (orphanBacked).
+      const listed = new Set(running.filter(t => !t.status || /running|pending/.test(t.status)).map(t => t.id))
+      const over = new Set(backgroundShellIds().filter(id => !listed.has(id)))
+      const keep = over.size ? await orphanBacked($, await $.clock.now(), over).catch(() => [] as string[]) : []
+      await endBackground($, [...running, ...keep.map(id => ({ id, status: 'running' }))]).catch(() => undefined)
+    }
     if (typeof i.transcript_path === 'string' && i.transcript_path.endsWith('.jsonl')) { txHook = i.transcript_path.slice(0, -6); txBase = txHook; txCheckAt = 0 }
     snap = snapOf(running, await $.clock.now()) ?? snap
     return next(e)
@@ -1308,7 +1466,12 @@ export const register: Register = (on, options) => {
 
   // The session ends: this copy's timers stop. (A /clear goes on in the same process, so its timers keep running.)
   on('session.end', async ($, e, next) => {
-    if (e.reason !== 'clear') stop(owner)
+    if (e.reason !== 'clear') {
+      stop(owner)
+      // Closed: other sessions stop counting it as open at once, so their ghost sweep takes over its rows (sweep.ts).
+      const h = await resolveHome($)
+      if (h) await $.process.run(['rm', '-f', `${dirOf(h)}/.state/claims-${await sessionKeyOf($)}.txt`, ...(forkParent ? [`${dirOf(h)}/${forkLinesRel(await sessionKeyOf($), forkParent)}`] : [])], { timeoutMs: 3000 }).catch(() => undefined)
+    }
     await endTurn($, await resolveHome($)).catch(() => undefined)
     return next(e)
   })

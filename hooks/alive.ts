@@ -208,7 +208,10 @@ export function taskProc(cmd: string, procs: readonly Proc[], launchedAt: number
   if (key.length < 4) return null
   // Only the shell Claude's Bash tool starts (`... && eval '<command>'`) or a process that is the command itself: a
   // process whose arguments merely mention the command (an editor, a grep, another Claude's prompt) is not the task.
-  const runs = (c: string) => { const n = normCmd(c); return n.startsWith(key) || n.includes(`eval ${key}`) }
+  // The key ends at a word boundary unless it was cut at CMD_KEY: `sleep 62` is not `sleep 621`.
+  const cut = normCmd(cmd.split('\n')[0] ?? '').length > CMD_KEY
+  const at = (n: string, i: number) => i >= 0 && (cut || i + key.length === n.length || /[\s;&|)]/.test(n[i + key.length]!))
+  const runs = (c: string) => { const n = normCmd(c); return (n.startsWith(key) && at(n, 0)) || at(n, n.indexOf(`eval ${key}`) < 0 ? -1 : n.indexOf(`eval ${key}`) + 5) }
   const hits = procs.filter(p => !p.stat.startsWith('Z') && runs(p.command) && (!launchedAt || now - p.ageMs >= launchedAt - START_SLACK_MS))
   if (!hits.length) return null
   return hits.find(p => !hits.some(q => q.ppid === p.pid)) ?? hits[0]!

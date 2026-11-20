@@ -122,7 +122,10 @@ def emit(level, source, title, detail='', path='', ts=None):
     os.makedirs(STATE, exist_ok=True)
     with open(EVENTS, 'a+', encoding='utf-8') as f:
         if fcntl:
-            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                _lock(f)
+            except TimeoutError:
+                return  # a stuck holder: skip this one line rather than hold up the caller
         f.write(json.dumps(ev, ensure_ascii=False) + '\n')
         f.flush()
         f.seek(0)
@@ -139,13 +142,34 @@ def sent():
     return _load(SENT, {})
 
 
+LOCK_WAIT = 1.5
+
+
+def _lock(f):
+    """An exclusive lock, waited for at most LOCK_WAIT seconds, else TimeoutError. A holder that hangs (a paused
+    process, a busy machine) must never hold up a status line: the event is simply logged on a later render."""
+    end = time.time() + LOCK_WAIT
+    while True:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.time() >= end:
+                raise TimeoutError('events lock busy')
+            time.sleep(0.05)
+
+
 class _sent_lock:
     """Several status lines refresh every second. The lock stops each one sending the same event."""
     def __enter__(self):
         os.makedirs(os.path.dirname(SENT), exist_ok=True)
         self.f = open(SENT + '.lock', 'w')
         if fcntl:
-            fcntl.flock(self.f, fcntl.LOCK_EX)
+            try:
+                _lock(self.f)
+            except Exception:
+                self.f.close()
+                raise
         return self
 
     def __exit__(self, *a):

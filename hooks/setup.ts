@@ -12,11 +12,16 @@ import { prevOf, statusScript } from './render'
 const GROUP_REL = '.claude/progress-bar/group.py'
 const EVENTS_PY_REL = '.claude/progress-bar/events.py'
 const CHECKPOINT_PY_REL = '.claude/progress-bar/checkpoint.py'
+// The same grouper under a name older builds never write: the status script runs it in one process (--render). An
+// older copy in another open session still rewrites group.py with its own version, which has no --render; the script
+// must never pair with that (it printed the raw status line input and no rows).
+const RENDER_PY_REL = '.claude/progress-bar/render.py'
 export const SNIPPET = `"statusLine": { "type": "command", "command": "~/${SCRIPT_REL}", "refreshInterval": 1 }`
 
 /** Writes group.py, events.py (the Log tab's events log) and checkpoint.py (the overnight recap) beside the status line script. */
 export async function writeLib($: EngineInterface, h: string) {
   await $.fs.write(`${h}/${GROUP_REL}`, GROUP_PY)
+  await $.fs.write(`${h}/${RENDER_PY_REL}`, GROUP_PY)
   await $.fs.write(`${h}/${EVENTS_PY_REL}`, EVENTS_PY)
   await $.fs.write(`${h}/${CHECKPOINT_PY_REL}`, CHECKPOINT_PY)
 }

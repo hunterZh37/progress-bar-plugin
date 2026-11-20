@@ -154,6 +154,18 @@ class Group(unittest.TestCase):
         out = self.run_('▶ linux ✓ helper healthy · load 0.2 on 12 cores · idle\n▶ gpu: train ██░░ 10.0% · 1/9\n', T0 + 2)
         self.assertIn('machine linux ✓ helper healthy · load 0.2 on 12 cores · idle', out)
 
+    def test_process_title_row_folds_into_machine_line(self):
+        # "hunty: postgres:" is a database backend's process title, not a job: no bare "postgres:" RUNNING row.
+        out = self.run_('▶ hunty ✓ helper healthy · load 3.73 on 12 cores\n'
+                        '▶ hunty: crawl.py · 36.7% CPU · 06:20\n'
+                        '▶ hunty: postgres: · 32.2% CPU · 00:51\n'
+                        '▶ hunty: postgres: · 25.4% CPU · 00:11\n')
+        self.assertFalse(any('postgres:' in l for l in out), out)
+        self.assertTrue(any('crawl.py' in l and '% CPU' in l for l in out), out)
+        self.assertIn('machine hunty ✓ helper healthy · load 3.73 on 12 cores · busy: 1 process running · postgres busy', out)
+        # When it ends it is not a finished job either.
+        self.assertFalse(any('postgres' in l for l in self.run_('▶ hunty ✓ helper healthy · load 0.1 on 12 cores · idle\n', T0 + 60)))
+
     def test_folded_sections(self):
         self.write('.state/folded.txt', 'todo\nrunning\n')
         self.write('todo.txt', '[a]\none\ntwo\n')
@@ -677,6 +689,27 @@ class Events(unittest.TestCase):
         except FileNotFoundError:
             return []
 
+    def test_a_held_lock_never_blocks_for_long(self):
+        # A paused or hung holder of the events lock must not hold up the status line (its 8 s limit).
+        import fcntl
+        lock = os.path.join(self.root, '.state', 'events-sent.json.lock')
+        holder = open(lock, 'w')
+        fcntl.flock(holder, fcntl.LOCK_EX)
+        try:
+            t = time.time()
+            with self.assertRaises(TimeoutError):
+                self.ev.once('k', 'info', 'src', 'title')
+            self.assertLess(time.time() - t, 3)
+            ev_file = open(os.path.join(self.root, 'events.jsonl'), 'a+')
+            fcntl.flock(ev_file, fcntl.LOCK_EX)
+            t = time.time()
+            self.ev.emit('info', 'src', 'skipped')  # returns, writes nothing
+            self.assertLess(time.time() - t, 3)
+            ev_file.close()
+        finally:
+            holder.close()
+        self.assertTrue(self.ev.once('k', 'info', 'src', 'title'))
+
     def test_grouper_logs_done_stuck_and_problem_once(self):
         self.write('nightly.json', '{"done":1,"total":2,"title":"Nightly import · all files"}')
         g = lambda text, t: self.g.main(io.StringIO(text), t)
@@ -1035,6 +1068,45 @@ class StatusScript(unittest.TestCase):
         # Its output holds our section headers: a second progress status line, never printed twice.
         for head in ['▾ ▶ RUNNING', '▾ ☐ TO-DO', '▸ ✔ DONE (3)']:
             self.assertEqual(self.chained("printf '%s\\n  ◐ x\\n' '" + head + "'"), ['▶ cyber-agent working'])
+
+
+
+class FastStatusScript(StatusScript):
+    """The same cases with group.py installed: the script hands everything to one python3 process (render_lines), so
+    a loaded machine (each new process costing seconds) cannot push it past the panel's 8 s limit. Same rows."""
+    def setUp(self):
+        super().setUp()
+        os.environ.pop('PROGRESS_DIR', None)  # load() elsewhere points it at a test folder; the script uses HOME
+        lib = os.path.join(self.home, '.claude', 'progress-bar')
+        os.makedirs(lib)
+        with open(os.path.join(lib, 'render.py'), 'w') as f:
+            f.write(PY)
+        # An older build's group.py (no --render) beside it must not matter.
+        with open(os.path.join(lib, 'group.py'), 'w') as f:
+            f.write('import sys\nprint(sys.stdin.read())\n')
+        with open(os.path.join(lib, 'events.py'), 'w') as f:
+            f.write(EV_PY)
+        os.makedirs(os.path.join(self.home, '.claude-progress', '.state'), exist_ok=True)
+
+    def run_(self, stdin, scope=None):
+        out = super().run_(stdin, scope)
+        # Grouped output: keep the rows (their marks and spinner dropped) and any other line, not the headers.
+        rows = []
+        for l in out:
+            if re.match(r'^[▾▸] ', l):
+                continue
+            l = re.sub(r'^\s+[◐◓◑◒]\s+', '▶ ', strip_links(l))
+            rows.append(re.sub(r' · in progress$', '', l))
+        return sorted(rows)
+
+    def test_one_process_besides_the_shell(self):
+        # The script execs python3 before any command substitution: no sed, cat, awk or find of its own.
+        script = open(self.script).read()
+        head = script.split('exec python3', 1)[0]
+        self.assertNotIn('$(', head.split('mode=', 1)[1])
+
+    def test_chained_status_line_output_is_dropped(self):
+        pass
 
 
 if __name__ == '__main__':

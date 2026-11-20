@@ -884,7 +884,7 @@ export async function pollPanel($: EngineInterface, h: string) {
   await clearStaleAsk($)
   if (!h) return
   try {
-    const r = await $.process.run(['/bin/sh', `${h}/${SCRIPT_REL}`], { stdin: await sessionInput($, h), env: { PB_FULL: '1' }, timeoutMs: 8000 })
+    const r = await $.process.run(['/bin/sh', `${h}/${SCRIPT_REL}`], { stdin: await sessionInput($, h), env: { PB_FULL: '1', HOME: h }, timeoutMs: 8000 })
     const lines = stripAnsi(r.stdout).split('\n').filter(l => l.trim())
     const prev = await read($, linesAtom)
     if (prev.join('\n') !== lines.join('\n')) await update($, linesAtom, () => lines)
@@ -982,7 +982,7 @@ export async function checkpointCommand($: EngineInterface, h: string, label: st
   if (!h) return 'Could not find your home folder ($HOME is unset).'
   if (!(await $.fs.exists(`${h}/${SCRIPT_REL}`).catch(() => false))) return 'The checkpoint reads the status line script. Run `/progress-bar setup` first.'
   let out = ''
-  try { out = (await $.process.run(['/bin/sh', `${h}/${SCRIPT_REL}`], { stdin: '{}', env: { PB_FULL: '1', PB_UNFOLD: '1' }, timeoutMs: 8000 })).stdout } catch { out = '' }
+  try { out = (await $.process.run(['/bin/sh', `${h}/${SCRIPT_REL}`], { stdin: '{}', env: { PB_FULL: '1', PB_UNFOLD: '1', HOME: h }, timeoutMs: 8000 })).stdout } catch { out = '' }
   const rows = parseSections(stripAnsi(out).split('\n').filter(l => l.trim())).sections.find(x => x.key === 'running')?.rows ?? []
   const running = rows.map(snapOf).filter(x => x.name)
   const since = Math.floor((await $.clock.now()) / 1000)

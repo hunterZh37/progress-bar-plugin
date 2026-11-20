@@ -146,6 +146,39 @@ test('a file with this session shows only here, another open session keeps its o
   expect(files[`${P}/.state/claims-${KEY}.txt`]).toContain('#project code-shop')
 })
 
+test('a file naming a live agent of this session shows here, whatever stale session id it carries', { options: { openPanel: false } }, async ($, on) => {
+  // Nov 20: an agent resumed across a session restart kept the old session id in its progress file, so the session it
+  // runs in skipped the row (another open session "owned" it) and a live 4/7 job vanished from the panel.
+  const agents = [{ id: 'a8e1', description: 'Build gift in context', status: 'running' }]
+  const files: Record<string, string> = {
+    [`${P}/news-gifts-shown.json`]: job({ session: OTHER, agent: 'a8e1', done: 4, total: 7, step: 'UI and tests', title: 'News gifts shown' }),
+    [`${P}/.state/claims-${sessionKeyOf(OTHER)}.txt`]: '#project code-shop\n',
+  }
+  world(on, files, { agents })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await settle($ as never)
+  expect(files[`${L}/jobs-${KEY}.txt`] ?? '').toContain('news-gifts-shown')
+  expect(files[`${P}/news-gifts-shown.json`]).toBeDefined()
+})
+
+test('a file whose agent finished ends: recorded done and archived, never left stuck', { options: { openPanel: false } }, async ($, on) => {
+  // Nov 20: add-donorbrief-news-sources stayed "blocked" and read stuck 19m after its agent completed.
+  const agents = [{ id: 'ag9', description: 'Add DonorBrief news sources', status: 'completed' }]
+  const files: Record<string, string> = {
+    [`${P}/add-donorbrief-news-sources.json`]: job({ session: SID, agent: 'ag9', done: 2, total: 5, step: 'blocked', title: 'DonorBrief news sources' }),
+    [`${P}/still-beating.json`]: job({ session: SID, agent: 'ag9', done: 1, total: 3, step: 'remote run', quietUntil: NOW + 3_600_000 }),
+  }
+  const { runs } = world(on, files, { agents })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true })
+  await settle($ as never)
+  const mine = files[`${L}/jobs-${KEY}.txt`] ?? ''
+  expect(mine).not.toContain('add-donorbrief-news-sources')
+  expect(runs.some(r => r[0] === 'mv' && r[2] === `${P}/add-donorbrief-news-sources.json` && String(r[3]).includes('/.archive/jobs/add-donorbrief-news-sources-'))).toBe(true)
+  expect(files[`${HOME}/${DONE_REL}/add-donorbrief-news-sources.json`]).toBeDefined()
+  // Its quiet window still open: a job that outlives its agent stays.
+  expect(mine).toContain('still-beating')
+})
+
 test('cwd routing: a folder sharing this list in projects.txt, and a worktree of this repo, are this project', { options: { openPanel: false } }, async ($, on) => {
   const files: Record<string, string> = {
     [`${P}/todos/projects.txt`]: '~/code/shop\ttodo.txt\n~/code/shop-admin\ttodo.txt\n',

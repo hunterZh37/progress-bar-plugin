@@ -28,6 +28,9 @@ Install it and keep working. You never have to ask Claude to show a task in the 
 - **Subagents:** every running subagent gets a line with its age, tool calls and last tool.
 - **Your task list:** when Claude keeps a task list (TodoWrite, TaskCreate, TaskUpdate), it shows as one bar.
 - **Long commands:** a Bash command that runs over a minute, or in the background, shows as a row until it ends.
+- **No ghost rows:** a row stays running only while something live backs it. Every 10 s each session checks every shell row against the process list: a gone process ends the row (in about 15 s), even when the session that started it restarted or exited, and its file moves to `~/.claude-progress/.archive/`. A process still running keeps its row, whoever started it (an orphaned child included). A progress file whose session is gone, with no live pid, heartbeat or quiet window, is archived after an hour unwritten.
+- **Agent rows follow the agent:** a progress file naming a live agent of this session shows in it whatever session id it carries, and one whose agent finished goes to DONE instead of reading stuck.
+- **Background forks:** a session's background jobs that run as their own forked session (`kind: bg`) show their agents and jobs in the session they were forked from too.
 - **Long turns:** a turn that runs 30 seconds or more with 3 or more tool calls shows as a working row until it ends. It is named by the work: the session's own reported job, else the prompt's first clause, else the latest tool call's description. A prompt of short replies (`yes`, `push`, `1. keep it 2. merge`) never names it. Its step names a tool call only while that call runs, else `working · background: <job> · 8m` or `idle`.
 - **Real bars:** a job that writes `~/.claude-progress/<slug>.json` gets a bar with percent, count, step and time left. See [docs/progress-files.md](docs/progress-files.md).
 - **Bars from logs:** a job that only writes a log gets a bar from a watch file, with `■ stopped` or `✖ error` when it dies.
@@ -136,6 +139,7 @@ Set these in `/config`, under progress-bar.
 | Variable | Does |
 | --- | --- |
 | `PROGRESS_DIR` | Where the status line's Python helpers (`group.py`, `events.py`, `checkpoint.py`) read and write. Default `~/.claude-progress`. The plugin itself always uses `~/.claude-progress` |
+| `PROGRESS_BAR_HOME` | Stands in for `$HOME` for every file the plugin reads and writes (`~/.claude-progress`, `~/.claude/progress-bar`). For test sessions that must not touch the real ones; the login still uses the real `$HOME` |
 | `PB_CHANNEL_HOME` | Where the secure channel keeps keys, repos and received files. Default `~/.claude-progress/channel` |
 | `PB_FULL`, `PB_UNFOLD` | Set by the panel when it runs the status line script: the full view, every section open |
 | `PB_SID`, `PB_CWD` | Set by the status line script for its helpers: the session id and folder |

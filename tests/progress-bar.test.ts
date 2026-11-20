@@ -79,12 +79,16 @@ test('the script chains an earlier status line', async () => {
   expect(statusScript()).toContain("prev=''")
 })
 
-test('the script pipes through the grouper and falls back without python3', async () => {
+test('the script hands over to the grouper in one process and falls back without python3', async () => {
   const s = statusScript()
   expect(s).toContain('group="$HOME/.claude/progress-bar/group.py"')
   expect(s).toContain('command -v python3')
-  expect(s).toContain('| python3 "$group"')
+  expect(s).toContain('exec python3 -S "$render" --render $mode')
+  // render.py is a name only builds with --render write: an older build rewriting group.py never pairs with this script.
+  expect(s).toContain('render="$HOME/.claude/progress-bar/render.py"')
+  expect(s).toContain('| python3 "$group" $mode')
   expect(s).toContain('else\n  lines\nfi')
+  expect(GROUP_PY).toContain("'--render' in sys.argv[1:]")
 })
 
 const TODO = '# header\n[you]\nreview PR\nx old thing\n[mac]\nrun import | http://localhost:3000\n'
@@ -501,7 +505,7 @@ test('/progress-bar setup mac-clicks off unregisters and removes the app and fla
 test('the script prints one summary line while the panel is on, unless PB_FULL=1', async () => {
   const s = statusScript()
   expect(s).toContain('if [ -f "$HOME/.claude-progress/.state/panel-on" ] && [ "$PB_FULL" != 1 ]; then mode=--summary; fi')
-  expect(s).toContain('| python3 "$group" $mode')
+  expect(s).toContain('python3 -S "$render" --render $mode')
   expect(GROUP_PY).toContain("'--summary' in sys.argv[1:]")
   expect(GROUP_PY).toContain("full view in the Status panel")
 })
@@ -634,7 +638,7 @@ test('the panel draws sections and rows, and a header press writes folded.txt', 
   const { ran, opened } = panelWorld(on, files)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   expect(opened).toEqual([PANE])
-  expect(ran).toContainEqual({ argv: ['/bin/sh', SCRIPT], env: { PB_FULL: '1' }, stdin: '{"session_id":"","cwd":"","workspace":{"current_dir":""}}' })
+  expect(ran).toContainEqual({ argv: ['/bin/sh', SCRIPT], env: { PB_FULL: '1', HOME }, stdin: '{"session_id":"","cwd":"","workspace":{"current_dir":""}}' })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { title: 'Status', isFocused: false, bodyColumns: 52, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } })
   // Your to-dos are NEEDS YOU lines, verb first and bold. TO-DO keeps the machines' ones.
   expect(await ui.find({ type: 'Text', text: /^    You$/ })).toBe(undefined)

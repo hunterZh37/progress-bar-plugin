@@ -2,6 +2,17 @@
 
 Versions of the progress-bar plugin, newest first. Each line is the release commit. Full detail is in the git history.
 
+## 0.36.0
+
+- **No ghost rows:** background shell rows were ended only by the session that started them, when it read the task's finished notice. A session that restarted or exited first left them "running" for 30 min and their files on disk for good. Every session now checks every shell row against `ps` every 10 s: a gone process ends the row within about 15 s, and a leftover file (its session gone, or its session no longer tracking it) moves to `.archive/shells/`. A live process keeps its row whoever started it, an orphaned child (seen by its pids) included, and a row is never ended without a process list to check. A closed session removes its claim at once, so others take over its rows. Progress files whose session is gone, with no live pid, heartbeat or quiet window and an hour unwritten, move to `.archive/jobs/`.
+- **Background forks show in their parent:** a session's background job run as its own forked session (`--fork-session`, `kind: bg`) now also writes its agents and jobs to `.lines/fork-<fork>-<parent>.txt`, so the session the person looks at shows them (a live 4/7 agent was missing).
+- **Agent rows follow the agent:** a progress file naming a live agent of this session shows here even when its `session` is an old id (an agent resumed across a restart kept it, and the row vanished from the panel). A file whose agent finished or handed back, with no live pid, heartbeat or quiet window, goes to DONE and the archive at once instead of sitting stuck.
+- **Orphans keep their rows:** a background task whose shell was killed while its command runs on (orphaned to pid 1) keeps its row until that process ends, whether the end came from the task notice, a Stop or the sweep.
+- **`PROGRESS_BAR_HOME`:** stands in for `$HOME` for every file the plugin reads and writes, so test sessions keep their rows out of the real `~/.claude-progress` while their login uses the real `$HOME`.
+- **Commands match whole words:** a background `sleep 62` no longer counts an older `sleep 621` as its process.
+- **Status script in one process:** with python3, `statusline.sh` hands straight to `render.py --render` (the grouper under a name older builds never write, so an older copy rewriting `group.py` cannot pair with it), which reads the line files itself. The shell version started about fifteen processes, and on a loaded machine (load 20+, an antivirus scanning each exec) each cost a second or more: runs took 9 to 22 s and hit the panel's 8 s limit. Now about 1.5 s on the same machine. The events log lock waits at most 1.5 s instead of forever. Per-session state files older than two days are pruned hourly (10,800 had piled up).
+- **No "postgres:" rows:** a machine helper's busy process known only by its process title (a database backend, `hunty: postgres:`) shows on its machine line (`· postgres busy`) instead of as a nameless RUNNING row whose time restarted with each connection.
+
 ## 0.35.8
 
 - **Each Claude login keeps its own account data:** a session started with `CLAUDE_CONFIG_DIR` (e.g. `~/.claude-personal`) now has its own Connectors cache and accounts file (`connectors-claude-personal.txt`, `connector-accounts-claude-personal.txt`), and runs its check under that login. It never writes the default login's files, and the default login keeps today's names. A new login's accounts file starts from the default one with its own Claude login line. To-dos, decisions and job bars stay shared.

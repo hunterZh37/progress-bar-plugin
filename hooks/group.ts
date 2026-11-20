@@ -42,7 +42,7 @@ With events.py beside this file, done, stuck and problem rows are logged once ea
 With ~/.claude-progress/.state/clicks-on (from /progress-bar setup mac-clicks), section headers link to
 progressbar://toggle/<section>, which the ProgressBarToggle app turns into a fold or unfold.
 """
-import json, os, re, subprocess, sys, time
+import io, json, os, re, subprocess, sys, time
 
 HOME = os.path.expanduser('~')
 ROOT = os.environ.get('PROGRESS_DIR') or os.path.join(HOME, '.claude-progress')
@@ -480,6 +480,11 @@ def main(stdin, now, summary=False):
         if k and (k not in best or len(l) > len(best[k])):
             best[k] = l
     jobs = [l for l in jobs if best.get(slugify(name_of(l))) is l]
+    # A machine helper's busy process known only by its process title ("hunty: postgres: · 27% CPU · 00:36", a database
+    # backend serving some other job's query) names no job, and its time restarts with each new connection. It is not
+    # a RUNNING row: it shows on its machine's line as "postgres busy" (see machine_line), so it is never hidden.
+    titled = [l for l in jobs if CPU.search(l) and TITLED.match(name_of(l))]
+    jobs = [l for l in jobs if l not in titled]
 
     try:
         state = state_file()
@@ -665,13 +670,16 @@ def main(stdin, now, summary=False):
             out.extend('  ' + h.upper() + ': ' + ' · '.join(i) for h, i in todo.items())
     sec('✖ PROBLEMS', groups['problem'], 'problems')
     sec('▶ RUNNING', groups['running'], 'running', deco=running_deco)
-    out.extend(machine_line(l, groups) for l in groups['info'])
+    out.extend(machine_line(l, groups, titled) for l in groups['info'])
     sec('⏸ WAITING', groups['waiting'], 'waiting')
     sec('✔ DONE', groups['done'], 'done')
     return out + other
 
 
-def machine_line(l, groups):
+TITLED = re.compile(r'^[\w.-]+:\s*([\w.-]+:)?$')
+
+
+def machine_line(l, groups, titled=()):
     """A machine status row as "machine <host> ✓ helper healthy · load ...". The helper's own "idle" comes from its load
     alone, so while a "<host>: ..." job runs or waits here it reads "busy: N jobs running" (busy processes, "N% CPU"
     rows, count only when no job does)."""
@@ -683,6 +691,15 @@ def machine_line(l, groups):
     n, what = (len(jobs), 'job') if jobs else (len(rows), 'process')
     if n:
         t = re.sub(r'\s*·\s*idle\s*$', '', t) + ' · busy: ' + str(n) + ' ' + what + ('' if n == 1 else ('es' if what == 'process' else 's')) + ' running'
+    # Busy processes known only by their title (TITLED): named on the line, one entry per name.
+    names = []
+    for r in titled:
+        h, _, p = name_of(r).partition(':')
+        p = p.strip().rstrip(':').strip()
+        if h.strip().lower() == host and p and p not in names:
+            names.append(p)
+    if names:
+        t = re.sub(r'\s*·\s*idle\s*$', '', t) + ' · ' + ', '.join(names) + ' busy'
     return 'machine ' + t
 
 
@@ -811,6 +828,108 @@ def summary_line(groups, n_todo, n_stuck, n_err=0):
     return ' · '.join(out)
 
 
+PROGRESS_HEADS = re.compile('(▾|▸) (☐ TO-DO|▶ RUNNING|✔ DONE|✖ PROBLEMS|⏸ WAITING)')
+
+
+def _split_cols(l):
+    """A todos/*.txt line split as awk -F '\\t+|  +' does."""
+    return re.split(r'\t+|  +', l)
+
+
+def render_lines(inp, prev='', now=None):
+    """What statusline.sh's lines() prints, in this one process (each process a status line starts costs seconds on a
+    loaded machine; the shell version started about fifteen). inp is the status line's JSON input."""
+    now = time.time() if now is None else now
+    try:
+        j = json.loads(inp or '{}')
+    except Exception:
+        j = {}
+    j = j if isinstance(j, dict) else {}
+    sid = re.sub(r'[^A-Za-z0-9_-]', '', str(j.get('session_id') or ''))[:12]
+    ws = j.get('workspace') if isinstance(j.get('workspace'), dict) else {}
+    cwd = str(ws.get('current_dir') or j.get('cwd') or '')
+    os.environ['PB_CWD'] = cwd
+    os.environ['PB_SID'] = sid
+    scope = (read(os.path.join(ROOT, '.state', 'scope')) or 'session').strip() or 'session'
+    todos = os.path.join(ROOT, 'todos')
+    proj, best = '', -1
+    for l in (read(os.path.join(todos, 'projects.txt')) or '').split('\n'):
+        if not l.strip() or l.lstrip().startswith('#'):
+            continue
+        c = _split_cols(l)
+        if len(c) < 2:
+            continue
+        p = c[0].strip()
+        if p.startswith('~'):
+            p = HOME + p[1:]
+        p = p.rstrip('/')
+        if p and cwd and (cwd == p or cwd.startswith(p + '/')) and len(p) > best:
+            best, proj = len(p), c[-1]
+    shared = set()
+    lt = read(os.path.join(todos, 'lines.txt'))
+    if cwd and proj and lt:
+        for l in lt.split('\n'):
+            if l.lstrip().startswith('#'):
+                continue
+            c = _split_cols(l)
+            if len(c) >= 2 and c[-1] == proj:
+                shared.add(c[0])
+    if lt is None:
+        shared.add('jobs.txt')
+    d = os.path.join(ROOT, '.lines')
+    stamp = os.path.join(ROOT, '.state', 'pruned')
+    try:
+        fresh_stamp = now - os.path.getmtime(stamp) < 3600
+    except OSError:
+        fresh_stamp = False
+    if not fresh_stamp:
+        try:
+            open(stamp, 'a').close()
+            os.utime(stamp, None)
+            st = os.path.join(ROOT, '.state')
+            subprocess.Popen(['/bin/sh', '-c', 'find "$1" -maxdepth 1 -name "*.txt" -mmin +1440 -delete; find "$2" -maxdepth 1 -name "group-seen-*.json" -mtime +7 -delete; '
+                              'find "$2" -maxdepth 1 -type f \\( -name "alive-*" -o -name "agents-*" -o -name "owner-*" -o -name "pairs-*" -o -name "seen-*" -o -name "claims-*" -o -name "bg-*" \\) -mtime +2 -delete', 'sh', d, st],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        except Exception:
+            pass
+    out = []
+    try:
+        with os.scandir(d) as it:
+            ents = sorted((e for e in it if e.name.endswith('.txt')), key=lambda e: e.name)
+    except OSError:
+        ents = []
+    for e in ents:
+        try:
+            st = e.stat()
+        except OSError:
+            continue
+        # find -size +0 -mmin -2: not empty, changed within the last minute (find rounds the age up to whole minutes).
+        if st.st_size <= 0 or -(-(now - st.st_mtime) // 60) >= 2:
+            continue
+        if scope != 'all' and sid and not e.name[:-4].endswith('-' + sid) and e.name not in shared:
+            continue
+        try:
+            with open(e.path, encoding='utf-8', errors='replace') as f:
+                out.append(f.read())
+        except OSError:
+            continue
+    text = '\n'.join(out) + ('\n' if out else '')
+    if prev:
+        try:
+            p = subprocess.run(['/bin/sh', '-c', prev], input=inp, capture_output=True, text=True, timeout=5).stdout
+        except Exception:
+            p = ''
+        p = p.rstrip('\n')
+        if p and not PROGRESS_HEADS.search(p):
+            text += p + '\n'
+    return text
+
+
 if __name__ == '__main__':
-    print('\n'.join(main(sys.stdin, time.time(), summary='--summary' in sys.argv[1:])))
+    if '--render' in sys.argv[1:]:
+        # statusline.sh hands over at once: its JSON input on stdin, the chained status line in PB_PREV.
+        src = render_lines(sys.stdin.read(), os.environ.get('PB_PREV', ''))
+        print('\n'.join(main(io.StringIO(src), time.time(), summary='--summary' in sys.argv[1:])))
+    else:
+        print('\n'.join(main(sys.stdin, time.time(), summary='--summary' in sys.argv[1:])))
 `
