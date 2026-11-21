@@ -339,6 +339,9 @@ export type RunCard = {
   elapsed: string
   /** What a busy process is, from a "unit: <Description>" part (its systemd unit's Description), else ''. */
   unit?: string
+  /** An agent's tool count ("115") and its latest tool ("Bash"), when its row reports them. */
+  tools?: string
+  lastTool?: string
 }
 
 /**
@@ -363,7 +366,7 @@ export function runCard(row: string): RunCard {
     : host ? { text: `on ${host}` }
     : isAgent ? { text: 'Claude agent' }
     : { text: 'job' }
-  let count = '', step = '', elapsed = '', left = '', speed = '', actions = '', last = '', cores = '', ran = '', waitOn = '', watchedBy = '', waited = '', note = '', bg = '', unit = ''
+  let count = '', step = '', elapsed = '', left = '', speed = '', actions = '', last = '', cores = '', ran = '', waitOn = '', watchedBy = '', waited = '', note = '', bg = '', unit = '', tools = ''
   let bgTime = false
   let maxUsed: number | null = null
   for (const x of parts) {
@@ -382,11 +385,12 @@ export function runCard(row: string): RunCard {
     else if ((m = /^(\d+)\/(\d+)( batches)?$/.exec(x))) count = `${Number(m[1]).toLocaleString('en-US')} of ${Number(m[2]).toLocaleString('en-US')}${m[3] ? ' batches' : Number(m[2]) > FEW_STEPS ? ' items' : ' steps'}`
     else if ((m = /^done in (.+)$/.exec(x)) || (m = /^ETA (.+)$/.exec(x)) || (m = /^(.+) left$/.exec(x))) left = m[1]!
     else if (/\/min$/.test(x)) speed = x
-    else if ((m = /^(\d+) tools?$/.exec(x))) actions = `${m[1]} actions`
+    else if ((m = /^(\d+) tools?$/.exec(x))) { actions = `${m[1]} actions`; tools = m[1]! }
     else if (/^(\d+h)?\d+m$|^\d+[sh]$/.test(x)) elapsed = x
     else if (isAgent && /^[A-Z][A-Za-z]+$/.test(x)) last = x
     else step = step ? `${step} · ${x}` : x
   }
+  const lastTool = last
   if (last) actions = actions ? `${actions} · last: ${last}` : `last: ${last}`
   // Time left shows on the job's line, so the facts leave it out.
   const facts = [cores, ran && `${ran} running`, elapsed && `${elapsed} so far`, speed, actions].filter(Boolean).join(' · ')
@@ -409,6 +413,8 @@ export function runCard(row: string): RunCard {
     ran,
     elapsed,
     ...(unit ? { unit } : {}),
+    ...(tools ? { tools } : {}),
+    ...(lastTool ? { lastTool } : {}),
   }
 }
 
@@ -596,9 +602,19 @@ export function nowLine(r: Pick<RunCard, 'step' | 'count' | 'elapsed' | 'ran' | 
   return [what, nowTime(r)].filter(Boolean).join(' · ')
 }
 
-/** The run time a running row's second line shows, '' when line one already says it. */
+/** The run time a running row's second line shows, '' when line one already says it (a row with no % shows its time
+ * in its status text on line one). */
 export function nowTime(r: Pick<RunCard, 'elapsed' | 'ran' | 'pct'>): string {
-  return r.pct === null && r.ran ? '' : r.elapsed || r.ran
+  return r.pct === null ? '' : r.elapsed || r.ran
+}
+
+/**
+ * Line one's text for a running row with no known progress (no done/total), in the bar's place: its state, how long
+ * it has run, then its tool count and latest tool when known. "running · 36m · 115 tools · last: Bash". Never a bar:
+ * an empty or dotted one read as a broken bar.
+ */
+export function noBarText(r: Pick<RunCard, 'elapsed' | 'ran'> & Partial<Pick<RunCard, 'tools' | 'lastTool'>>, state = 'running'): string {
+  return [state, r.ran || r.elapsed, r.tools ? `${r.tools} tools` : '', r.lastTool ? `last: ${r.lastTool}` : ''].filter(Boolean).join(' · ')
 }
 
 /**
@@ -1436,7 +1452,6 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       const waitOn = kid || r.waitOn
       const frac = r.pct === null ? null : Math.min(1, r.pct / 100)
       const filled = frac === null ? 0 : Math.round(frac * MINI)
-      const [before, after] = slide(nowMs, MINI)
       const mark = stuck ? '⚠' : child ? '↳' : r.mark === '⚠' ? '•' : r.mark
       const pad = `${ind}    `
       // The title column fits the longest title shown (bars still line up), so the time left or stuck note keeps room.
@@ -1450,9 +1465,11 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
       // Room after mark, label, bar and percent (4 + col + 17) and two spaces.
       const room = width - ind.length - col - 23 - (ctlKindOf(r) ? 4 : 0)
       const fit = (x: string) => (x.length > room ? (room > 1 ? `${x.slice(0, room - 1)}…` : '') : x)
-      // A busy process's run time: "6m running", or just "6m" when the words do not fit, never cut mid-time.
-      const ranTail = r.pct === null && r.ran ? (`${r.ran} running`.length <= room ? `${r.ran} running` : r.ran) : ''
-      const tail = fit(finished ? 'just finished' : paused ? 'paused' : stuck ? `⚠ stuck ${stuck}` : waitOn ? `waiting on ${short(waitOn)}` : r.left ? `${r.left} left` : ranTail)
+      const state = finished ? 'just finished' : paused ? 'paused' : stuck ? `⚠ stuck ${stuck}` : waitOn ? `waiting on ${short(waitOn)}` : ''
+      // No % known: no bar at all. Its state, run time and tool count fill the bar's place, cut to the pane.
+      const noBarRoom = width - ind.length - 4 - col - 2 - (ctlKindOf(r) ? 4 : 0)
+      const noBar = frac === null && noBarRoom > 1 ? clip(noBarText(r, state || (r.left ? `${r.left} left` : 'running')), noBarRoom) : ''
+      const tail = frac === null ? '' : fit(state || (r.left ? `${r.left} left` : ''))
       const why = (m0.why ?? '').replace(/^unlocks:?\s*/i, '')
       const ar = runArea(r.name, r.step)
       const step0 = nowLine(r, waitOn)
@@ -1470,17 +1487,14 @@ async function drawPane($: EngineInterface, e: RenderInput<'Pane'>) {
           <Text color={stuck ? 'yellow' : finished ? 'green' : 'cyan'}>{`${ind}  ${mark} `}</Text>
           <Button key={`open-${key}`} plain onPress={() => toggleCard(key)}><Text bold>{label}</Text></Button>
           {frac === null
-            ? [
-                // No % known: a still, dotted bar. A sliding piece redrew every second and read as flashing.
-                <Text key="a" color={stuck ? 'yellow' : 'cyan'} dimColor={!stuck}>{`  ${'┄'.repeat(before + 3 + after)}`}</Text>,
-                <Text key="d">{'     '}</Text>,
-              ]
+            ? null
             : [
                 <Text key="a" color={stuck ? 'yellow' : 'green'}>{`  ${'━'.repeat(filled)}`}</Text>,
                 <Text key="b" dimColor>{'─'.repeat(MINI - filled)}</Text>,
                 <Text key="c" bold>{` ${String(Math.round(r.pct!)).padStart(3)}%`}</Text>,
               ]}
           </Box>
+          {noBar ? <Text key="nb" color={stuck ? 'yellow' : undefined} dimColor={!stuck} wrap="truncate-end">{`  ${noBar}`}</Text> : null}
           {tail ? <Text color={stuck ? 'yellow' : undefined} dimColor={!stuck} wrap="truncate-end">{`  ${tail}`}</Text> : null}
           {ctlBtn(r, key)}
         </Box>,

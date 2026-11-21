@@ -2,6 +2,10 @@
 
 Versions of the progress-bar plugin, newest first. Each line is the release commit. Full detail is in the git history.
 
+## 0.36.1
+
+- **No empty progress bars:** a running row with no known progress (no done/total, or a total of 0) drew an empty dotted bar in the Status panel (`◐ Build Claude-Code-Setup repo  ┄┄┄┄┄┄┄┄┄┄  [x]` over `⎿ 36m`), which read as a broken bar. It now shows its state, run time and tool count in the bar's place: `◐ Build Claude-Code-Setup repo  running · 36m · 115 tools · last: Bash [x]`, and line two keeps the step without repeating the time. Rows with progress draw their bar as before. The status line and `/progress-bar` already drew no bar for such rows; tests now hold all three (and the grouper) to it.
+
 ## 0.36.0
 
 - **No ghost rows:** background shell rows were ended only by the session that started them, when it read the task's finished notice. A session that restarted or exited first left them "running" for 30 min and their files on disk for good. Every session now checks every shell row against `ps` every 10 s: a gone process ends the row within about 15 s, and a leftover file (its session gone, or its session no longer tracking it) moves to `.archive/shells/`. A live process keeps its row whoever started it, an orphaned child (seen by its pids) included, and a row is never ended without a process list to check. A closed session removes its claim at once, so others take over its rows. Progress files whose session is gone, with no live pid, heartbeat or quiet window and an hour unwritten, move to `.archive/jobs/`.

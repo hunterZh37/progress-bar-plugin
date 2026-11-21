@@ -392,6 +392,22 @@ class Group(unittest.TestCase):
         out = self.run_('▶ deploy waits for build · 1m\n')
         self.assertEqual(out, ['▾ ⏸ WAITING', '  deploy waits for build · 1m'])
 
+    def test_a_row_with_no_progress_gets_no_bar_or_placeholder(self):
+        # Hunter's screenshot: an agent row with no done/total once showed an empty dotted bar. The grouper must pass
+        # its text through (time and tools) and never add bar cells.
+        out = self.run_('▶ Build Claude-Code-Setup repo working · 36m · 115 tools · Bash\n'
+                        'linux: rebuild-index working · 2h05m\n', now=T0)
+        rows = [l for l in out if 'Claude-Code-Setup' in l or 'rebuild-index' in l]
+        self.assertEqual(len(rows), 2)
+        for r in rows:
+            self.assertIsNone(re.search(r'[█░━─┄]|-{3,}|·{2,}|\.{3,}', r), r)
+        self.assertIn('36m · 115 tools', rows[0])
+        self.assertIn('2h05m', rows[1])
+        self.assertIsNone(re.search(r'[█░━─┄]', self.run_summary_text('▶ x working · 3m · 4 tools\n')))
+
+    def run_summary_text(self, text):
+        return '\n'.join(self.g.main(io.StringIO(text), T0, summary=True))
+
     def test_status_word_stripped_from_name(self):
         self.assertEqual(self.g.name_of('▶ nightly-import running · 3m'), 'nightly-import')
 

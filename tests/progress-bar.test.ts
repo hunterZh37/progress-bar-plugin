@@ -65,6 +65,16 @@ test('an agent row without a file says working, with tools', async () => {
   expect(line(row, NOW)).toBe('▶ fix-login working · 1h05m · 4 tools · Edit')
 })
 
+test('status line: a row with no done/total (or total 0) has no bar or placeholder, just its time and tools', async () => {
+  const row = { id: 'a1', description: 'Build Claude-Code-Setup repo', status: 'running', startedAt: NOW - 36 * 60_000, tools: 115, lastTool: 'Bash', done: null, total: null, step: 'write README' }
+  const l = line(row, NOW)
+  expect(l).toBe('▶ Build Claude-Code-Setup repo working · write README · 36m · 115 tools · Bash')
+  expect(l).not.toMatch(/[█░━─┄]|-{3,}|·{2,}/)
+  // total 0 is no progress: parseProgress drops it, so the row reads the same.
+  const p = parseProgress('{"done":0,"total":0,"step":"write README"}')!
+  expect(line({ ...row, done: p.done, total: p.total }, NOW)).toBe(l)
+})
+
 test('lines are capped', async () => {
   const rows = Array.from({ length: 9 }, (_, i) => ({ id: `file:j${i}`, description: `j${i}`, status: 'running', startedAt: NOW, tools: 0, lastTool: '', done: null, total: null, step: '' }))
   const out = lines(rows, NOW)
@@ -177,7 +187,7 @@ const run = async ($: Engine, args: string) => {
 }
 
 /** The world beneath the plugin: a home folder with one subagent and one job file. */
-function world(on: On, opts: { statusLine?: { type: string; command: string }; scriptExists?: boolean; os?: string; gitDir?: string } = {}) {
+function world(on: On, opts: { statusLine?: { type: string; command: string }; scriptExists?: boolean; os?: string; gitDir?: string; buildDocs?: string } = {}) {
   const written: Record<string, string> = {}
   const ran: string[][] = []
   mock.clock(on, { now: NOW })
@@ -196,7 +206,7 @@ function world(on: On, opts: { statusLine?: { type: string; command: string }; s
   }))
   on('fs.read', (_, e) => {
     const files: Record<string, string> = {
-      [`${DIR}/build-docs.json`]: '{"done":1,"total":4,"step":"render"}',
+      [`${DIR}/build-docs.json`]: opts.buildDocs ?? '{"done":1,"total":4,"step":"render"}',
       [`${DIR}/nightly-import.json`]: `{"done":4,"total":5,"step":"batch 4","startedAt":${NOW - 12 * 60_000}}`,
     }
     const text = files[e.path] ?? (e.path.endsWith('/todo.txt') || e.path.includes('/todos/') ? written[e.path] : undefined)
@@ -224,6 +234,18 @@ test('/progress-bar shows the bars and the setup state', async ($, on) => {
     'Status line: off. Run `/progress-bar setup`.',
   ].join('\n'))
   expect(written[`${DIR}/.lines/jobs.txt`]).toContain("▶ nightly-import")
+})
+
+/** A bar or its empty/dotted placeholder: block, line and dotted cells, or a run of dashes or dots. */
+const BAR_CELLS = /[█░━─┄]|-{3,}|·{2,}|\.{3,}/
+
+test('/progress-bar: an agent with no done/total shows its state, time and tools as text, never a bar', async ($, on) => {
+  world(on, { buildDocs: '{"step":"compile"}' })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const { text } = await run($, '')
+  const row = text.split('\n')[0]!
+  expect(row).toBe('▶ Build docs working · compile · 0m · 0 tools')
+  expect(row).not.toMatch(BAR_CELLS)
 })
 
 test('/progress-bar setup writes the script and chains the old status line', async ($, on) => {
@@ -667,15 +689,35 @@ test('the panel draws sections and rows, and a header press writes folded.txt', 
   await ui.unmount()
 })
 
+test('the panel never draws an empty bar: a running row with no done/total shows "running · 36m · 115 tools"', async ($, on) => {
+  // Hunter's screenshot: "◐ Build Claude-Code-Setup repo  ------------------------------  [x]" over "└ 36m".
+  const full = ['▾ ▶ RUNNING', '  ◐ Build Claude-Code-Setup repo working · 36m · 115 tools · Bash', '  ◓ shell-backfill working · 12m'].join('\n')
+  const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n' }
+  panelWorld(on, files, full)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 80 } })
+  const pic = draw((await ui.find({ type: 'Box' })) as never)
+  await ui.unmount()
+  const rows = pic.filter(l => /Build Claude-Code-Setup repo|backfill/.test(l))
+  expect(rows.length).toBe(2)
+  for (const r of rows) expect(r).not.toMatch(/[█░━─┄]|-{3,}|·{2,}|\.{3,}/)
+  expect(rows[0]).toBe('  ◐ Build Claude-Code-Setup repo  running · 36m · 115 tools · last: Bash [x]')
+  expect(rows[1]).toBe('  ◓ Shell backfill                running · 12m')
+  // The time is said once, on line one.
+  expect(pic.filter(l => /36m/.test(l)).length).toBe(1)
+})
+
 test('the panel draws an indeterminate bar without a %, and one compact usage meter at the top right', { options: { usageMeter: true } }, async ($, on) => {
   const full = ['▾ ▶ RUNNING', '  ◐ Build docs working · 3m · 12 tools · Edit', '  ◓ orgs-judge ███░░░░░░░ 30.0% · 3/10 · 7d 62%', '  ◑ orgs-verify ██░░ 20.0% · Max 7-day used 55%'].join('\n')
   const files: Record<string, string> = { [SCRIPT]: statusScript(), [FLAG]: 'on\n' }
   panelWorld(on, files, full)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ plugin: 'progress-bar', surface: 'terminal', component: 'Pane', requestId: PANE, props: { ...PANE_PROPS, bodyColumns: 40 } })
-  expect((await ui.find({ type: 'Text', text: /^  ┄+$/ }))?.text).toMatch(/^  ┄{10}$/)
-  // Line two: the step and the time it has run, no "so far".
-  expect((await ui.find({ type: 'Text', text: /3m$/ }))?.text).toMatch(/^(\S.* · )?3m$/)
+  // No % known: no bar, no dotted placeholder. Its state, time and tools stand in the bar's place.
+  expect(await ui.find({ type: 'Text', text: /┄/ })).toBe(undefined)
+  // Cut to the 40-column pane.
+  expect((await ui.find({ type: 'Text', text: /^  running/ }))?.text).toMatch(/^  running · 3m · 12 tools/)
+  // Line two: the step, no "so far" (line one already says the time).
   expect(await ui.find({ type: 'Text', text: /so far/ })).toBe(undefined)
   await ui.press({ key: 'open-build-docs' })
   expect(await ui.find({ type: 'Text', text: /so far/ })).toBe(undefined)
@@ -1202,7 +1244,7 @@ test('the panel: titles, ids with badges, unlocks, a nested child, waiting on an
   const boxes = tieBoxes((await ui.find({ type: 'Box' })) as never)
   expect(boxes.length).toBe(2)
   expect(boxes.every(b => b.props?.flexShrink === 0)).toBe(true)
-  expect(lines).toContain('  ◐ Train the model  ┄┄┄┄┄┄┄┄┄┄       12m running')
+  expect(lines).toContain('  ◐ Train the model  running · 12m')
   let texts = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
   expect(texts.filter(t => t === '[x]').length).toBe(1)
   expect(texts.some(t => /540|unlocks|so far|Answers|better search|weekly report/.test(t))).toBe(false)
@@ -1352,7 +1394,7 @@ test('running jobs: two aligned lines each, a press opens the details', async ($
   expect(texts.filter(t => /2 of 5/.test(t))).toEqual(['2 of 5 steps'])
   expect(texts.filter(t => /1h left/.test(t))).toEqual(['  1h left'])
   expect(texts.filter(t => /40%/.test(t))).toEqual(['  40%'])
-  expect(texts).toContain('  3m running')
+  expect(texts).toContain('  running · 3m')
   await ui.unmount()
 })
 
@@ -2584,11 +2626,11 @@ test('replay 0.35.4 before: the files as the real panel had them (the writer fix
   // remote row readable; the writer then removes the stale turn row (see session-owned.test.ts).
   expect(await replayRender($, on, false)).toEqual([
     '▾ RUNNING  3',
-    '  ◒ Run the news import migratio…  ┄┄┄┄┄┄┄┄┄┄      [x]',
-    '    ⎿ serving · 8m',
-    '  ◒ 1. keep it 2. push 3. merge …  ┄┄┄┄┄┄┄┄┄┄      [x]',
-    '    ⎿ Bash Commit the news-import merge and mark decision 12, 25 tool calls · 10m',
-    '  ◒ Org similar                    ┄┄┄┄┄┄┄┄┄┄       6m running',
+    '  ◒ Run the news import migratio…  running · 8m [x]',
+    '    ⎿ serving',
+    '  ◒ 1. keep it 2. push 3. merge …  running · 10m [x]',
+    '    ⎿ Bash Commit the news-import merge and mark decision 12, 25 tool calls',
+    '  ◒ Org similar                    running · 6m',
     '    ⎿ machine: box',
   ])
 })
@@ -2596,8 +2638,8 @@ test('replay 0.35.4 before: the files as the real panel had them (the writer fix
 test('replay 0.35.4 after: the files as 0.35.4 leaves them', async ($, on) => {
   expect(await replayRender($, on, true)).toEqual([
     '▾ RUNNING  2',
-    '  ◒ Run the news import migratio…  ┄┄┄┄┄┄┄┄┄┄      [x]',
-    '    ⎿ running in the background · 8m',
-    '  ◒ Weekly similar organizations   ┄┄┄┄┄┄┄┄┄┄       6m running',
+    '  ◒ Run the news import migratio…  running · 8m [x]',
+    '    ⎿ running in the background',
+    '  ◒ Weekly similar organizations   running · 6m',
   ])
 })

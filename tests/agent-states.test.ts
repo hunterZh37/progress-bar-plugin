@@ -5,7 +5,7 @@ import { line } from '../hooks/render'
 import type { Row } from '../hooks/render'
 import { bgSegs, idleSegs, phaseOf, reportedBy, scanTranscript } from '../hooks/waiting'
 import type { BgTask } from '../hooks/waiting'
-import { nowLine, runCard } from '../hooks/panel'
+import { noBarText, nowLine, runCard } from '../hooks/panel'
 
 // Agent row states (0.35.3): pure helpers. The engine-level transitions are in session-owned.test.ts.
 
@@ -146,5 +146,7 @@ test('rows: a background or idle agent says working, only a blocked one says wai
   expect([c.name, c.bg, c.elapsed, c.step]).toEqual(['Data gap fixes', 'db/refresh.sql · 46m', '29h00m', ''])
   expect(nowLine(c)).toBe('background: db/refresh.sql · 46m')
   const i = runCard('◐ Data gap fixes working · idle: no live background job · last action: Bash · 29h00m · 637 tools · Bash')
-  expect(nowLine(i)).toBe('idle: no live background job · last action: Bash · 29h00m')
+  // No % known: the time and tools sit on line one in the bar's place, so line two leaves the time out.
+  expect(nowLine(i)).toBe('idle: no live background job · last action: Bash')
+  expect(noBarText(i)).toBe('running · 29h00m · 637 tools · last: Bash')
 })
