@@ -188,6 +188,27 @@ class T(unittest.TestCase):
         self.assertEqual(m.setup(['--auto']), '')              # no channel yet: silent in auto mode
         self.assertIn('No secure channel', m.setup([]))
 
+    def test_idle_agents_are_done_rows_and_restart_sweeps_orphans(self):
+        m = self.m
+        m.PROGRESS = os.path.join(self.d, 'progress2')
+        os.makedirs(m.PROGRESS)
+        json.dump({'title': 'old', 'agent': True}, open(os.path.join(m.PROGRESS, 'agent-ghost.json'), 'w'))
+        json.dump({'title': 'a real job'}, open(os.path.join(m.PROGRESS, 'agent-notmine.json'), 'w'))
+        m.sweep_rows()
+        self.assertFalse(os.path.exists(os.path.join(m.PROGRESS, 'agent-ghost.json')))
+        self.assertTrue(os.path.exists(os.path.join(m.PROGRESS, 'agent-notmine.json')))
+        m.handle('/task --small hello')
+        a = next(iter(m.agents.values()))
+        self.assertTrue(wait(lambda: a.status == 'idle'))
+        m.retire(a)
+        row = json.load(open(os.path.join(m.PROGRESS, 'agent-' + a.id + '.json')))
+        self.assertIn('got: hello', row['impact'])
+        self.assertTrue(a.row_done and not a.retired)
+        a.send('more work')
+        a.row_done = False
+        m.publish(a)
+        self.assertNotIn('impact', json.load(open(os.path.join(m.PROGRESS, 'agent-' + a.id + '.json'))))
+
     def test_unread_gives_session_only_new_collaborator_lines(self):
         m = self.m
         m.record('collaborator', 'old')
